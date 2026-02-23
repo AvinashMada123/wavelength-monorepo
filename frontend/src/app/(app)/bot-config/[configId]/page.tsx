@@ -294,8 +294,9 @@ export default function BotConfigEditorPage() {
             onToggle={setSocialProofEnabled}
           />
         )}
-        {activeTab === "options" && (
+        {activeTab === "options" && user && (
           <AdditionalOptionsTab
+            user={user}
             preResearchEnabled={preResearchEnabled}
             onPreResearchToggle={setPreResearchEnabled}
             memoryRecallEnabled={memoryRecallEnabled}
@@ -526,16 +527,64 @@ function ContextTab({
 /* ========== Additional Options Tab ========== */
 
 function AdditionalOptionsTab({
+  user,
   preResearchEnabled,
   onPreResearchToggle,
   memoryRecallEnabled,
   onMemoryRecallToggle,
 }: {
+  user: { getIdToken: () => Promise<string> };
   preResearchEnabled: boolean;
   onPreResearchToggle: (v: boolean) => void;
   memoryRecallEnabled: boolean;
   onMemoryRecallToggle: (v: boolean) => void;
 }) {
+  const [mmConfig, setMmConfig] = useState<Record<string, unknown> | null>(null);
+  const [mmSaving, setMmSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch("/api/data/keyword-config", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ action: "getMicroMomentsConfig" }),
+        });
+        if (res.ok) {
+          setMmConfig(await res.json());
+        }
+      } catch {
+        // Non-critical
+      }
+    })();
+  }, [user]);
+
+  async function handleSaveMmConfig() {
+    if (!mmConfig) return;
+    try {
+      setMmSaving(true);
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/data/keyword-config", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "updateMicroMomentsConfig", config: mmConfig }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Micro-moments config saved");
+    } catch {
+      toast.error("Failed to save micro-moments config");
+    } finally {
+      setMmSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -572,6 +621,91 @@ function AdditionalOptionsTab({
           </div>
         </CardContent>
       </Card>
+
+      {/* Micro-Moments Config */}
+      {mmConfig && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Micro-Moment Detection Config</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Configure thresholds and hints for real-time micro-moment detection during calls.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Cooldown Turns</Label>
+                <Input
+                  type="number"
+                  className="h-8 text-sm"
+                  value={(mmConfig.cooldown_turns as number) ?? 3}
+                  onChange={(e) =>
+                    setMmConfig((c) => c ? { ...c, cooldown_turns: parseInt(e.target.value) || 0 } : c)
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Lock Turns</Label>
+                <Input
+                  type="number"
+                  className="h-8 text-sm"
+                  value={(mmConfig.lock_turns as number) ?? 3}
+                  onChange={(e) =>
+                    setMmConfig((c) => c ? { ...c, lock_turns: parseInt(e.target.value) || 0 } : c)
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Min Turns for Detection</Label>
+                <Input
+                  type="number"
+                  className="h-8 text-sm"
+                  value={(mmConfig.min_turns_for_detection as number) ?? 3}
+                  onChange={(e) =>
+                    setMmConfig((c) => c ? { ...c, min_turns_for_detection: parseInt(e.target.value) || 0 } : c)
+                  }
+                />
+              </div>
+            </div>
+
+            {mmConfig.moments && typeof mmConfig.moments === "object" ? (
+              <div className="space-y-3">
+                <Label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+                  Moment Hints
+                </Label>
+                {Object.entries(mmConfig.moments as Record<string, { hint?: string }>).map(
+                  ([momentName, momentData]) => (
+                    <div key={momentName} className="rounded-lg border p-3 space-y-2">
+                      <Label className="text-xs font-medium">
+                        {momentName.replace(/_/g, " ")}
+                      </Label>
+                      <Textarea
+                        value={momentData.hint || ""}
+                        onChange={(e) =>
+                          setMmConfig((c) => {
+                            if (!c) return c;
+                            const moments = { ...(c.moments as Record<string, unknown>) };
+                            moments[momentName] = { ...(moments[momentName] as Record<string, unknown>), hint: e.target.value };
+                            return { ...c, moments };
+                          })
+                        }
+                        rows={2}
+                        className="text-sm"
+                        placeholder="System hint when this moment is detected..."
+                      />
+                    </div>
+                  )
+                )}
+              </div>
+            ) : null}
+
+            <Button size="sm" onClick={handleSaveMmConfig} disabled={mmSaving}>
+              {mmSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              Save Micro-Moments Config
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

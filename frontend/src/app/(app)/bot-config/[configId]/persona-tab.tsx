@@ -13,6 +13,24 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { KeywordConfigEditor, type KeywordCategory } from "@/components/shared/keyword-config-editor";
+
+async function apiKeywordConfig(
+  user: { getIdToken: () => Promise<string> },
+  body: Record<string, unknown>
+) {
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/data/keyword-config", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("Request failed");
+  return res.json();
+}
 
 async function apiPersonas(
   user: { getIdToken: () => Promise<string> },
@@ -44,6 +62,9 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
   const [situations, setSituations] = useState<Situation[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [personaKeywords, setPersonaKeywords] = useState<KeywordCategory[]>([]);
+  const [situationKeywords, setSituationKeywords] = useState<KeywordCategory[]>([]);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -51,6 +72,31 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       const data = await apiPersonas(user, "GET");
       setPersonas(data.personas || []);
       setSituations(data.situations || []);
+
+      // Load keyword config from backend
+      try {
+        const config = await apiKeywordConfig(user, { action: "getPersonaConfig" });
+        if (config.persona_keywords) {
+          setPersonaKeywords(
+            Object.entries(config.persona_keywords).map(([name, val]) => ({
+              name,
+              keywords: (val as { keywords?: string[]; phrases?: string[] }).keywords || [],
+              phrases: (val as { keywords?: string[]; phrases?: string[] }).phrases || [],
+            }))
+          );
+        }
+        if (config.situation_keywords) {
+          setSituationKeywords(
+            Object.entries(config.situation_keywords).map(([name, val]) => ({
+              name,
+              keywords: (val as { keywords?: string[]; hint?: string }).keywords || [],
+              hint: (val as { keywords?: string[]; hint?: string }).hint || "",
+            }))
+          );
+        }
+      } catch {
+        // Config loading is non-critical
+      }
     } catch {
       toast.error("Failed to load persona data");
     } finally {
@@ -158,6 +204,29 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       updated[index] = { ...updated[index], ...updates };
       return updated;
     });
+  }
+
+  async function handleSaveKeywordConfig() {
+    try {
+      setSavingConfig(true);
+      const pConfig: Record<string, { keywords: string[]; phrases: string[] }> = {};
+      for (const cat of personaKeywords) {
+        pConfig[cat.name] = { keywords: cat.keywords, phrases: cat.phrases || [] };
+      }
+      const sConfig: Record<string, { keywords: string[]; hint: string }> = {};
+      for (const cat of situationKeywords) {
+        sConfig[cat.name] = { keywords: cat.keywords, hint: cat.hint || "" };
+      }
+      await apiKeywordConfig(user, {
+        action: "updatePersonaConfig",
+        config: { persona_keywords: pConfig, situation_keywords: sConfig },
+      });
+      toast.success("Detection keywords config saved");
+    } catch {
+      toast.error("Failed to save keyword config");
+    } finally {
+      setSavingConfig(false);
+    }
   }
 
   if (loading) {
@@ -356,6 +425,31 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
           Add Situation
         </Button>
       </div>
+
+      {/* Detection Keywords Config */}
+      {personaKeywords.length > 0 && (
+        <KeywordConfigEditor
+          title="Persona Detection Keywords"
+          description="Keywords and phrases that trigger persona detection during calls"
+          categories={personaKeywords}
+          onCategoriesChange={setPersonaKeywords}
+          showPhrases
+          saving={savingConfig}
+          onSave={handleSaveKeywordConfig}
+        />
+      )}
+
+      {situationKeywords.length > 0 && (
+        <KeywordConfigEditor
+          title="Situation Detection Keywords"
+          description="Keywords and hints that trigger situation detection during calls"
+          categories={situationKeywords}
+          onCategoriesChange={setSituationKeywords}
+          showHints
+          saving={savingConfig}
+          onSave={handleSaveKeywordConfig}
+        />
+      )}
     </div>
   );
 }
