@@ -1,0 +1,2606 @@
+{
+  "name": "FWAI AI Call",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "start-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b4367d9c-ca09-4ff1-a91a-c5d6d1b4ba01",
+      "name": "Start Call Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        432
+      ],
+      "webhookId": "start-call"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://34.93.142.172:3001/call/conversational",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"phoneNumber\": $json.body?.phoneNumber || $json.phoneNumber,\n  \"contactName\": $json.body?.contactName || $json.contactName || \"Customer\",\n  \"clientName\": $json.body?.clientName || $json.clientName || \"fwai\",\n  \"n8nWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-transcript\",\n  \"callEndWebhookUrl\": \"https://n8n.srv1100770.hstgr.cloud/webhook/fwai-call-ended\",\n  \"context\": $json.body?.context || $json.context || {\n    \"customer_name\": $json.body?.contactName || $json.contactName || \"Customer\",\n    \"agent_name\": $json.body?.agentName || $json.agentName || \"Rahul\",\n    \"company_name\": $json.body?.companyName || $json.companyName || \"Freedom with AI\",\n    \"event_host\": $json.body?.eventHost || $json.eventHost || \"Avinash\",\n    \"location\": $json.body?.location || $json.location || \"Hyderabad\"\n  },\n  \"prompt\": $json.body?.prompt || $json.prompt || \"You are {agent_name}, AI Counselor at {company_name}, qualifying leads via phone. GOAL: Understand their situation, uncover pain points, qualify them, book callback with senior counselor. You are NOT selling. VOICE: Indian English accent (Hyderabad professional). Warm, conversational. Use 'Actually...', 'The thing is...', 'right?'. Occasional 'umm', small pauses. If asked if you're AI: 'No, I'm {agent_name} from {location} office.' RULES: Ask ONE question per turn from [INSTRUCTION]. After asking, STOP and wait, remember not to go to the next question before the current question is answered. Brief acknowledgment after they answer ('Got it', 'I see'), then WAIT for next [INSTRUCTION]. Do NOT make up questions.\",\n  \"objections\": $json.body?.objections || $json.objections || {\n    \"busy\": \"No worries! When's a better time?\",\n    \"family\": \"Of course, discuss with family. Should I call back tomorrow morning or evening?\",\n    \"youtube\": \"YouTube's great for basics. We provide structure and hands-on application. But if it works for you, go for it.\",\n    \"not_interested\": \"No problem. Thanks for your time, take care!\",\n    \"who_runs\": \"Avinash started it. College dropout, non-technical, now consults for companies like Perplexity making 50K dollars monthly.\"\n  },\n  \"objectionKeywords\": $json.body?.objectionKeywords || $json.objectionKeywords || {\n    \"busy\": [\"busy\", \"call later\", \"not now\", \"bad time\", \"meeting\", \"driving\"],\n    \"family\": [\"family\", \"father\", \"mother\", \"parent\", \"husband\", \"wife\", \"discuss\"],\n    \"youtube\": [\"youtube\", \"free\", \"learn myself\", \"google\", \"online\"],\n    \"not_interested\": [\"not interested\", \"no thanks\", \"don't want\", \"not for me\"],\n    \"who_runs\": [\"who runs\", \"who started\", \"founder\", \"avinash\", \"about company\"]\n  },\n  \"questions\": $json.body?.questions || $json.questions || [\n    {\"id\": \"greeting\", \"prompt\": \"Hi {customer_name}, this is {agent_name} from {company_name}. How are you doing?\"},\n    {\"id\": \"opening\", \"prompt\": \"You attended our masterclass with {event_host} recently, right? What did you think about it?\"},\n    {\"id\": \"current_work\", \"prompt\": \"Tell me a bit about yourself. What do you do currently?\"},\n    {\"id\": \"registration_reason\", \"prompt\": \"What made you sign up? Was there something specific you were looking for?\"},\n    {\"id\": \"ai_usage\", \"prompt\": \"Are you using any AI tools right now? Like ChatGPT?\"},\n    {\"id\": \"ai_rating\", \"prompt\": \"How comfortable are you with AI? Beginner, intermediate, or confident?\"},\n    {\"id\": \"ai_challenges\", \"prompt\": \"What's been your biggest challenge with AI so far?\"},\n    {\"id\": \"job_market_reality\", \"prompt\": \"Are you seeing AI impact your field? How's that affecting you?\"},\n    {\"id\": \"what_theyve_tried\", \"prompt\": \"Have you tried learning AI on your own? How did that go?\"},\n    {\"id\": \"future_consequence\", \"prompt\": \"If you don't upskill in AI this year, where do you see yourself?\"},\n    {\"id\": \"goal_6months\", \"prompt\": \"If you could get one result from AI in 6 months, what would it be?\"},\n    {\"id\": \"long_term_goal\", \"prompt\": \"Longer term, what's the dream? Senior role, own business?\"},\n    {\"id\": \"roadmap\", \"prompt\": \"Are you figuring this out alone, or do you have guidance?\"},\n    {\"id\": \"decision_authority\", \"prompt\": \"If something makes sense, can you decide on your own or need to discuss with someone?\"},\n    {\"id\": \"timeline\", \"prompt\": \"When are you looking to start? Immediately or in a few months?\"},\n    {\"id\": \"callback_booking\", \"prompt\": \"Based on what you've shared, I think a proper chat with our senior counselor would help. When's a good time for them to call?\"},\n    {\"id\": \"closing\", \"prompt\": \"Perfect, I'll have them call you then. It was really nice talking to you, {customer_name}. Take care, bye!\"}\n  ]\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "7d928908-93e1-4d4e-8827-4d833b0473de",
+      "name": "Call Server API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -256,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, call_uuid: $json.call_uuid, message: 'Call initiated' } }}",
+        "options": {}
+      },
+      "id": "18a55ac0-53d2-4a5e-a9fa-991d1af5237a",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fwai-call-ended",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "dabf5dca-a647-4bd6-8354-5f9ce7e0ad86",
+      "name": "Call Ended Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        752
+      ],
+      "webhookId": "fwai-call-ended"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process call end data using server-computed analytics\n// Server sends: interest_level, completion_rate, collected_responses, objections_raised, question_pairs\n\nconst rawData = $input.first().json;\nconst data = rawData.body || rawData;\n\n// Use server-computed interest level (high/medium/low/not_interested)\nconst interest = (data.interest_level || 'unknown').toLowerCase();\nconst completionRate = data.completion_rate || 0;\nconst objections = data.objections_raised || [];\nconst transcript = (data.transcript || '').toLowerCase();\n\n// Map server interest_level to lead_type\nlet leadType = 'cold';\nlet score = 0;\n\nif (interest === 'high') {\n  leadType = 'hot';\n  score = 5;\n} else if (interest === 'medium') {\n  leadType = 'warm';\n  score = 2;\n} else if (interest === 'not_interested') {\n  leadType = 'cold';\n  score = -3;\n} else {\n  leadType = 'cold';\n  score = 0;\n}\n\n// Boost score based on completion rate\nif (completionRate >= 80) score += 2;\nelse if (completionRate >= 50) score += 1;\n\n// Check for callback signals in transcript\nlet needsCallback = false;\nlet callbackTime = null;\nif (objections.includes('busy') || transcript.includes('call back') || transcript.includes('call later')) {\n  needsCallback = true;\n  if (transcript.includes('morning')) callbackTime = 'morning';\n  else if (transcript.includes('evening')) callbackTime = 'evening';\n  else if (transcript.includes('tomorrow')) callbackTime = 'tomorrow';\n  if (leadType === 'cold') leadType = 'scheduled';\n}\n\nreturn {\n  call_uuid: data.call_uuid,\n  caller_phone: data.caller_phone,\n  contact_name: data.contact_name,\n  duration_seconds: data.duration_seconds,\n  timestamp: data.timestamp,\n  // Lead classification\n  lead_type: leadType,\n  lead_score: score,\n  interest_level: interest,\n  completion_rate: completionRate,\n  questions_completed: data.questions_completed,\n  total_questions: data.total_questions,\n  // Callback info\n  needs_callback: needsCallback,\n  callback_time: callbackTime,\n  // Objections and summary\n  objections: objections,\n  call_summary: data.call_summary || '',\n  // Collected answers (individual question responses)\n  collected_responses: data.collected_responses || {},\n  // Q&A pairs for detailed review\n  question_pairs: data.question_pairs || [],\n  transcript_preview: (data.transcript || '').substring(0, 500)\n};"
+      },
+      "id": "dadbf3f4-f807-4bfb-81ea-e09f6541e407",
+      "name": "Process Call End",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-hot",
+              "leftValue": "={{ $json.lead_type }}",
+              "rightValue": "hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1db91ccd-bcb3-44c8-bac0-73e124f6ef94",
+      "name": "Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        384,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// HOT LEAD - Immediate action needed\nconst data = $input.first().json;\nreturn {\n  action: 'immediate_callback',\n  priority: 'HIGH',\n  lead_type: 'HOT',\n  phone: data.caller_phone,\n  contact_name: data.contact_name,\n  call_uuid: data.call_uuid,\n  duration: data.duration_seconds,\n  completion_rate: data.completion_rate,\n  call_summary: data.call_summary,\n  collected_responses: data.collected_responses,\n  message: `HOT LEAD: ${data.contact_name} (${data.caller_phone}) - ${data.questions_completed}/${data.total_questions} questions, ${data.completion_rate}% complete`\n};"
+      },
+      "id": "288cb9cb-a674-40e8-8613-731d287376ac",
+      "name": "Hot Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "needs-callback",
+              "leftValue": "={{ $json.needs_callback }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "64bf59ca-3187-4f3e-a6ba-a9b4ab91ce63",
+      "name": "Needs Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        608,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// SCHEDULED CALLBACK\nconst data = $input.first().json;\nreturn {\n  action: 'schedule_callback',\n  priority: 'MEDIUM',\n  lead_type: 'SCHEDULED',\n  phone: data.caller_phone,\n  contact_name: data.contact_name,\n  callback_time: data.callback_time || 'not specified',\n  call_uuid: data.call_uuid,\n  objections: data.objections,\n  call_summary: data.call_summary,\n  message: `CALLBACK: ${data.contact_name} (${data.caller_phone}) - Time: ${data.callback_time || 'TBD'}, Objections: ${(data.objections || []).join(', ') || 'none'}`\n};"
+      },
+      "id": "2944db41-a6b6-43a8-9e85-58d4283f4f0e",
+      "name": "Schedule Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// WARM/COLD LEAD - Nurture or archive\nconst data = $input.first().json;\nconst isWarm = data.lead_type === 'warm';\nreturn {\n  action: isWarm ? 'nurture' : 'archive',\n  priority: isWarm ? 'MEDIUM' : 'LOW',\n  lead_type: data.lead_type.toUpperCase(),\n  phone: data.caller_phone,\n  contact_name: data.contact_name,\n  call_uuid: data.call_uuid,\n  completion_rate: data.completion_rate,\n  objections: data.objections,\n  call_summary: data.call_summary,\n  collected_responses: data.collected_responses,\n  message: `${data.lead_type.toUpperCase()}: ${data.contact_name} (${data.caller_phone}) - ${data.completion_rate}% complete, Objections: ${(data.objections || []).join(', ') || 'none'}`\n};"
+      },
+      "id": "483b6bea-1fae-43aa-9235-313b937e5692",
+      "name": "Warm/Cold Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://wavelength-flax.vercel.app/api/call-ended",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -64,
+        752
+      ],
+      "id": "ab02cd6e-ae06-4d3b-af80-1b9f3a671b80",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://wavelength-flax.vercel.app/api/call-ended",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -272,
+        752
+      ],
+      "id": "97a5c42a-eb89-4507-9d91-61be68ea66d0",
+      "name": "HTTP Request1"
+    }
+  ],
+  "pinData": {
+    "Start Call Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.srv1100770.hstgr.cloud",
+            "user-agent": "curl/7.81.0",
+            "content-length": "295",
+            "accept": "*/*",
+            "content-type": "application/json",
+            "x-forwarded-for": "106.222.229.77",
+            "x-forwarded-host": "n8n.srv1100770.hstgr.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "92c7c9c3b743",
+            "x-real-ip": "106.222.229.77",
+            "accept-encoding": "gzip"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "phoneNumber": "919052034075",
+            "contactName": "Kiran",
+            "clientName": "fwai",
+            "agentName": "Rahul",
+            "companyName": "Freedom with AI",
+            "eventName": "AI Masterclass",
+            "eventHost": "Avinash Mada",
+            "voice": "Puck",
+            "location": "Hyderabad"
+          },
+          "webhookUrl": "https://n8n.srv1100770.hstgr.cloud/webhook/start-call",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Call Ended Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.srv1100770.hstgr.cloud",
+            "user-agent": "python-httpx/0.28.1",
+            "content-length": "33566",
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "content-type": "application/json",
+            "x-forwarded-for": "34.93.142.172",
+            "x-forwarded-host": "n8n.srv1100770.hstgr.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "92c7c9c3b743",
+            "x-real-ip": "34.93.142.172"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "event": "call_ended",
+            "call_uuid": "7489ab5f-3dc2-4cf5-9bb8-74040ebb9471",
+            "caller_phone": "+916282533205",
+            "contact_name": "Test User",
+            "client_name": "fwai",
+            "duration_seconds": 322.3,
+            "timestamp": "2026-02-10T09:24:38.978688",
+            "questions_completed": 16,
+            "total_questions": 17,
+            "completion_rate": 94.1,
+            "interest_level": "high",
+            "call_summary": "Role: जू नियर सॉफ्टवेयर डेवलपर; AI knowledge: I am confident.; 6mo goal: (no response); Long-term: I think if we don' t use A",
+            "objections_raised": [],
+            "collected_responses": {
+              "greeting": "I'm do ing pretty good.",
+              "opening": "I al ready said it 's still cool.",
+              "current_work": "जू नियर सॉफ्टवेयर डेवलपर",
+              "registration_reason": "ju st cu rio us abo ut something.",
+              "ai_usage": "চার জিপিএন দিস ইজ ক্যাড",
+              "ai_rating": "I am confident.",
+              "ai_challenges": "No thing like that no channel just said",
+              "job_market_reality": "whe n they some times the re is ten va can cie s but with the i mplementa tion of AI the va can cy is re du ce d to fi ve like that.",
+              "what_theyve_tried": "ഐ മീ ൻ ദി ന മ്പർ ഓഫ് വാ ക്കൻ സി ഇൻ ക മ്പനി റെഡ്യൂസ്",
+              "future_consequence": "Yeah , I'm trying my ow n . It ' s really good.",
+              "goal_6months": "(no response)",
+              "long_term_goal": "I think if we don' t use A",
+              "roadmap": "(no response)",
+              "decision_authority": "I de sign ed on my ow n I don 't nee d to anything.",
+              "timeline": "(no response)",
+              "callback_booking": "may be after three days"
+            },
+            "question_pairs": [
+              {
+                "question_id": "greeting",
+                "question_text": "Hi Test User, this is Rahul from Freedom with AI. How are you doing?",
+                "agent_said": "Hi Test User, this is Rahul from Freedom with AI. How are you doing? Got it. You attended our masterclass with Avinash recently,",
+                "user_said": "I'm do ing pretty good.",
+                "duration_seconds": 11.9,
+                "response_latency_ms": 2093
+              },
+              {
+                "question_id": "opening",
+                "question_text": "You attended our masterclass with Avinash recently, right? What did you think about it?",
+                "agent_said": "right? What did you think about it? Are you still there? Got it. Tell me a",
+                "user_said": "I al ready said it 's still cool.",
+                "duration_seconds": 14.5,
+                "response_latency_ms": 2474
+              },
+              {
+                "question_id": "current_work",
+                "question_text": "Tell me a bit about yourself. What do you do currently?",
+                "agent_said": "bit about yourself. What do you do currently? I see. What made you sign up? Was there something specific",
+                "user_said": "जू नियर सॉफ्टवेयर डेवलपर",
+                "duration_seconds": 12.8,
+                "response_latency_ms": 1887
+              },
+              {
+                "question_id": "registration_reason",
+                "question_text": "What made you sign up? Was there something specific you were looking for?",
+                "agent_said": "you were looking for? Okay. Are you using any AI tools right now? Like ChatGPT?",
+                "user_said": "ju st cu rio us abo ut something.",
+                "duration_seconds": 13.9,
+                "response_latency_ms": 1644
+              },
+              {
+                "question_id": "ai_usage",
+                "question_text": "Are you using any AI tools right now? Like ChatGPT?",
+                "agent_said": "I see. How comfortable are you with AI? Beginner, intermediate, or",
+                "user_said": "চার জিপিএন দিস ইজ ক্যাড",
+                "duration_seconds": 13.6,
+                "response_latency_ms": 1649
+              },
+              {
+                "question_id": "ai_rating",
+                "question_text": "How comfortable are you with AI? Beginner, intermediate, or confident?",
+                "agent_said": "confident? Got it. What's been your biggest",
+                "user_said": "I am confident.",
+                "duration_seconds": 14.2,
+                "response_latency_ms": 2132
+              },
+              {
+                "question_id": "ai_challenges",
+                "question_text": "What's been your biggest challenge with AI so far?",
+                "agent_said": "challenge with AI so far? I see. Are you seeing AI impact your field? How's that affecting you?",
+                "user_said": "No thing like that no channel just said",
+                "duration_seconds": 15.7,
+                "response_latency_ms": 961
+              },
+              {
+                "question_id": "job_market_reality",
+                "question_text": "Are you seeing AI impact your field? How's that affecting you?",
+                "agent_said": "Are you I see. Have you tried",
+                "user_said": "whe n they some times the re is ten va can cie s but with the i mplementa tion of AI the va can cy is re du ce d to fi ve like that.",
+                "duration_seconds": 13.9,
+                "response_latency_ms": 0
+              },
+              {
+                "question_id": "what_theyve_tried",
+                "question_text": "Have you tried learning AI on your own? How did that go?",
+                "agent_said": "Got it. Have you tried learning AI on your own? How did that go?",
+                "user_said": "ഐ മീ ൻ ദി ന മ്പർ ഓഫ് വാ ക്കൻ സി ഇൻ ക മ്പനി റെഡ്യൂസ്",
+                "duration_seconds": 9.8,
+                "response_latency_ms": 2763
+              },
+              {
+                "question_id": "future_consequence",
+                "question_text": "If you don't upskill in AI this year, where do you see yourself?",
+                "agent_said": "I see. Have you tried learning AI on your own? How did that go? Got it. If you don't upskill in AI this year, where do you see yourself?",
+                "user_said": "Yeah , I'm trying my ow n . It ' s really good.",
+                "duration_seconds": 18.2,
+                "response_latency_ms": 3066
+              },
+              {
+                "question_id": "goal_6months",
+                "question_text": "If you could get one result from AI in 6 months, what would it be?",
+                "agent_said": "Are you still there? I mean, if you don't learn AI this year, what could be the impact on your career or job?",
+                "user_said": "",
+                "duration_seconds": 0,
+                "response_latency_ms": 0
+              },
+              {
+                "question_id": "long_term_goal",
+                "question_text": "Longer term, what's the dream? Senior role, own business?",
+                "agent_said": "L-longer term, Hmm. Longer term,",
+                "user_said": "I think if we don' t use A",
+                "duration_seconds": 7.3,
+                "response_latency_ms": 1547
+              },
+              {
+                "question_id": "roadmap",
+                "question_text": "Are you figuring this out alone, or do you have guidance?",
+                "agent_said": "I see. Longer term, what's the dream? Senior role, own business? Got it. Are you figuring this out alone, or do you have any guidance?",
+                "user_said": "",
+                "duration_seconds": 0,
+                "response_latency_ms": 0
+              },
+              {
+                "question_id": "decision_authority",
+                "question_text": "If something makes sense, can you decide on your own or need to discuss with someone?",
+                "agent_said": "I see. If something makes sense, can you decide on your own or need to discuss with someone? If something makes sense, can you decide on your own or need to discuss with someone? Are you still there? Got it. When are you looking to start? Immediately or in a few months?",
+                "user_said": "I de sign ed on my ow n I don 't nee d to anything.",
+                "duration_seconds": 13.9,
+                "response_latency_ms": 957
+              },
+              {
+                "question_id": "timeline",
+                "question_text": "When are you looking to start? Immediately or in a few months?",
+                "agent_said": "Are you still there? I see. Based on what you've shared, I think a proper chat with our senior counselor would help. When's a good time for them to call?",
+                "user_said": "",
+                "duration_seconds": 0,
+                "response_latency_ms": 0
+              },
+              {
+                "question_id": "callback_booking",
+                "question_text": "Based on what you've shared, I think a proper chat with our senior counselor would help. When's a good time for them to call?",
+                "agent_said": "Based on what you've shared, I think a proper chat with our senior counselor would help. When's a good time for them to call? Got it. Perfect, I'll have them call you then. It was really nice talking to you, Test User. Take care, bye!",
+                "user_said": "may be after three days",
+                "duration_seconds": 8.2,
+                "response_latency_ms": 961
+              }
+            ],
+            "call_metrics": {
+              "questions_completed": 16,
+              "total_duration_s": 167.9,
+              "avg_latency_ms": 1844,
+              "max_latency_ms": 3066,
+              "min_latency_ms": 957,
+              "p90_latency_ms": 2763,
+              "total_nudges": 9,
+              "per_question": [
+                {
+                  "q": 0,
+                  "id": "greeting",
+                  "latency_ms": 2093,
+                  "duration_s": 11.9,
+                  "nudges": 0
+                },
+                {
+                  "q": 1,
+                  "id": "opening",
+                  "latency_ms": 2474,
+                  "duration_s": 14.5,
+                  "nudges": 1
+                },
+                {
+                  "q": 2,
+                  "id": "current_work",
+                  "latency_ms": 1887,
+                  "duration_s": 12.8,
+                  "nudges": 0
+                },
+                {
+                  "q": 3,
+                  "id": "registration_reason",
+                  "latency_ms": 1644,
+                  "duration_s": 13.9,
+                  "nudges": 0
+                },
+                {
+                  "q": 4,
+                  "id": "ai_usage",
+                  "latency_ms": 1649,
+                  "duration_s": 13.6,
+                  "nudges": 0
+                },
+                {
+                  "q": 5,
+                  "id": "ai_rating",
+                  "latency_ms": 2132,
+                  "duration_s": 14.2,
+                  "nudges": 0
+                },
+                {
+                  "q": 6,
+                  "id": "ai_challenges",
+                  "latency_ms": 961,
+                  "duration_s": 15.7,
+                  "nudges": 0
+                },
+                {
+                  "q": 7,
+                  "id": "job_market_reality",
+                  "latency_ms": 0,
+                  "duration_s": 13.9,
+                  "nudges": 1
+                },
+                {
+                  "q": 8,
+                  "id": "what_theyve_tried",
+                  "latency_ms": 2763,
+                  "duration_s": 9.8,
+                  "nudges": 0
+                },
+                {
+                  "q": 9,
+                  "id": "future_consequence",
+                  "latency_ms": 3066,
+                  "duration_s": 18.2,
+                  "nudges": 0
+                },
+                {
+                  "q": 10,
+                  "id": "goal_6months",
+                  "latency_ms": 0,
+                  "duration_s": 0,
+                  "nudges": 2
+                },
+                {
+                  "q": 11,
+                  "id": "long_term_goal",
+                  "latency_ms": 1547,
+                  "duration_s": 7.3,
+                  "nudges": 0
+                },
+                {
+                  "q": 12,
+                  "id": "roadmap",
+                  "latency_ms": 0,
+                  "duration_s": 0,
+                  "nudges": 2
+                },
+                {
+                  "q": 13,
+                  "id": "decision_authority",
+                  "latency_ms": 957,
+                  "duration_s": 13.9,
+                  "nudges": 1
+                },
+                {
+                  "q": 14,
+                  "id": "timeline",
+                  "latency_ms": 0,
+                  "duration_s": 0,
+                  "nudges": 2
+                },
+                {
+                  "q": 15,
+                  "id": "callback_booking",
+                  "latency_ms": 961,
+                  "duration_s": 8.2,
+                  "nudges": 0
+                }
+              ]
+            },
+            "transcript": "[00:00] Agent: Hi test user.\n[00:02] Agent: This is Rahul from Freedom with AI.\n[00:05] Agent: How are you doing?\n[00:11] User: I'm doing pretty good.\n[00:17] Agent: Got it.\n[00:18] Agent: You attended our master class with Avinash recently, right?\n[00:22] Agent: What did you think about it?\n[00:31] User: It's really cool.\n[00:45] Agent: Are you still there?\n[00:50] User: I already said it's still cool.\n[00:54] Agent: Got it.\n[00:56] Agent: Tell me a bit about yourself.\n[00:58] Agent: What do you do currently?\n[01:05] User: I'm working as Junior software developer.\n[01:12] Agent: I see.\n[01:14] Agent: What made you sign up?\n[01:17] Agent: Was there something specific you were looking for?\n[01:26] User: Just curious about some AI things.\n[01:34] Agent: Okay.\n[01:35] Agent: Are you using any AI tools right now?\n[01:39] Agent: Like chat GPT?\n[01:45] User: Yeah, I use chat GPT and DeepSeek.\n[01:52] Agent: I see.\n[01:54] Agent: How comfortable are you with AI?\n[01:57] Agent: Beginner, intermediate, or confident?\n[02:07] User: I'm confident.\n[02:16] Agent: Got it.\n[02:18] Agent: What's been your biggest challenge with AI so far?\n[02:28] User: Nothing like that.\n[02:30] User: No challenge yet.\n[02:36] Agent: I see.\n[02:38] Agent: Are you seeing AI impact your field?\n[02:42] Agent: How's that affecting you?\n[02:50] User: Maybe because then the sometimes there is 10 vacancies but with the implementation of AI I see.\n[03:01] User: Have you tried vacancies reduce to five like that.\n[03:13] User: I mean the number of vacancies.\n[03:16] Agent: Got it.\n[03:17] Agent: Have you tried learning\n[03:20] Agent: AI on your own?\n[03:22] Agent: How did that go?\n[03:30] Agent: I see.\n[03:31] Agent: Have you tried learning AI on your own?\n[03:35] Agent: How did that go?\n[03:42] User: Yeah, I'm trying AI on my own.\n[03:45] User: It's really good.\n[03:53] Agent: Got it.\n[03:55] Agent: If you don't upskill in AI this year, where do you see yourself?\n[04:10] User: I don't understand what do you mean.\n[04:12] User: Can you explain it?\n[04:14] Agent: Are you still there?\n[04:18] Agent: I mean, if you don't learn AI this year, what could be the impact on your career or job?\n[04:37] User: I think if we don't use AI we we don't get any growth.\n[04:48] Agent: Hm.\n[04:48] Agent: Longer term\n[04:51] Agent: I see.\n[04:52] Agent: Longer term, what's the dream?\n[04:56] Agent: Senior role, own business?\n[05:03] User: First of all, I I need a senior employment job and then my own business.\n[05:19] Agent: Got it.\n[05:21] Agent: Are you figuring this out alone, or do you have any guidance?\n[05:32] User: I'm figuring it alone.\n[05:42] Agent: I see.\n[05:44] Agent: If something makes sense, can you decide on your own or need to discuss with someone?\n[05:56] Agent: If something makes sense, can you decide on your own or need to discuss with someone?\n[06:07] User: I decide on my own.\n[06:09] Agent: Are you still there?\n[06:09] User: and don't need to discuss anything.\n[06:20] Agent: Got it.\n[06:22] Agent: When are you looking to start, immediately or in a few months?\n[06:32] User: In a few months.\n[06:36] Agent: Are you still there?\n[06:38] Agent: I see.\n[06:39] Agent: Based on what you've shared, I think a proper chat with our senior counselor would help.\n[06:46] Agent: When's a good time for them to call?\n[06:54] User: Maybe after three days.\n[06:59] Agent: Based on what you've shared, I think a proper chat with our senior counselor would help.\n[07:06] Agent: When's a good time for them to call?\n[07:11] Agent: Got it.\n[07:12] Agent: Perfect.\n[07:14] Agent: I'll have them call you then.\n[07:16] Agent: It was really nice talking to you test user.\n[07:20] Agent: Take care.\n[07:21] Agent: Bye.\n",
+            "transcript_entries": [
+              {
+                "role": "SYSTEM",
+                "text": "AI ready",
+                "timestamp": "09:18:39"
+              },
+              {
+                "role": "AGENT",
+                "text": "Hi Test",
+                "timestamp": "09:18:41"
+              },
+              {
+                "role": "AGENT",
+                "text": "User,",
+                "timestamp": "09:18:41"
+              },
+              {
+                "role": "AGENT",
+                "text": "this",
+                "timestamp": "09:18:41"
+              },
+              {
+                "role": "AGENT",
+                "text": "is",
+                "timestamp": "09:18:41"
+              },
+              {
+                "role": "AGENT",
+                "text": "Rahul",
+                "timestamp": "09:18:41"
+              },
+              {
+                "role": "AGENT",
+                "text": "from",
+                "timestamp": "09:18:42"
+              },
+              {
+                "role": "AGENT",
+                "text": "Freedom",
+                "timestamp": "09:18:42"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:18:42"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI.",
+                "timestamp": "09:18:42"
+              },
+              {
+                "role": "AGENT",
+                "text": "How",
+                "timestamp": "09:18:42"
+              },
+              {
+                "role": "AGENT",
+                "text": "are you",
+                "timestamp": "09:18:42"
+              },
+              {
+                "role": "AGENT",
+                "text": "doing?",
+                "timestamp": "09:18:42"
+              },
+              {
+                "role": "SYSTEM",
+                "text": "Call connected (preloaded)",
+                "timestamp": "09:18:55"
+              },
+              {
+                "role": "USER",
+                "text": "I'm",
+                "timestamp": "09:19:04"
+              },
+              {
+                "role": "USER",
+                "text": "do",
+                "timestamp": "09:19:04"
+              },
+              {
+                "role": "USER",
+                "text": "ing",
+                "timestamp": "09:19:04"
+              },
+              {
+                "role": "USER",
+                "text": "pretty good.",
+                "timestamp": "09:19:04"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:19:06"
+              },
+              {
+                "role": "AGENT",
+                "text": "You attended",
+                "timestamp": "09:19:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "our",
+                "timestamp": "09:19:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "masterclass",
+                "timestamp": "09:19:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:19:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "Avinash",
+                "timestamp": "09:19:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "recently,",
+                "timestamp": "09:19:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "right?",
+                "timestamp": "09:19:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "What did",
+                "timestamp": "09:19:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "you think",
+                "timestamp": "09:19:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "about",
+                "timestamp": "09:19:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "it?",
+                "timestamp": "09:19:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "Are you",
+                "timestamp": "09:19:24"
+              },
+              {
+                "role": "AGENT",
+                "text": "still",
+                "timestamp": "09:19:24"
+              },
+              {
+                "role": "AGENT",
+                "text": "there?",
+                "timestamp": "09:19:24"
+              },
+              {
+                "role": "USER",
+                "text": "I",
+                "timestamp": "09:19:33"
+              },
+              {
+                "role": "USER",
+                "text": "al",
+                "timestamp": "09:19:33"
+              },
+              {
+                "role": "USER",
+                "text": "ready",
+                "timestamp": "09:19:33"
+              },
+              {
+                "role": "USER",
+                "text": "said",
+                "timestamp": "09:19:33"
+              },
+              {
+                "role": "USER",
+                "text": "it",
+                "timestamp": "09:19:34"
+              },
+              {
+                "role": "USER",
+                "text": "'s still cool.",
+                "timestamp": "09:19:34"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:19:35"
+              },
+              {
+                "role": "AGENT",
+                "text": "Tell",
+                "timestamp": "09:19:36"
+              },
+              {
+                "role": "AGENT",
+                "text": "me a",
+                "timestamp": "09:19:36"
+              },
+              {
+                "role": "AGENT",
+                "text": "bit",
+                "timestamp": "09:19:36"
+              },
+              {
+                "role": "AGENT",
+                "text": "about",
+                "timestamp": "09:19:37"
+              },
+              {
+                "role": "AGENT",
+                "text": "yourself.",
+                "timestamp": "09:19:37"
+              },
+              {
+                "role": "AGENT",
+                "text": "What do",
+                "timestamp": "09:19:37"
+              },
+              {
+                "role": "AGENT",
+                "text": "you do",
+                "timestamp": "09:19:37"
+              },
+              {
+                "role": "AGENT",
+                "text": "currently?",
+                "timestamp": "09:19:37"
+              },
+              {
+                "role": "USER",
+                "text": "जू",
+                "timestamp": "09:19:46"
+              },
+              {
+                "role": "USER",
+                "text": "नियर सॉफ्टवेयर डेवलपर",
+                "timestamp": "09:19:47"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:19:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "What",
+                "timestamp": "09:19:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "made",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "you sign",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "up?",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "Was there",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "something",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "specific",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "you were",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "looking",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "for?",
+                "timestamp": "09:19:49"
+              },
+              {
+                "role": "USER",
+                "text": "ju",
+                "timestamp": "09:19:59"
+              },
+              {
+                "role": "USER",
+                "text": "st",
+                "timestamp": "09:20:00"
+              },
+              {
+                "role": "USER",
+                "text": "cu",
+                "timestamp": "09:20:00"
+              },
+              {
+                "role": "USER",
+                "text": "rio",
+                "timestamp": "09:20:00"
+              },
+              {
+                "role": "USER",
+                "text": "us",
+                "timestamp": "09:20:00"
+              },
+              {
+                "role": "USER",
+                "text": "abo",
+                "timestamp": "09:20:00"
+              },
+              {
+                "role": "USER",
+                "text": "ut something.",
+                "timestamp": "09:20:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "Okay. Are",
+                "timestamp": "09:20:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "you using",
+                "timestamp": "09:20:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "any",
+                "timestamp": "09:20:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI",
+                "timestamp": "09:20:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "tools",
+                "timestamp": "09:20:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "right",
+                "timestamp": "09:20:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "now?",
+                "timestamp": "09:20:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "Like",
+                "timestamp": "09:20:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "ChatGPT?",
+                "timestamp": "09:20:03"
+              },
+              {
+                "role": "USER",
+                "text": "চার জিপিএন দিস ইজ ক্যাড",
+                "timestamp": "09:20:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:20:15"
+              },
+              {
+                "role": "AGENT",
+                "text": "How",
+                "timestamp": "09:20:16"
+              },
+              {
+                "role": "AGENT",
+                "text": "comfortable",
+                "timestamp": "09:20:16"
+              },
+              {
+                "role": "AGENT",
+                "text": "are you",
+                "timestamp": "09:20:16"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:20:16"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI?",
+                "timestamp": "09:20:16"
+              },
+              {
+                "role": "AGENT",
+                "text": "Beginner,",
+                "timestamp": "09:20:16"
+              },
+              {
+                "role": "AGENT",
+                "text": "intermediate,",
+                "timestamp": "09:20:16"
+              },
+              {
+                "role": "AGENT",
+                "text": "or",
+                "timestamp": "09:20:17"
+              },
+              {
+                "role": "AGENT",
+                "text": "confident?",
+                "timestamp": "09:20:17"
+              },
+              {
+                "role": "USER",
+                "text": "I",
+                "timestamp": "09:20:28"
+              },
+              {
+                "role": "USER",
+                "text": "am",
+                "timestamp": "09:20:28"
+              },
+              {
+                "role": "USER",
+                "text": "confident.",
+                "timestamp": "09:20:28"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:20:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "What's",
+                "timestamp": "09:20:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "been",
+                "timestamp": "09:20:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "your biggest",
+                "timestamp": "09:20:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "challenge",
+                "timestamp": "09:20:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:20:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI",
+                "timestamp": "09:20:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "so",
+                "timestamp": "09:20:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "far?",
+                "timestamp": "09:20:31"
+              },
+              {
+                "role": "USER",
+                "text": "No",
+                "timestamp": "09:20:43"
+              },
+              {
+                "role": "USER",
+                "text": "thing",
+                "timestamp": "09:20:43"
+              },
+              {
+                "role": "USER",
+                "text": "like",
+                "timestamp": "09:20:43"
+              },
+              {
+                "role": "USER",
+                "text": "that",
+                "timestamp": "09:20:44"
+              },
+              {
+                "role": "USER",
+                "text": "no",
+                "timestamp": "09:20:44"
+              },
+              {
+                "role": "USER",
+                "text": "channel just said",
+                "timestamp": "09:20:44"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:20:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "Are you",
+                "timestamp": "09:20:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "seeing",
+                "timestamp": "09:20:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI",
+                "timestamp": "09:20:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "impact",
+                "timestamp": "09:20:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "your field?",
+                "timestamp": "09:20:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "How's",
+                "timestamp": "09:20:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "that",
+                "timestamp": "09:20:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "affecting",
+                "timestamp": "09:20:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "you?",
+                "timestamp": "09:20:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "Are you",
+                "timestamp": "09:21:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:21:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "Have",
+                "timestamp": "09:21:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "you tried",
+                "timestamp": "09:21:02"
+              },
+              {
+                "role": "USER",
+                "text": "whe",
+                "timestamp": "09:21:04"
+              },
+              {
+                "role": "USER",
+                "text": "n",
+                "timestamp": "09:21:04"
+              },
+              {
+                "role": "USER",
+                "text": "they",
+                "timestamp": "09:21:04"
+              },
+              {
+                "role": "USER",
+                "text": "some",
+                "timestamp": "09:21:04"
+              },
+              {
+                "role": "USER",
+                "text": "times",
+                "timestamp": "09:21:05"
+              },
+              {
+                "role": "USER",
+                "text": "the",
+                "timestamp": "09:21:05"
+              },
+              {
+                "role": "USER",
+                "text": "re",
+                "timestamp": "09:21:05"
+              },
+              {
+                "role": "USER",
+                "text": "is",
+                "timestamp": "09:21:05"
+              },
+              {
+                "role": "USER",
+                "text": "ten",
+                "timestamp": "09:21:05"
+              },
+              {
+                "role": "USER",
+                "text": "va",
+                "timestamp": "09:21:05"
+              },
+              {
+                "role": "USER",
+                "text": "can",
+                "timestamp": "09:21:06"
+              },
+              {
+                "role": "USER",
+                "text": "cie",
+                "timestamp": "09:21:06"
+              },
+              {
+                "role": "USER",
+                "text": "s",
+                "timestamp": "09:21:06"
+              },
+              {
+                "role": "USER",
+                "text": "but",
+                "timestamp": "09:21:06"
+              },
+              {
+                "role": "USER",
+                "text": "with",
+                "timestamp": "09:21:07"
+              },
+              {
+                "role": "USER",
+                "text": "the",
+                "timestamp": "09:21:07"
+              },
+              {
+                "role": "USER",
+                "text": "i",
+                "timestamp": "09:21:07"
+              },
+              {
+                "role": "USER",
+                "text": "mplementa",
+                "timestamp": "09:21:07"
+              },
+              {
+                "role": "USER",
+                "text": "tion",
+                "timestamp": "09:21:08"
+              },
+              {
+                "role": "USER",
+                "text": "of",
+                "timestamp": "09:21:08"
+              },
+              {
+                "role": "USER",
+                "text": "AI",
+                "timestamp": "09:21:08"
+              },
+              {
+                "role": "USER",
+                "text": "the",
+                "timestamp": "09:21:09"
+              },
+              {
+                "role": "USER",
+                "text": "va",
+                "timestamp": "09:21:09"
+              },
+              {
+                "role": "USER",
+                "text": "can",
+                "timestamp": "09:21:09"
+              },
+              {
+                "role": "USER",
+                "text": "cy",
+                "timestamp": "09:21:09"
+              },
+              {
+                "role": "USER",
+                "text": "is",
+                "timestamp": "09:21:09"
+              },
+              {
+                "role": "USER",
+                "text": "re",
+                "timestamp": "09:21:10"
+              },
+              {
+                "role": "USER",
+                "text": "du",
+                "timestamp": "09:21:10"
+              },
+              {
+                "role": "USER",
+                "text": "ce",
+                "timestamp": "09:21:10"
+              },
+              {
+                "role": "USER",
+                "text": "d to",
+                "timestamp": "09:21:10"
+              },
+              {
+                "role": "USER",
+                "text": "fi",
+                "timestamp": "09:21:10"
+              },
+              {
+                "role": "USER",
+                "text": "ve like that.",
+                "timestamp": "09:21:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:21:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "Have",
+                "timestamp": "09:21:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "you tried",
+                "timestamp": "09:21:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "learning",
+                "timestamp": "09:21:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI",
+                "timestamp": "09:21:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "on",
+                "timestamp": "09:21:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "your",
+                "timestamp": "09:21:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "own?",
+                "timestamp": "09:21:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "How did",
+                "timestamp": "09:21:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "that",
+                "timestamp": "09:21:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "go?",
+                "timestamp": "09:21:14"
+              },
+              {
+                "role": "USER",
+                "text": "ഐ",
+                "timestamp": "09:21:18"
+              },
+              {
+                "role": "USER",
+                "text": "മീ",
+                "timestamp": "09:21:18"
+              },
+              {
+                "role": "USER",
+                "text": "ൻ ദി",
+                "timestamp": "09:21:18"
+              },
+              {
+                "role": "USER",
+                "text": "ന",
+                "timestamp": "09:21:18"
+              },
+              {
+                "role": "USER",
+                "text": "മ്പർ",
+                "timestamp": "09:21:18"
+              },
+              {
+                "role": "USER",
+                "text": "ഓഫ്",
+                "timestamp": "09:21:18"
+              },
+              {
+                "role": "USER",
+                "text": "വാ",
+                "timestamp": "09:21:19"
+              },
+              {
+                "role": "USER",
+                "text": "ക്കൻ",
+                "timestamp": "09:21:19"
+              },
+              {
+                "role": "USER",
+                "text": "സി",
+                "timestamp": "09:21:19"
+              },
+              {
+                "role": "USER",
+                "text": "ഇൻ",
+                "timestamp": "09:21:20"
+              },
+              {
+                "role": "USER",
+                "text": "ക",
+                "timestamp": "09:21:20"
+              },
+              {
+                "role": "USER",
+                "text": "മ്പനി",
+                "timestamp": "09:21:20"
+              },
+              {
+                "role": "USER",
+                "text": "റെഡ്യൂസ്",
+                "timestamp": "09:21:20"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "Have",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "you tried",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "learning",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "on your",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "own?",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "How did",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "that",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "AGENT",
+                "text": "go?",
+                "timestamp": "09:21:23"
+              },
+              {
+                "role": "USER",
+                "text": "Yeah",
+                "timestamp": "09:21:36"
+              },
+              {
+                "role": "USER",
+                "text": ", I'm",
+                "timestamp": "09:21:36"
+              },
+              {
+                "role": "USER",
+                "text": "trying",
+                "timestamp": "09:21:37"
+              },
+              {
+                "role": "USER",
+                "text": "my",
+                "timestamp": "09:21:38"
+              },
+              {
+                "role": "USER",
+                "text": "ow",
+                "timestamp": "09:21:38"
+              },
+              {
+                "role": "USER",
+                "text": "n",
+                "timestamp": "09:21:38"
+              },
+              {
+                "role": "USER",
+                "text": ". It",
+                "timestamp": "09:21:38"
+              },
+              {
+                "role": "USER",
+                "text": "'",
+                "timestamp": "09:21:38"
+              },
+              {
+                "role": "USER",
+                "text": "s",
+                "timestamp": "09:21:38"
+              },
+              {
+                "role": "USER",
+                "text": "really good.",
+                "timestamp": "09:21:38"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:21:39"
+              },
+              {
+                "role": "AGENT",
+                "text": "If",
+                "timestamp": "09:21:39"
+              },
+              {
+                "role": "AGENT",
+                "text": "you don't",
+                "timestamp": "09:21:39"
+              },
+              {
+                "role": "AGENT",
+                "text": "upskill",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "in",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "this",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "year,",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "where",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "do you",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "see",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "yourself?",
+                "timestamp": "09:21:40"
+              },
+              {
+                "role": "AGENT",
+                "text": "Are you",
+                "timestamp": "09:21:54"
+              },
+              {
+                "role": "AGENT",
+                "text": "still",
+                "timestamp": "09:21:55"
+              },
+              {
+                "role": "AGENT",
+                "text": "there?",
+                "timestamp": "09:21:55"
+              },
+              {
+                "role": "AGENT",
+                "text": "I mean,",
+                "timestamp": "09:21:59"
+              },
+              {
+                "role": "AGENT",
+                "text": "if",
+                "timestamp": "09:21:59"
+              },
+              {
+                "role": "AGENT",
+                "text": "you don't",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "learn",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "AI",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "this",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "year,",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "what",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "could",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "be the",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "impact",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "on your",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "career",
+                "timestamp": "09:22:00"
+              },
+              {
+                "role": "AGENT",
+                "text": "or",
+                "timestamp": "09:22:01"
+              },
+              {
+                "role": "AGENT",
+                "text": "job?",
+                "timestamp": "09:22:01"
+              },
+              {
+                "role": "AGENT",
+                "text": "L-longer term,",
+                "timestamp": "09:22:16"
+              },
+              {
+                "role": "USER",
+                "text": "I",
+                "timestamp": "09:22:18"
+              },
+              {
+                "role": "USER",
+                "text": "think",
+                "timestamp": "09:22:18"
+              },
+              {
+                "role": "USER",
+                "text": "if",
+                "timestamp": "09:22:18"
+              },
+              {
+                "role": "USER",
+                "text": "we",
+                "timestamp": "09:22:18"
+              },
+              {
+                "role": "USER",
+                "text": "don'",
+                "timestamp": "09:22:18"
+              },
+              {
+                "role": "USER",
+                "text": "t",
+                "timestamp": "09:22:19"
+              },
+              {
+                "role": "USER",
+                "text": "use",
+                "timestamp": "09:22:19"
+              },
+              {
+                "role": "USER",
+                "text": "A",
+                "timestamp": "09:22:19"
+              },
+              {
+                "role": "AGENT",
+                "text": "Hmm.",
+                "timestamp": "09:22:20"
+              },
+              {
+                "role": "AGENT",
+                "text": "Longer",
+                "timestamp": "09:22:20"
+              },
+              {
+                "role": "AGENT",
+                "text": "term,",
+                "timestamp": "09:22:21"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:22:24"
+              },
+              {
+                "role": "AGENT",
+                "text": "Longer",
+                "timestamp": "09:22:24"
+              },
+              {
+                "role": "AGENT",
+                "text": "term,",
+                "timestamp": "09:22:24"
+              },
+              {
+                "role": "AGENT",
+                "text": "what's",
+                "timestamp": "09:22:25"
+              },
+              {
+                "role": "AGENT",
+                "text": "the dream?",
+                "timestamp": "09:22:25"
+              },
+              {
+                "role": "AGENT",
+                "text": "Senior",
+                "timestamp": "09:22:25"
+              },
+              {
+                "role": "AGENT",
+                "text": "role,",
+                "timestamp": "09:22:25"
+              },
+              {
+                "role": "AGENT",
+                "text": "own",
+                "timestamp": "09:22:25"
+              },
+              {
+                "role": "AGENT",
+                "text": "business?",
+                "timestamp": "09:22:25"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:22:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "Are",
+                "timestamp": "09:22:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "you",
+                "timestamp": "09:22:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "figuring",
+                "timestamp": "09:22:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "this",
+                "timestamp": "09:22:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "out",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "alone,",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "or",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "do",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "you",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "have",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "any",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "guidance?",
+                "timestamp": "09:22:46"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:23:01"
+              },
+              {
+                "role": "AGENT",
+                "text": "If",
+                "timestamp": "09:23:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "something",
+                "timestamp": "09:23:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "makes",
+                "timestamp": "09:23:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "sense,",
+                "timestamp": "09:23:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "can",
+                "timestamp": "09:23:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "you",
+                "timestamp": "09:23:02"
+              },
+              {
+                "role": "AGENT",
+                "text": "decide",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "on your",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "own",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "or",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "need",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "to discuss",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "someone?",
+                "timestamp": "09:23:03"
+              },
+              {
+                "role": "AGENT",
+                "text": "If something",
+                "timestamp": "09:23:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "makes",
+                "timestamp": "09:23:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "sense,",
+                "timestamp": "09:23:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "can",
+                "timestamp": "09:23:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "you decide",
+                "timestamp": "09:23:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "on your",
+                "timestamp": "09:23:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "own",
+                "timestamp": "09:23:10"
+              },
+              {
+                "role": "AGENT",
+                "text": "or",
+                "timestamp": "09:23:11"
+              },
+              {
+                "role": "AGENT",
+                "text": "need",
+                "timestamp": "09:23:11"
+              },
+              {
+                "role": "AGENT",
+                "text": "to discuss",
+                "timestamp": "09:23:11"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:23:11"
+              },
+              {
+                "role": "AGENT",
+                "text": "someone?",
+                "timestamp": "09:23:11"
+              },
+              {
+                "role": "AGENT",
+                "text": "Are you",
+                "timestamp": "09:23:18"
+              },
+              {
+                "role": "AGENT",
+                "text": "still",
+                "timestamp": "09:23:18"
+              },
+              {
+                "role": "AGENT",
+                "text": "there?",
+                "timestamp": "09:23:19"
+              },
+              {
+                "role": "USER",
+                "text": "I",
+                "timestamp": "09:23:27"
+              },
+              {
+                "role": "USER",
+                "text": "de",
+                "timestamp": "09:23:27"
+              },
+              {
+                "role": "USER",
+                "text": "sign",
+                "timestamp": "09:23:27"
+              },
+              {
+                "role": "USER",
+                "text": "ed",
+                "timestamp": "09:23:27"
+              },
+              {
+                "role": "USER",
+                "text": "on",
+                "timestamp": "09:23:27"
+              },
+              {
+                "role": "USER",
+                "text": "my",
+                "timestamp": "09:23:27"
+              },
+              {
+                "role": "USER",
+                "text": "ow",
+                "timestamp": "09:23:28"
+              },
+              {
+                "role": "USER",
+                "text": "n",
+                "timestamp": "09:23:28"
+              },
+              {
+                "role": "USER",
+                "text": "I",
+                "timestamp": "09:23:28"
+              },
+              {
+                "role": "USER",
+                "text": "don",
+                "timestamp": "09:23:28"
+              },
+              {
+                "role": "USER",
+                "text": "'t",
+                "timestamp": "09:23:28"
+              },
+              {
+                "role": "USER",
+                "text": "nee",
+                "timestamp": "09:23:28"
+              },
+              {
+                "role": "USER",
+                "text": "d to",
+                "timestamp": "09:23:29"
+              },
+              {
+                "role": "USER",
+                "text": "anything.",
+                "timestamp": "09:23:29"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:23:29"
+              },
+              {
+                "role": "AGENT",
+                "text": "When",
+                "timestamp": "09:23:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "are you",
+                "timestamp": "09:23:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "looking",
+                "timestamp": "09:23:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "to start?",
+                "timestamp": "09:23:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "Immediately",
+                "timestamp": "09:23:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "or",
+                "timestamp": "09:23:30"
+              },
+              {
+                "role": "AGENT",
+                "text": "in a",
+                "timestamp": "09:23:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "few",
+                "timestamp": "09:23:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "months?",
+                "timestamp": "09:23:31"
+              },
+              {
+                "role": "AGENT",
+                "text": "Are you",
+                "timestamp": "09:23:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "still",
+                "timestamp": "09:23:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "there?",
+                "timestamp": "09:23:45"
+              },
+              {
+                "role": "AGENT",
+                "text": "I see.",
+                "timestamp": "09:23:47"
+              },
+              {
+                "role": "AGENT",
+                "text": "Based",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "on",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "what",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "you've",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "shared,",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "I think",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "a proper",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "chat",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:23:48"
+              },
+              {
+                "role": "AGENT",
+                "text": "our senior",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "counselor",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "would",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "help.",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "When's",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "a good",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "time",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "for",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "them",
+                "timestamp": "09:23:49"
+              },
+              {
+                "role": "AGENT",
+                "text": "to call?",
+                "timestamp": "09:23:50"
+              },
+              {
+                "role": "AGENT",
+                "text": "Based on",
+                "timestamp": "09:24:06"
+              },
+              {
+                "role": "AGENT",
+                "text": "what",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "you've",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "shared,",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "I think",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "a proper",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "chat",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "with",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "our senior",
+                "timestamp": "09:24:07"
+              },
+              {
+                "role": "AGENT",
+                "text": "counselor",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "would",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "help.",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "When's",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "a good",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "time",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "for",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "them",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "AGENT",
+                "text": "to call?",
+                "timestamp": "09:24:08"
+              },
+              {
+                "role": "USER",
+                "text": "may",
+                "timestamp": "09:24:11"
+              },
+              {
+                "role": "USER",
+                "text": "be",
+                "timestamp": "09:24:11"
+              },
+              {
+                "role": "USER",
+                "text": "after three days",
+                "timestamp": "09:24:11"
+              },
+              {
+                "role": "AGENT",
+                "text": "Got it.",
+                "timestamp": "09:24:12"
+              },
+              {
+                "role": "AGENT",
+                "text": "Perfect,",
+                "timestamp": "09:24:12"
+              },
+              {
+                "role": "AGENT",
+                "text": "I'll",
+                "timestamp": "09:24:12"
+              },
+              {
+                "role": "AGENT",
+                "text": "have",
+                "timestamp": "09:24:12"
+              },
+              {
+                "role": "AGENT",
+                "text": "them",
+                "timestamp": "09:24:12"
+              },
+              {
+                "role": "AGENT",
+                "text": "call",
+                "timestamp": "09:24:12"
+              },
+              {
+                "role": "AGENT",
+                "text": "you then.",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "It",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "was",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "really",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "nice",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "talking",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "to you,",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "Test",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "User.",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "Take",
+                "timestamp": "09:24:13"
+              },
+              {
+                "role": "AGENT",
+                "text": "care,",
+                "timestamp": "09:24:14"
+              },
+              {
+                "role": "AGENT",
+                "text": "bye!",
+                "timestamp": "09:24:14"
+              },
+              {
+                "role": "TOOL",
+                "text": "end_call: {'reason': 'Customer asked to end the call.'}",
+                "timestamp": "09:24:14"
+              },
+              {
+                "role": "SYSTEM",
+                "text": "Agent requested call end: Customer asked to end the call.",
+                "timestamp": "09:24:14"
+              },
+              {
+                "role": "SYSTEM",
+                "text": "Call duration: 322.3s",
+                "timestamp": "09:24:18"
+              },
+              {
+                "role": "SYSTEM",
+                "text": "Call ended",
+                "timestamp": "09:24:18"
+              }
+            ]
+          },
+          "webhookUrl": "https://n8n.srv1100770.hstgr.cloud/webhook/fwai-call-ended",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Start Call Trigger": {
+      "main": [
+        [
+          {
+            "node": "Call Server API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Server API": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Ended Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Call End": {
+      "main": [
+        [
+          {
+            "node": "Is Hot Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hot Lead?": {
+      "main": [
+        [
+          {
+            "node": "Hot Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Needs Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Callback?": {
+      "main": [
+        [
+          {
+            "node": "Schedule Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Warm/Cold Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Process Call End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "8bbc3d6e-1d31-4174-b2a1-053aefa8b033",
+  "meta": {
+    "instanceId": "67cf8c3485236d2b7fd5af88a7a1b8f8977fe5b814cb770d8cb5266f8da594eb"
+  },
+  "id": "As07tdPr28pMdCGe",
+  "tags": [
+    {
+      "updatedAt": "2026-02-07T10:44:02.200Z",
+      "createdAt": "2026-02-07T10:44:02.200Z",
+      "id": "AP6eh76wxvazYd2o",
+      "name": "Voice AI"
+    },
+    {
+      "updatedAt": "2026-02-07T10:44:02.190Z",
+      "createdAt": "2026-02-07T10:44:02.190Z",
+      "id": "S57pfWQekh9uRcZD",
+      "name": "FWAI"
+    },
+    {
+      "updatedAt": "2026-02-07T11:27:49.115Z",
+      "createdAt": "2026-02-07T11:27:49.115Z",
+      "id": "v4TjIISq93v2ZV7R",
+      "name": "Conversational"
+    }
+  ]
+}

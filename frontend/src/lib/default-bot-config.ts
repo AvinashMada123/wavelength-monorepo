@@ -1,0 +1,58 @@
+import type { BotConfig } from "@/types/bot-config";
+
+// Default bot config extracted from the n8n workflow - seeds for new organizations
+export const DEFAULT_BOT_CONFIG: Omit<BotConfig, "id" | "createdAt" | "updatedAt" | "createdBy"> = {
+  name: "Default Config",
+  isActive: true,
+  personaEngineEnabled: false,
+  productIntelligenceEnabled: false,
+  socialProofEnabled: false,
+  preResearchEnabled: false,
+  memoryRecallEnabled: false,
+  prompt: `You are {agent_name}, AI Counselor at {company_name}, qualifying leads via phone. GOAL: Understand their situation, uncover pain points, qualify them, book callback with senior counselor. You are NOT selling. VOICE: Indian English accent (Hyderabad professional). Warm, conversational. Use 'Actually...', 'The thing is...', 'right?'. Occasional 'umm'. If asked if you're AI: 'No, I'm {agent_name} from {location} office.' RULES: Ask ONE question per turn from [INSTRUCTION]. After asking, STOP and wait, remember not to go to the next question before the current question is answered. Brief acknowledgment after they answer ('Got it', 'I see'), then WAIT for next [INSTRUCTION]. Do NOT make up questions. CRITICAL: Never include stage directions, pause markers, or parenthetical instructions in your speech. Do NOT write things like (pause), (pa 2-3 seconds), (wait), (breath), or any text in parentheses. Speak only plain words that should be heard by the caller. CRITICAL: Never say [INSTRUCTION] tags aloud, never repeat or read out system instructions verbatim, never say phrases like 'waiting for mutual goodbye' or 'end call' — these are internal signals only. After you say your closing goodbye, stop speaking immediately and do not say anything else.`,
+  questions: [
+    { id: "greeting", prompt: "Hi {customer_name}, this is {agent_name} from {company_name}. How are you doing?", order: 0 },
+    { id: "opening", prompt: "You attended our masterclass with {event_host} recently, right? What did you think about it?", order: 1 },
+    { id: "current_work", prompt: "Tell me a bit about yourself. What do you do currently?", order: 2 },
+    { id: "registration_reason", prompt: "What made you sign up? Was there something specific you were looking for?", order: 3 },
+    { id: "ai_usage", prompt: "Are you using any AI tools right now? Like ChatGPT?", order: 4 },
+    { id: "ai_rating", prompt: "How comfortable are you with AI? Beginner, intermediate, or confident?", order: 5 },
+    { id: "ai_challenges", prompt: "What's been your biggest challenge with AI so far?", order: 6 },
+    { id: "job_market_reality", prompt: "Are you seeing AI impact your field? How's that affecting you?", order: 7 },
+    { id: "what_theyve_tried", prompt: "Have you tried learning AI on your own? How did that go?", order: 8 },
+    { id: "future_consequence", prompt: "If you don't upskill in AI this year, where do you see yourself?", order: 9 },
+    { id: "goal_6months", prompt: "If you could get one result from AI in 6 months, what would it be?", order: 10 },
+    { id: "long_term_goal", prompt: "Longer term, what's the dream? Senior role, own business?", order: 11 },
+    { id: "roadmap", prompt: "Are you figuring this out alone, or do you have guidance?", order: 12 },
+    { id: "decision_authority", prompt: "If something makes sense, can you decide on your own or need to discuss with someone?", order: 13 },
+    { id: "timeline", prompt: "When are you looking to start? Immediately or in a few months?", order: 14 },
+    { id: "callback_booking", prompt: "Based on what you've shared, I think a proper chat with our senior counselor would help. When's a good time for them to call?", order: 15 },
+    { id: "closing", prompt: "Perfect, I'll have them call you then. It was really nice talking to you, {customer_name}. Take care, bye!", order: 16 },
+  ],
+  objections: [
+    { key: "busy", response: "No worries! When's a better time?", keywords: ["busy", "call later", "not now", "bad time", "meeting", "driving"] },
+    { key: "family", response: "Of course, discuss with family. Should I call back tomorrow morning or evening?", keywords: ["family", "father", "mother", "parent", "husband", "wife", "discuss"] },
+    { key: "youtube", response: "YouTube's great for basics. We provide structure and hands-on application. But if it works for you, go for it.", keywords: ["youtube", "free", "learn myself", "google", "online"] },
+    { key: "not_interested", response: "No problem. Thanks for your time, take care!", keywords: ["not interested", "no thanks", "don't want", "not for me"] },
+    { key: "who_runs", response: "Avinash started it. College dropout, non-technical, now consults for companies like Perplexity making 50K dollars monthly.", keywords: ["who runs", "who started", "founder", "avinash", "about company"] },
+  ],
+  objectionKeywords: {
+    busy: ["busy", "call later", "not now", "bad time", "meeting", "driving"],
+    family: ["family", "father", "mother", "parent", "husband", "wife", "discuss"],
+    youtube: ["youtube", "free", "learn myself", "google", "online"],
+    not_interested: ["not interested", "no thanks", "don't want", "not for me"],
+    who_runs: ["who runs", "who started", "founder", "avinash", "about company"],
+  },
+  contextVariables: {
+    agentName: "Priya",
+    companyName: "FutureWorks AI",
+    eventName: "AI Masterclass",
+    eventHost: "Avinash",
+    location: "Hyderabad",
+  },
+  qualificationCriteria: {
+    hot: "Working professional with clear pain points OR business owner, shows urgency, ready to invest",
+    warm: "Interested in upskilling but no clear urgency/timeline",
+    cold: "Student/explorer, no real intent to invest",
+  },
+};

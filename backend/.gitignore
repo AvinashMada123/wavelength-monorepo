@@ -1,0 +1,40 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment files
+.env
+.env.local
+
+# Logs
+logs/*.log
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.egg-info/
+.meta_token
+recordings/*.wav
+
+# SSH Keys
+*.key
+*.key.pub
+*:Zone.Identifier
