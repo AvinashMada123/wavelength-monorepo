@@ -576,6 +576,28 @@ async def update_product_config(request: Request):
 
 
 # ============================================================================
+# Micro-Moments Config
+# ============================================================================
+
+@app.get("/micro-moments-config")
+async def get_micro_moments_config():
+    """Get micro-moments detection config (thresholds, hints)"""
+    mm_path = PROMPTS_DIR / "micro_moments.json"
+    if mm_path.exists():
+        return json.loads(mm_path.read_text(encoding="utf-8"))
+    return {}
+
+
+@app.post("/micro-moments-config")
+async def update_micro_moments_config(request: Request):
+    """Update micro-moments detection config"""
+    body = await request.json()
+    mm_path = PROMPTS_DIR / "micro_moments.json"
+    mm_path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"success": True, "message": "Micro-moments config updated"}
+
+
+# ============================================================================
 # Health Check
 # ============================================================================
 

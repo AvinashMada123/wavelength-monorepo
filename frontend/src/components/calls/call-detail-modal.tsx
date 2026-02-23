@@ -24,8 +24,10 @@ import {
   Brain,
   CheckCircle,
   HelpCircle,
+  Sparkles,
 } from "lucide-react";
 import type { CallRecord } from "@/types/call";
+import { MicroMomentTimeline } from "./micro-moment-timeline";
 import { CallStatusBadge } from "@/components/shared/status-badge";
 import { QualificationBadge } from "@/components/shared/qualification-badge";
 import { formatPhoneNumber, formatDate } from "@/lib/utils";
@@ -66,7 +68,7 @@ function MetricCard({ label, value, unit, icon: Icon }: { label: string; value: 
   );
 }
 
-type Tab = "summary" | "transcript" | "metrics" | "qualification" | "intelligence";
+type Tab = "summary" | "transcript" | "metrics" | "qualification" | "intelligence" | "moments";
 
 export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>("summary");
@@ -78,6 +80,7 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
     { id: "summary", label: "Summary", icon: FileText },
     { id: "qualification", label: "Qualification", icon: Target },
     { id: "intelligence", label: "Intelligence", icon: Brain },
+    { id: "moments", label: "Moments", icon: Sparkles },
     { id: "transcript", label: "Transcript", icon: MessageSquare },
     { id: "metrics", label: "Metrics", icon: Gauge },
   ];
@@ -531,6 +534,11 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
                       <Target className="h-10 w-10 mx-auto mb-3 opacity-30" />
                       <p>No qualification data available for this call.</p>
                     </div>
+                  )}
+
+                  {/* ── MOMENTS TAB ── */}
+                  {activeTab === "moments" && data && (
+                    <MicroMomentTimeline microMoments={data.micro_moments} />
                   )}
 
                   {/* ── INTELLIGENCE TAB ── */}
