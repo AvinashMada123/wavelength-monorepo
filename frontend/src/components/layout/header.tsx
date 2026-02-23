@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { LogOut, User, Sun, Moon } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
@@ -20,6 +21,7 @@ const pageNames: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/leads": "Lead Management",
   "/call-center": "Call Center",
+  "/memory": "Contact Memory",
   "/bot-config": "Bot Config",
   "/team": "Team",
   "/settings": "Settings",
@@ -34,6 +36,8 @@ export function Header() {
   const router = useRouter();
   const { userProfile, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const pageName = pageNames[pathname] || "Dashboard";
 
@@ -74,7 +78,7 @@ export function Header() {
           className="h-8 w-8"
           title="Toggle theme"
         >
-          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          {mounted ? (theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />) : <Sun className="h-4 w-4" />}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

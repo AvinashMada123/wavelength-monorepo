@@ -14,6 +14,7 @@ import {
   BarChart3,
   CreditCard,
   Building2,
+  Brain,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -30,6 +31,7 @@ const clientNavItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/call-center", label: "Call Center", icon: Phone },
+  { href: "/memory", label: "Memory", icon: Brain },
   {
     href: "/bot-config",
     label: "Bot Config",
