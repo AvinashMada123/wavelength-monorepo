@@ -1,0 +1,19 @@
+{
+  "name": "wavelength-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Calling System — Next.js frontend + Python FastAPI backend",
+  "scripts": {
+    "dev": "concurrently --names \"frontend,backend\" --prefix-colors \"cyan,yellow\" \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && python run.py",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "install": "npm run install:frontend && npm run install:backend",
+    "build": "cd frontend && npm run build",
+    "start": "concurrently --names \"frontend,backend\" --prefix-colors \"cyan,yellow\" \"cd frontend && npm start\" \"cd backend && python run.py\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

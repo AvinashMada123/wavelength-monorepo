@@ -1,0 +1,46 @@
+# ============================================================
+# Root monorepo .gitignore
+# ============================================================
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============================================================
+# Frontend (Next.js / Node.js)
+# ============================================================
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+frontend/.turbo/
+frontend/coverage/
+
+# ============================================================
+# Backend (Python / FastAPI)
+# ============================================================
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/**/*.pyc
+backend/.venv/
+backend/venv/
+backend/env/
+
+# Backend runtime data
+backend/logs/*.log
+backend/recordings/*.wav
+backend/recordings/*.mp3
+backend/recordings_transcribed/
+backend/transcripts/*.json
