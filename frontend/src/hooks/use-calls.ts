@@ -147,7 +147,12 @@ export function useCalls() {
     dispatch({ type: "SET_ACTIVE_CALL", payload: callRecord });
 
     try {
-      const authToken = user ? await user.getIdToken() : undefined;
+      let authToken: string | undefined;
+      try {
+        authToken = user ? await user.getIdToken() : undefined;
+      } catch {
+        // Token fetch failed — proceed without it; session cookie will handle auth
+      }
       const response = await triggerCall(request, leadId, authToken);
       dispatch({
         type: "UPDATE_CALL",
