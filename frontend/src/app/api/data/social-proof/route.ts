@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUidAndOrgFromToken, query, toCamelRows } from "@/lib/db";
 
+const BACKEND_BASE_URL = (
+  process.env.CALL_SERVER_URL || "http://34.93.142.172:3001/call/conversational"
+).replace(/\/call\/conversational$/, "");
+
 export async function GET(request: NextRequest) {
   try {
     const result = await getUidAndOrgFromToken(request);
@@ -81,6 +85,51 @@ export async function POST(request: NextRequest) {
         const { roleId } = body;
         await query("DELETE FROM ui_social_proof_roles WHERE id = $1 AND org_id = $2", [roleId, orgId]);
         return NextResponse.json({ success: true });
+      }
+
+      case "bulkImport": {
+        const { data } = body;
+        const backendRes = await fetch(`${BACKEND_BASE_URL}/social-proof/bulk`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        if (!backendRes.ok) {
+          const errText = await backendRes.text();
+          console.error("[Social Proof API] Backend bulk import error:", backendRes.status, errText);
+          return NextResponse.json({ error: "Backend bulk import failed" }, { status: 502 });
+        }
+
+        // Also upsert into frontend DB for consistency
+        for (const c of data.companies || []) {
+          const id = `comp_${crypto.randomUUID().slice(0, 8)}`;
+          await query(
+            `INSERT INTO ui_social_proof_companies (id, org_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
+             VALUES ($1, $2, $3, $4, $5, false, $6)
+             ON CONFLICT (org_id, company_name) DO UPDATE SET enrollments_count = $4, notable_outcomes = $5, updated_at = $6`,
+            [id, orgId, c.company_name, c.enrollments_count || 0, c.notable_outcomes || "", now]
+          );
+        }
+        for (const c of data.cities || []) {
+          const id = `city_${crypto.randomUUID().slice(0, 8)}`;
+          await query(
+            `INSERT INTO ui_social_proof_cities (id, org_id, city_name, enrollments_count, trending, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (org_id, city_name) DO UPDATE SET enrollments_count = $4, trending = $5, updated_at = $6`,
+            [id, orgId, c.city_name, c.enrollments_count || 0, c.trending ? true : false, now]
+          );
+        }
+        for (const r of data.roles || []) {
+          const id = `role_${crypto.randomUUID().slice(0, 8)}`;
+          await query(
+            `INSERT INTO ui_social_proof_roles (id, org_id, role_name, enrollments_count, success_stories, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (org_id, role_name) DO UPDATE SET enrollments_count = $4, success_stories = $5, updated_at = $6`,
+            [id, orgId, r.role_name, r.enrollments_count || 0, r.success_stories || "", now]
+          );
+        }
+
+        return NextResponse.json({ success: true, message: "Bulk import completed" });
       }
 
       default:

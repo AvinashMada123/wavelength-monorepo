@@ -156,12 +156,13 @@ export async function POST(request: NextRequest) {
     }
     console.log(`[Seed] Seeded ${PRODUCT_SECTIONS.length} product sections`);
 
-    // Seed Social Proof
+    // Seed Social Proof (upsert to handle re-seeding)
     for (let i = 0; i < SOCIAL_PROOF_COMPANIES.length; i++) {
       const c = SOCIAL_PROOF_COMPANIES[i];
       await query(
         `INSERT INTO ui_social_proof_companies (id, org_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (id) DO UPDATE SET org_id = $2, company_name = $3, enrollments_count = $4, notable_outcomes = $5, trending = $6, updated_at = NOW()`,
         [`company_${i + 1}`, orgId, c.companyName, c.enrollmentsCount, c.notableOutcomes, c.trending]
       );
       totalSeeded++;
@@ -170,7 +171,8 @@ export async function POST(request: NextRequest) {
       const c = SOCIAL_PROOF_CITIES[i];
       await query(
         `INSERT INTO ui_social_proof_cities (id, org_id, city_name, enrollments_count, trending, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (id) DO UPDATE SET org_id = $2, city_name = $3, enrollments_count = $4, trending = $5, updated_at = NOW()`,
         [`city_${i + 1}`, orgId, c.cityName, c.enrollmentsCount, c.trending]
       );
       totalSeeded++;
@@ -179,7 +181,8 @@ export async function POST(request: NextRequest) {
       const r = SOCIAL_PROOF_ROLES[i];
       await query(
         `INSERT INTO ui_social_proof_roles (id, org_id, role_name, enrollments_count, success_stories, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (id) DO UPDATE SET org_id = $2, role_name = $3, enrollments_count = $4, success_stories = $5, updated_at = NOW()`,
         [`role_${i + 1}`, orgId, r.roleName, r.enrollmentsCount, r.successStories]
       );
       totalSeeded++;

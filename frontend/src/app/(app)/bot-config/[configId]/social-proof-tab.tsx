@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
-import { Plus, Trash2, Loader2 } from "lucide-react";
+import { Plus, Trash2, Loader2, Upload, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 import type { SocialProofCompany, SocialProofCity, SocialProofRole } from "@/types/social-proof";
@@ -14,6 +14,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 async function apiSocialProof(
   user: { getIdToken: () => Promise<string> },
@@ -46,6 +53,11 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
   const [roles, setRoles] = useState<SocialProofRole[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkJson, setBulkJson] = useState("");
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkPreview, setBulkPreview] = useState<{ companies: number; cities: number; roles: number } | null>(null);
+  const bulkFileRef = useRef<HTMLInputElement>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -198,6 +210,51 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
     });
   }
 
+  // Bulk import handlers
+  function handleBulkJsonChange(value: string) {
+    setBulkJson(value);
+    try {
+      const parsed = JSON.parse(value);
+      setBulkPreview({
+        companies: Array.isArray(parsed.companies) ? parsed.companies.length : 0,
+        cities: Array.isArray(parsed.cities) ? parsed.cities.length : 0,
+        roles: Array.isArray(parsed.roles) ? parsed.roles.length : 0,
+      });
+    } catch {
+      setBulkPreview(null);
+    }
+  }
+
+  function handleBulkFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => handleBulkJsonChange(reader.result as string);
+    reader.readAsText(file);
+    if (bulkFileRef.current) bulkFileRef.current.value = "";
+  }
+
+  async function handleBulkImport() {
+    if (!bulkPreview) {
+      toast.error("Please provide valid JSON");
+      return;
+    }
+    try {
+      setBulkImporting(true);
+      const parsed = JSON.parse(bulkJson);
+      await apiSocialProof(user, "POST", { action: "bulkImport", data: parsed });
+      toast.success(`Imported ${bulkPreview.companies} companies, ${bulkPreview.cities} cities, ${bulkPreview.roles} roles`);
+      setBulkDialogOpen(false);
+      setBulkJson("");
+      setBulkPreview(null);
+      loadData();
+    } catch {
+      toast.error("Bulk import failed");
+    } finally {
+      setBulkImporting(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -223,11 +280,70 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
 
       {/* Sub-tabs */}
       <Tabs defaultValue="companies">
-        <TabsList variant="line">
-          <TabsTrigger value="companies">Companies</TabsTrigger>
-          <TabsTrigger value="cities">Cities</TabsTrigger>
-          <TabsTrigger value="roles">Roles</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between">
+          <TabsList variant="line">
+            <TabsTrigger value="companies">Companies</TabsTrigger>
+            <TabsTrigger value="cities">Cities</TabsTrigger>
+            <TabsTrigger value="roles">Roles</TabsTrigger>
+          </TabsList>
+          <Button variant="outline" size="sm" onClick={() => setBulkDialogOpen(true)}>
+            <Upload className="size-3.5" />
+            Bulk Import
+          </Button>
+        </div>
+
+        {/* Bulk Import Dialog */}
+        <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Bulk Import Social Proof</DialogTitle>
+              <DialogDescription>
+                Paste JSON or upload a .json file with companies, cities, and roles data.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => bulkFileRef.current?.click()}>
+                  <FileText className="size-3.5" />
+                  Upload JSON File
+                </Button>
+                <input
+                  ref={bulkFileRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleBulkFileSelect}
+                  className="hidden"
+                />
+              </div>
+              <Textarea
+                value={bulkJson}
+                onChange={(e) => handleBulkJsonChange(e.target.value)}
+                rows={10}
+                className="text-xs font-mono"
+                placeholder={`{\n  "companies": [{"company_name": "TCS", "enrollments_count": 150}],\n  "cities": [{"city_name": "Mumbai", "enrollments_count": 500}],\n  "roles": [{"role_name": "Developer", "enrollments_count": 200}]\n}`}
+              />
+              {bulkPreview && (
+                <div className="flex gap-3 text-sm">
+                  <span className="text-muted-foreground">Preview:</span>
+                  <span>{bulkPreview.companies} companies</span>
+                  <span>{bulkPreview.cities} cities</span>
+                  <span>{bulkPreview.roles} roles</span>
+                </div>
+              )}
+              {bulkJson && !bulkPreview && (
+                <p className="text-xs text-red-500">Invalid JSON format</p>
+              )}
+              <Button
+                onClick={handleBulkImport}
+                disabled={bulkImporting || !bulkPreview}
+                className="w-full"
+              >
+                {bulkImporting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                {bulkImporting ? "Importing..." : "Import Data"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Companies */}
         <TabsContent value="companies" className="space-y-4 mt-4">

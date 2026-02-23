@@ -31,11 +31,11 @@ export async function POST(request: NextRequest) {
 
     switch (action) {
       case "upload": {
-        const { text } = body;
+        const { text, contentType } = body;
         const res = await fetch(`${BACKEND_BASE_URL}/products/upload`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, orgId }),
+          body: JSON.stringify({ content: text, source_type: contentType || "text", orgId }),
         });
 
         if (!res.ok) {
