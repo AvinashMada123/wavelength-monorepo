@@ -13,6 +13,8 @@ const PUBLIC_PATHS = [
   "/api/call-ended",
   "/api/bot-config",
   "/api/call-updates",
+  "/api/call",
+  "/api/call-hangup",
 ];
 
 function isPublicPath(pathname: string): boolean {

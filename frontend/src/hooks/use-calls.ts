@@ -134,6 +134,8 @@ export function useCalls() {
     request: CallRequest,
     leadId?: string
   ): Promise<CallResponse> => {
+    console.log("[initiateCall] START — contact:", request.contactName, "phone:", request.phoneNumber, "leadId:", leadId);
+
     const callRecord: CallRecord = {
       id: generateId(),
       callUuid: "",
@@ -143,17 +145,24 @@ export function useCalls() {
       initiatedAt: new Date().toISOString(),
     };
 
+    console.log("[initiateCall] Dispatching ADD_CALL and SET_ACTIVE_CALL");
     dispatch({ type: "ADD_CALL", payload: callRecord });
     dispatch({ type: "SET_ACTIVE_CALL", payload: callRecord });
 
     try {
       let authToken: string | undefined;
       try {
+        console.log("[initiateCall] Getting auth token, user:", user ? "exists" : "null");
         authToken = user ? await user.getIdToken() : undefined;
-      } catch {
-        // Token fetch failed — proceed without it; session cookie will handle auth
+        console.log("[initiateCall] Auth token:", authToken ? "obtained" : "undefined");
+      } catch (tokenErr) {
+        console.warn("[initiateCall] getIdToken failed:", tokenErr);
       }
+
+      console.log("[initiateCall] Calling triggerCall...");
       const response = await triggerCall(request, leadId, authToken);
+      console.log("[initiateCall] triggerCall returned:", JSON.stringify(response));
+
       dispatch({
         type: "UPDATE_CALL",
         payload: {
@@ -170,6 +179,7 @@ export function useCalls() {
       });
       return response;
     } catch (error) {
+      console.error("[initiateCall] CAUGHT ERROR:", error);
       dispatch({
         type: "UPDATE_CALL",
         payload: {

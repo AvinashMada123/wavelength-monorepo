@@ -80,8 +80,17 @@ export function LeadsToolbar() {
   const selectedLeads = leads.filter((l) => selectedIds.includes(l.id));
 
   const startBulkCalls = useCallback(async (botConfigId?: string) => {
+    console.log("[startBulkCalls] CALLED — botConfigId:", botConfigId);
+    console.log("[startBulkCalls] selectedLeads count:", selectedLeads.length);
+    console.log("[startBulkCalls] settings.defaults:", JSON.stringify(settings.defaults));
+
     const leadsToCall = [...selectedLeads];
     deselectAll();
+
+    if (leadsToCall.length === 0) {
+      console.warn("[startBulkCalls] No leads to call — aborting");
+      return;
+    }
 
     const toastId = toast.loading(
       `Bulk calling 0/${leadsToCall.length} complete...`
@@ -93,9 +102,11 @@ export function LeadsToolbar() {
 
     while (idx < leadsToCall.length) {
       const batch = leadsToCall.slice(idx, idx + MAX_CONCURRENT);
+      console.log("[startBulkCalls] Processing batch:", batch.map((l) => l.contactName));
 
       const results = await Promise.allSettled(
         batch.map(async (lead) => {
+          console.log("[startBulkCalls] Building request for lead:", lead.contactName, lead.phoneNumber);
           const request: CallRequest = {
             phoneNumber: lead.phoneNumber,
             contactName: lead.contactName,
@@ -108,15 +119,26 @@ export function LeadsToolbar() {
             location: lead.location || settings.defaults.location,
             botConfigId,
           };
+          console.log("[startBulkCalls] CallRequest:", JSON.stringify(request));
 
-          await initiateCall(request, lead.id);
-          incrementCallCount(lead.id);
+          try {
+            console.log("[startBulkCalls] Calling initiateCall...");
+            await initiateCall(request, lead.id);
+            console.log("[startBulkCalls] initiateCall succeeded for", lead.contactName);
+            incrementCallCount(lead.id);
+          } catch (err) {
+            console.error("[startBulkCalls] initiateCall FAILED for", lead.contactName, err);
+            throw err;
+          }
         })
       );
 
       for (const r of results) {
         if (r.status === "fulfilled") succeeded++;
-        else failed++;
+        else {
+          failed++;
+          console.error("[startBulkCalls] Promise rejected:", r.reason);
+        }
       }
 
       idx += batch.length;
@@ -131,6 +153,7 @@ export function LeadsToolbar() {
       }
     }
 
+    console.log("[startBulkCalls] DONE — succeeded:", succeeded, "failed:", failed);
     toast.success(
       `Bulk call finished — ${succeeded} succeeded${failed > 0 ? `, ${failed} failed` : ""}`,
       { id: toastId }
