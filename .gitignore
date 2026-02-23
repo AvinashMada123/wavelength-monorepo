@@ -7,6 +7,9 @@
 .env.local
 .env.*.local
 
+# Firebase service account keys
+*-firebase-adminsdk-*.json
+
 # OS
 .DS_Store
 Thumbs.db
@@ -42,5 +45,6 @@ backend/env/
 backend/logs/*.log
 backend/recordings/*.wav
 backend/recordings/*.mp3
+backend/recordings/*.json
 backend/recordings_transcribed/
 backend/transcripts/*.json
