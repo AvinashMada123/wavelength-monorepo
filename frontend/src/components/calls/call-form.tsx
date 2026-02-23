@@ -37,6 +37,7 @@ export function CallForm() {
     eventHost: settings.defaults.eventHost,
     voice: settings.defaults.voice,
     location: settings.defaults.location,
+    jobTitle: "",
     botConfigId: "",
   });
 
@@ -319,6 +320,19 @@ export function CallForm() {
               {errors.location && (
                 <p className="text-xs text-red-500">{errors.location}</p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="jobTitle" className="text-xs">
+                Job Title
+              </Label>
+              <Input
+                id="jobTitle"
+                className="h-8 text-sm"
+                placeholder="e.g. Software Engineer"
+                value={form.jobTitle || ""}
+                onChange={(e) => updateField("jobTitle", e.target.value)}
+              />
             </div>
           </div>
 

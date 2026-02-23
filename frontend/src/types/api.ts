@@ -8,6 +8,7 @@ export interface ApiCallPayload {
   eventHost: string;
   voice: string;
   location: string;
+  jobTitle?: string;
   botConfigId?: string;
   leadId?: string;
 }

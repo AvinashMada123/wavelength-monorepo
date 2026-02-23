@@ -226,6 +226,7 @@ export async function POST(request: NextRequest) {
       personaEngineEnabled: configDoc?.persona_engine_enabled ?? false,
       productIntelligenceEnabled: configDoc?.product_intelligence_enabled ?? false,
       ...(botNotes ? { botNotes } : {}),
+      ...(payload.jobTitle ? { jobTitle: payload.jobTitle } : {}),
       ...(configDoc?.voice || payload.voice ? { voice: configDoc?.voice || payload.voice } : {}),
     };
 

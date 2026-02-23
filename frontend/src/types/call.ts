@@ -8,6 +8,7 @@ export interface CallRequest {
   eventHost: string;
   voice: string;
   location: string;
+  jobTitle?: string;
   botConfigId?: string;
 }
 
@@ -44,6 +45,16 @@ export interface CallEndedData {
   triggered_product_sections?: string[];
   social_proof_used?: boolean;
   no_answer?: boolean;
+  micro_moments?: {
+    final_strategy: string;
+    moments_detected: Array<{
+      moment: string;
+      turn: number;
+      strategy: string;
+      user_word_count: number;
+      response_time_ms: number;
+    }>;
+  };
 }
 
 export interface QuestionPair {
