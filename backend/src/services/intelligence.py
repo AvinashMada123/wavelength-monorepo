@@ -40,15 +40,30 @@ async def gather_intelligence(contact_name: str, context: dict, timeout: float =
         logger.debug("No company/industry in context - skipping pre-call intelligence")
         return ""
 
-    # Build a richer query from available context
-    parts = []
+    # Build search query from available context — ONLY about the company/industry,
+    # never about the individual person (too vague, causes hallucinations)
+    search_parts = []
     if company:
-        parts.append(f"{company} company overview, employee count, recent news 2025 2026")
+        search_parts.append(f"{company} company overview, employee count, recent news 2025 2026")
     elif industry:
-        parts.append(f"{industry} industry trends 2025 2026")
-    if role:
-        parts.append(f"key challenges for {role} in {industry or 'their industry'}")
-    query = ". ".join(parts) + ". 4 bullet points, one sentence each, focus on facts."
+        search_parts.append(f"{industry} industry trends 2025 2026")
+    if role and (company or industry):
+        search_parts.append(f"key challenges for {role} in {company or industry}")
+    search_query = ". ".join(search_parts)
+
+    # System instruction constrains the model to ONLY return search-grounded facts
+    system_instruction = (
+        "You are a factual research assistant. Your job is to return ONLY verifiable facts "
+        "found via Google Search. Rules:\n"
+        "1. ONLY include information that came from search results. NEVER infer, assume, or fabricate.\n"
+        "2. If search returns no relevant results, respond with exactly: NO_RESULTS\n"
+        "3. NEVER guess the prospect's role, background, interests, or personal details.\n"
+        "4. Focus ONLY on the COMPANY or INDUSTRY — not the individual person.\n"
+        "5. Return 3-4 bullet points, one sentence each, factual only.\n"
+        f"6. The prospect's name is {contact_name} — do NOT search for them personally."
+    )
+
+    query = f"Research the following and return only verified facts:\n{search_query}"
 
     try:
         start = time.time()
@@ -58,6 +73,7 @@ async def gather_intelligence(contact_name: str, context: dict, timeout: float =
                 model="gemini-2.0-flash-lite",
                 contents=query,
                 config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
                     tools=[types.Tool(google_search=types.GoogleSearch())]
                 )
             ),
@@ -67,10 +83,12 @@ async def gather_intelligence(contact_name: str, context: dict, timeout: float =
         elapsed_ms = (time.time() - start) * 1000
         brief = response.text.strip() if response.text else ""
 
-        if brief:
-            logger.info(f"Intelligence gathered in {elapsed_ms:.0f}ms ({len(brief)} chars)")
-        else:
-            logger.debug(f"Intelligence search returned empty in {elapsed_ms:.0f}ms")
+        # Filter out empty or no-result responses
+        if not brief or "NO_RESULTS" in brief:
+            logger.debug(f"Intelligence search returned no useful results in {elapsed_ms:.0f}ms")
+            return ""
+
+        logger.info(f"Intelligence gathered in {elapsed_ms:.0f}ms ({len(brief)} chars)")
         return brief
 
     except asyncio.TimeoutError:
