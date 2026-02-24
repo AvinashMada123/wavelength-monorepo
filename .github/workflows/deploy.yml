@@ -49,7 +49,8 @@ jobs:
             set -e
             echo "=== Deploying Backend ==="
             cd ${{ secrets.PROJECT_PATH }}
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             cd backend
             source venv/bin/activate
             pip install -r requirements.txt
@@ -71,7 +72,8 @@ jobs:
             set -e
             echo "=== Deploying Frontend ==="
             cd ${{ secrets.PROJECT_PATH }}
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             cd frontend
             npm install
             npm run build
