@@ -915,6 +915,8 @@ class PlivoMakeCallRequest(BaseModel):
     ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
     ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
     ghlLocationId: Optional[str] = None  # GHL location/sub-account ID
+    personaKeywords: Optional[dict] = None  # {name: {keywords:[], phrases:[]}} from DB
+    situationKeywords: Optional[dict] = None  # {name: {keywords:[], hint:""}} from DB
     plivoAuthId: Optional[str] = None  # Per-org Plivo Auth ID (overrides env default)
     plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
@@ -965,7 +967,15 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
 
         # Pass feature flags through context so session can use them
         context["_social_proof_enabled"] = bool(request.socialProofEnabled)
-        logger.info(f"Feature flags: preResearch={request.preResearchEnabled}, memoryRecall={request.memoryRecallEnabled}, socialProof={request.socialProofEnabled}")
+        if request.personaEngineEnabled:
+            context["_persona_engine"] = True
+        logger.info(f"Feature flags: preResearch={request.preResearchEnabled}, memoryRecall={request.memoryRecallEnabled}, socialProof={request.socialProofEnabled}, persona={request.personaEngineEnabled}")
+
+        # Pass custom persona/situation keyword configs from DB through context
+        if request.personaKeywords:
+            context["_custom_persona_keywords"] = request.personaKeywords
+        if request.situationKeywords:
+            context["_custom_situation_keywords"] = request.situationKeywords
 
         # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
         if request.ghlWhatsappWebhookUrl:

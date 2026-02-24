@@ -74,6 +74,7 @@ export interface CallMetrics {
   min_latency_ms: number;
   p90_latency_ms: number;
   total_nudges: number;
+  turn_count: number;
 }
 
 export interface CallRecord {

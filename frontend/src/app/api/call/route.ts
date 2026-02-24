@@ -109,13 +109,19 @@ export async function POST(request: NextRequest) {
         ]);
         personaPayload = {
           personas,
-          personaKeywords: personas.reduce((acc: Record<string, unknown[]>, p) => {
-            acc[p.name as string] = (p.keywords as unknown[]) || [];
+          personaKeywords: personas.reduce((acc: Record<string, { keywords: string[]; phrases: string[] }>, p) => {
+            acc[p.name as string] = {
+              keywords: ((p.keywords as string[]) || []),
+              phrases: ((p.phrases as string[]) || []),
+            };
             return acc;
           }, {}),
           situations,
-          situationKeywords: situations.reduce((acc: Record<string, unknown[]>, s) => {
-            acc[s.name as string] = (s.keywords as unknown[]) || [];
+          situationKeywords: situations.reduce((acc: Record<string, { keywords: string[]; hint: string }>, s) => {
+            acc[s.name as string] = {
+              keywords: ((s.keywords as string[]) || []),
+              hint: ((s.hint as string) || ""),
+            };
             return acc;
           }, {}),
         };

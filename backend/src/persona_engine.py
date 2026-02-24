@@ -106,16 +106,22 @@ def _normalize_transcription(text: str) -> str:
     return text + " " + " ".join(spaceless_parts)
 
 
-def detect_persona(accumulated_text: str) -> Optional[str]:
+def detect_persona(accumulated_text: str, custom_config: dict = None) -> Optional[str]:
     """
     Detect persona from accumulated user text using keyword/phrase scoring.
     Returns persona key or None. Threshold: score >= 2.
     Handles Gemini's fragmented audio transcription (e.g. 'stu den t' for 'student').
+
+    If custom_config is provided (from DB), uses it directly instead of loading
+    from persona_keywords.json. Keys are persona names (e.g. "Financial Advisor").
     """
     if not accumulated_text:
         return None
 
-    config = _load_json_config(PERSONA_KEYWORDS_FILE)
+    if custom_config:
+        config = custom_config
+    else:
+        config = _load_json_config(PERSONA_KEYWORDS_FILE)
     if not config:
         return None
 
@@ -123,9 +129,10 @@ def detect_persona(accumulated_text: str) -> Optional[str]:
     best_persona = None
     best_score = 0
 
-    for persona_key in _PERSONA_CHECK_ORDER:
-        if persona_key not in config:
-            continue
+    # Custom config: iterate all keys; file config: use hardcoded check order
+    persona_keys = list(config.keys()) if custom_config else [k for k in _PERSONA_CHECK_ORDER if k in config]
+
+    for persona_key in persona_keys:
         persona_config = config[persona_key]
         score = 0
 
@@ -150,15 +157,21 @@ def detect_persona(accumulated_text: str) -> Optional[str]:
 # Situation Detection (keyword matching on latest turn)
 # =============================================================================
 
-def detect_situations(user_text: str) -> list[str]:
+def detect_situations(user_text: str, custom_config: dict = None) -> list[str]:
     """
     Detect active situations from the latest user text.
     Returns list of situation keys (max 2).
+
+    If custom_config is provided (from DB), uses it directly instead of loading
+    from situation_keywords.json.
     """
     if not user_text:
         return []
 
-    config = _load_json_config(SITUATION_KEYWORDS_FILE)
+    if custom_config:
+        config = custom_config
+    else:
+        config = _load_json_config(SITUATION_KEYWORDS_FILE)
     if not config:
         return []
 
@@ -174,9 +187,12 @@ def detect_situations(user_text: str) -> list[str]:
     return active[:2]  # Max 2 active situations
 
 
-def get_situation_hint(situation_key: str) -> str:
+def get_situation_hint(situation_key: str, custom_config: dict = None) -> str:
     """Get the short hint for immediate injection via client_content."""
-    config = _load_json_config(SITUATION_KEYWORDS_FILE)
+    if custom_config:
+        config = custom_config
+    else:
+        config = _load_json_config(SITUATION_KEYWORDS_FILE)
     situation = config.get(situation_key, {})
     return situation.get("hint", "")
 

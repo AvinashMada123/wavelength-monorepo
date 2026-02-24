@@ -130,6 +130,7 @@ export async function GET(request: NextRequest) {
                       min_latency_ms: 0,
                       max_latency_ms: 0,
                       total_nudges: 0,
+                      turn_count: 0,
                     },
                     transcript: "",
                     no_answer: true,

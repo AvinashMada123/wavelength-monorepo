@@ -47,11 +47,13 @@ Analyze this call transcript Q&A and classify the lead.
 ## Call Data
 - Contact: ${callData.contact_name}
 - Duration: ${callData.duration_seconds}s
-- Questions completed: ${callData.questions_completed}/${callData.total_questions}
-- Completion rate: ${Math.round(callData.completion_rate * 100)}%
+- Conversation turns: ${callData.call_metrics?.turn_count || callData.questions_completed || 0}
+- Conversation depth: ${Math.round(callData.completion_rate * 100)}% (stages covered: opener → discovery → cost → pitch)
 - Interest level (from AI caller): ${callData.interest_level}
+- Detected persona: ${callData.triggered_persona || "Unknown"}
 - Call summary: ${callData.call_summary}
-- Objections raised: ${callData.objections_raised.length > 0 ? callData.objections_raised.join("; ") : "None"}
+- Objections raised: ${callData.objections_raised?.length > 0 ? callData.objections_raised.join("; ") : "None"}
+- Intelligence collected: ${callData.collected_responses && Object.keys(callData.collected_responses).length > 0 ? Object.entries(callData.collected_responses).map(([k, v]) => `${k}: ${v}`).join("; ") : "None"}
 
 ## Q&A Exchanges
 ${qaSection}

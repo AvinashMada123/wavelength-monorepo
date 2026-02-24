@@ -334,11 +334,12 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 3  # Split every 3 turns (lower latency)
+        self._session_split_interval = 5  # Split every 5 turns (balance latency vs context retention)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
         self._turn_exchanges = []   # Complete turn texts for clean summaries
+        self._key_facts = []        # Cumulative key facts that survive all session splits
 
         # Hot-swap session management
         self._standby_ws = None
@@ -372,6 +373,9 @@ class PlivoGeminiSession:
         self._active_situations = []
         self._previous_situations = []
         self._accumulated_user_text = ""
+        # Custom persona/situation keyword configs from DB (bypass file-based defaults)
+        self._custom_persona_keywords = self.context.pop("_custom_persona_keywords", None)
+        self._custom_situation_keywords = self.context.pop("_custom_situation_keywords", None)
         # Micro-Moment Detector (behavioral buying signal / resistance detection)
         self._micro_moment_detector = None
         self._agent_turn_complete_time = None   # Set at turnComplete
@@ -392,8 +396,13 @@ class PlivoGeminiSession:
             # Pre-set persona from cross-call memory (skips NEPQ discovery)
             memory_persona = self.context.get("_memory_persona")
             if memory_persona:
-                self._detected_persona = memory_persona
-                self.log.detail(f"Persona pre-loaded from memory: {memory_persona}")
+                # Validate memory persona exists in current config (handles transition
+                # from old snake_case keys to DB persona names)
+                if self._custom_persona_keywords and memory_persona not in self._custom_persona_keywords:
+                    self.log.detail(f"Memory persona '{memory_persona}' not in current config, will re-detect")
+                else:
+                    self._detected_persona = memory_persona
+                    self.log.detail(f"Persona pre-loaded from memory: {memory_persona}")
 
         # Initialize Micro-Moment Detector (runs on ALL calls, independent of persona engine)
         from src.core.config import config as app_config
@@ -522,20 +531,24 @@ class PlivoGeminiSession:
             if self._use_persona_engine:
                 if not self._detected_persona:
                     from src.persona_engine import detect_persona
-                    detected = await loop.run_in_executor(None, detect_persona, accumulated_text)
+                    detected = await loop.run_in_executor(
+                        None, detect_persona, accumulated_text, self._custom_persona_keywords
+                    )
                     if detected:
                         self._detected_persona = detected
                         self.log.detail(f"Persona detected: {detected}")
 
                 # Situation detection (re-evaluated every turn)
                 from src.persona_engine import detect_situations, get_situation_hint
-                new_situations_list = await loop.run_in_executor(None, detect_situations, full_user)
+                new_situations_list = await loop.run_in_executor(
+                    None, detect_situations, full_user, self._custom_situation_keywords
+                )
                 self._active_situations = new_situations_list
                 if self._active_situations:
                     self.log.detail(f"Situations active: {self._active_situations}")
                 new_situations = set(self._active_situations) - set(self._previous_situations)
                 if new_situations and self.goog_live_ws:
-                    hint = get_situation_hint(list(new_situations)[0])
+                    hint = get_situation_hint(list(new_situations)[0], self._custom_situation_keywords)
                     if hint:
                         asyncio.create_task(self._inject_situation_hint(hint))
                         self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
@@ -1002,13 +1015,13 @@ Rules:
         Only fires when the session is GENUINELY dead — not when the AI is mid-generation.
         Key guard: if _current_turn_audio_chunks > 0, the AI is actively generating — NOT stuck."""
         try:
-            # Wait 15 seconds — enough for greeting + user to answer
-            await asyncio.sleep(15.0)
+            # Short initial delay — just enough for greeting audio to start playing
+            await asyncio.sleep(5.0)
 
             while self.is_active and not self._closing_call:
                 # Guard: never fire if AI is currently generating audio or swap is in progress
                 if self._current_turn_audio_chunks > 0 or self._swap_in_progress or self._agent_speaking:
-                    await asyncio.sleep(3.0)
+                    await asyncio.sleep(2.0)
                     continue
 
                 # CRITICAL CHECK: If goog_live_ws is None and we're not already reconnecting,
@@ -1020,25 +1033,42 @@ Rules:
                     self.log.warn("Session watchdog: WS is None but user audio flowing — forcing reconnect")
                     self._save_transcript("SYSTEM", "Watchdog: WS dead, forcing reconnect")
                     asyncio.create_task(self._emergency_session_split())
-                    await asyncio.sleep(15.0)  # Cooldown after reconnect
+                    await asyncio.sleep(10.0)  # Cooldown after reconnect
                     continue
 
                 # Check: user audio has been flowing but AI has generated
                 # ZERO audio chunks since the last turn ended. Session is alive but unresponsive.
-                if (self._last_user_audio_time
-                        and self._last_agent_turn_end_time):
-                    time_since_agent = time.time() - self._last_agent_turn_end_time
+                # Use time since CALL ANSWERED (not since agent turn end) to handle the
+                # preload gap — greeting completes during preload but user may not answer for 10-20s.
+                if self._last_user_audio_time:
                     time_since_user = time.time() - self._last_user_audio_time
-                    # AI silent for 12+ seconds AND user audio is recent (within 5s)
-                    if time_since_agent > 12.0 and time_since_user < 5.0:
-                        self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s "
-                                      f"— forcing reconnect")
-                        self._save_transcript("SYSTEM", "Watchdog: AI unresponsive, forcing reconnect")
-                        asyncio.create_task(self._emergency_session_split())
-                        await asyncio.sleep(15.0)  # Cooldown after reconnect
-                        continue
+                    user_audio_flowing = time_since_user < 5.0
 
-                await asyncio.sleep(3.0)  # Check every 3 seconds
+                    if user_audio_flowing and self._last_agent_turn_end_time:
+                        # How long since user started sending audio after the greeting?
+                        # If user has been sending audio for 6+ seconds with no AI response, session is dead.
+                        time_since_call_answered = time.time() - self._call_answered_time if self._call_answered_time else 0
+                        time_since_agent = time.time() - self._last_agent_turn_end_time
+
+                        # After greeting, AI should respond within 6s of receiving user audio
+                        if time_since_call_answered > 6.0 and time_since_agent > 6.0 and self._turn_count <= 1:
+                            self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s after greeting "
+                                          f"(call answered {time_since_call_answered:.0f}s ago) — forcing reconnect")
+                            self._save_transcript("SYSTEM", "Watchdog: AI unresponsive post-greeting, forcing reconnect")
+                            asyncio.create_task(self._emergency_session_split())
+                            await asyncio.sleep(10.0)  # Cooldown after reconnect
+                            continue
+
+                        # General unresponsive check for mid-call (turn > 1)
+                        if time_since_agent > 10.0 and self._turn_count > 1:
+                            self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s "
+                                          f"— forcing reconnect")
+                            self._save_transcript("SYSTEM", "Watchdog: AI unresponsive, forcing reconnect")
+                            asyncio.create_task(self._emergency_session_split())
+                            await asyncio.sleep(10.0)  # Cooldown after reconnect
+                            continue
+
+                await asyncio.sleep(2.0)  # Check every 2 seconds
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1299,23 +1329,27 @@ Rules:
     async def _send_context_to_ws(self, ws):
         """Send minimal anti-repetition nudge via client_content.
         Full conversation context is already in the system_instruction — this just
-        reinforces 'don't repeat' and 'wait for customer'."""
+        reinforces 'don't repeat' and 'wait for customer'.
+        CRITICAL: turn_complete=False so Gemini does NOT treat this as a completed user
+        turn and does NOT generate an immediate response (no more 'Understood...' pattern)."""
         last_user = self._last_user_text[:150] if self._last_user_text else ""
         agent_ref = (self._last_agent_text or self._last_agent_question or "")[:150]
 
         if agent_ref and last_user:
             trigger = (
-                f'[Customer just said: "{last_user}". '
-                f'Do NOT repeat yourself. Respond to this and move forward. Keep it short.]'
+                f'[Session resumed. Last customer message: "{last_user}". '
+                f'Do NOT respond to this. Wait for customer to speak next.]'
             )
         elif agent_ref:
-            trigger = '[Wait for the customer to speak. Do NOT repeat yourself.]'
+            trigger = '[Session resumed. Wait for customer to speak. Do NOT say anything until customer speaks.]'
         else:
-            trigger = "[Wait for the customer to speak.]"
+            trigger = "[Session resumed. Wait silently for customer to speak.]"
 
-        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": True}}
+        # turn_complete: False — Gemini will NOT generate a response to this.
+        # It will only respond when actual user audio triggers speech detection.
+        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
         await ws.send(json.dumps(msg))
-        self.log.detail(f"Anti-repetition sent: last='{agent_ref[:50]}'")
+        self.log.detail(f"Context sent (turn_complete=False): last='{agent_ref[:50]}'")
 
     async def _close_ws_quietly(self, ws):
         """Close a WS without error logging."""
@@ -1396,22 +1430,35 @@ Rules:
 
     def _build_compact_summary(self) -> str:
         """Build compact conversation summary for session split.
-        Uses compressed format to minimize tokens while preserving full context."""
-        if not self._turn_exchanges:
+        Includes KEY FACTS (cumulative, never lost) + recent turn history."""
+        if not self._turn_exchanges and not self._key_facts:
             return ""
         lines = []
-        exchanges = self._turn_exchanges[-6:]  # Last 6 turns max
-        for i, ex in enumerate(exchanges):
-            turn_num = self._turn_count - len(exchanges) + i + 1
-            agent = ex.get("agent", "")[:150]
-            user = ex.get("user", "")[:150]
-            if agent and user:
-                lines.append(f"T{turn_num}: You: {agent} | Customer: {user}")
-            elif agent:
-                lines.append(f"T{turn_num}: You: {agent}")
-            elif user:
-                lines.append(f"T{turn_num}: Customer: {user}")
-        lines.append("ALL ABOVE IS DONE. Advance to NEXT NEW topic. Do NOT re-ask anything above.")
+
+        # KEY FACTS section — cumulative, survives all session splits
+        if self._key_facts:
+            lines.append("KEY FACTS (confirmed during this call):")
+            for fact in self._key_facts:
+                lines.append(f"  - {fact}")
+            lines.append("")
+
+        # Recent conversation — last 10 turns for context
+        if self._turn_exchanges:
+            lines.append("RECENT CONVERSATION:")
+            exchanges = self._turn_exchanges[-10:]
+            for i, ex in enumerate(exchanges):
+                turn_num = self._turn_count - len(exchanges) + i + 1
+                agent = ex.get("agent", "")[:200]
+                user = ex.get("user", "")[:200]
+                if agent and user:
+                    lines.append(f"T{turn_num}: You: {agent} | Customer: {user}")
+                elif agent:
+                    lines.append(f"T{turn_num}: You: {agent}")
+                elif user:
+                    lines.append(f"T{turn_num}: Customer: {user}")
+
+        lines.append("")
+        lines.append("ALL ABOVE IS DONE. Continue from where you left off. Do NOT re-ask anything above. Do NOT acknowledge this context.")
         return "\n".join(lines)
 
     async def _run_google_live_session(self):
@@ -1514,14 +1561,19 @@ Rules:
 
             # Add detected persona hint
             if self._detected_persona:
-                persona_label = self._detected_persona.replace("_", " ").title()
+                if self._custom_persona_keywords:
+                    # DB persona names are already display-ready (e.g. "Financial Advisor")
+                    persona_label = self._detected_persona
+                else:
+                    # File-based keys are snake_case (e.g. "working_professional")
+                    persona_label = self._detected_persona.replace("_", " ").title()
                 full_prompt += (
                     f"\n\n[PERSONA DETECTED: {persona_label}. "
                     f"Tailor your pitch to resonate with their specific needs, priorities, and pain points.]"
                 )
 
-            # Add situation hints
-            _SITUATION_HINTS = {
+            # Add situation hints — use DB hints if available, fall back to hardcoded
+            _FALLBACK_SITUATION_HINTS = {
                 "price_objection": "Price Concern — Focus on value and ROI rather than price. Don't discount.",
                 "high_interest": "High Interest — Customer is showing strong interest. Guide toward next steps and closing.",
                 "skepticism": "Skepticism — Build credibility with facts, real results, and social proof.",
@@ -1529,7 +1581,12 @@ Rules:
                 "competitor_comparison": "Competitor Comparison — Differentiate your offering, highlight unique strengths.",
             }
             for situation in self._active_situations[:2]:
-                hint = _SITUATION_HINTS.get(situation, situation.replace("_", " ").title())
+                hint = ""
+                if self._custom_situation_keywords:
+                    sit_config = self._custom_situation_keywords.get(situation, {})
+                    hint = sit_config.get("hint", "") if isinstance(sit_config, dict) else ""
+                if not hint:
+                    hint = _FALLBACK_SITUATION_HINTS.get(situation, situation.replace("_", " ").title())
                 full_prompt += f"\n[SITUATION: {hint}]"
 
             if mirror_inst:
@@ -1615,6 +1672,11 @@ Rules:
             "(c) Third pushback or explicit 'stop'/'no thanks'/'end the call': NOW end warmly. "
             "Key: Each reframe must use a DIFFERENT angle. Never repeat the same pitch twice."
             "\n4. ONE QUESTION AT A TIME: Ask one short question, then stop. Do not stack multiple questions."
+            "\n5. SESSION CONTINUITY: If you receive context about what was discussed earlier, "
+            "do NOT acknowledge it. NEVER say 'Understood', 'Got it, so we were discussing...', "
+            "'I see what we were talking about', or paraphrase the context. "
+            "Just WAIT SILENTLY for the customer to speak, then respond naturally to what THEY say. "
+            "Pick up the conversation as if there was no interruption."
         )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition
@@ -1833,12 +1895,28 @@ Rules:
                     )
                     self.log.detail(f"User info saved: company={t_company}, role={t_role}, name={t_name}")
 
+                    # Track key facts for session split context (survives all splits)
+                    if t_role:
+                        fact = f"Customer role: {t_role}"
+                        if t_company:
+                            fact += f" at {t_company}"
+                        if fact not in self._key_facts:
+                            self._key_facts.append(fact)
+                    elif t_company:
+                        fact = f"Customer company: {t_company}"
+                        if fact not in self._key_facts:
+                            self._key_facts.append(fact)
+                    if t_key_detail:
+                        fact = f"Key detail: {t_key_detail}"
+                        if fact not in self._key_facts:
+                            self._key_facts.append(fact)
+
                     # Update session state for persona detection
                     if t_role and not self._detected_persona:
                         from src.persona_engine import detect_persona
                         role_text = f"I work as a {t_role}" + (f" at {t_company}" if t_company else "")
                         self._accumulated_user_text += " " + role_text
-                        detected = detect_persona(self._accumulated_user_text)
+                        detected = detect_persona(self._accumulated_user_text, self._custom_persona_keywords)
                         if detected:
                             self._detected_persona = detected
                             self.log.detail(f"Persona detected from tool call: {detected}")
@@ -2094,8 +2172,37 @@ Rules:
                         # Track turn exchanges for compact summary
                         if full_agent or full_user:
                             self._turn_exchanges.append({"agent": full_agent, "user": full_user})
-                            if len(self._turn_exchanges) > 8:
-                                self._turn_exchanges = self._turn_exchanges[-8:]
+                            if len(self._turn_exchanges) > 16:
+                                self._turn_exchanges = self._turn_exchanges[-16:]
+
+                        # Auto-extract key facts from conversation for session split context
+                        if full_user and len(full_user) > 10:
+                            user_lower = full_user.lower()
+                            # Track pain points mentioned by user
+                            pain_keywords = ["challenge", "difficult", "hard", "struggle", "frustrat",
+                                             "problem", "issue", "worry", "fear", "concern", "losing",
+                                             "behind", "keeping up", "overwhelm"]
+                            for kw in pain_keywords:
+                                if kw in user_lower and len(self._key_facts) < 8:
+                                    fact = f"Pain point (turn {self._turn_count}): {full_user[:120]}"
+                                    # Don't add duplicate pain points
+                                    if not any("Pain point" in f and full_user[:40] in f for f in self._key_facts):
+                                        self._key_facts.append(fact)
+                                    break
+                            # Track objections
+                            objection_keywords = ["expensive", "too much", "can't afford", "not interested",
+                                                  "don't need", "no thanks", "not sure", "think about it"]
+                            for kw in objection_keywords:
+                                if kw in user_lower and len(self._key_facts) < 8:
+                                    fact = f"Objection (turn {self._turn_count}): {full_user[:120]}"
+                                    if not any("Objection" in f and full_user[:40] in f for f in self._key_facts):
+                                        self._key_facts.append(fact)
+                                    break
+                        if full_agent:
+                            # Track what was pitched
+                            agent_lower = full_agent.lower()
+                            if "gold membership" in agent_lower and not any("Product mentioned" in f for f in self._key_facts):
+                                self._key_facts.append("Product mentioned: Gold Membership pitched to customer")
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
@@ -2602,11 +2709,11 @@ Rules:
         try:
             import httpx
 
-            # Derive interest level from conversation length
+            # Derive interest level from conversation engagement (duration + turns)
             turn_count = self._turn_count
-            if turn_count >= 6:
+            if duration >= 240 or turn_count >= 6:
                 interest_level = "High"
-            elif turn_count >= 3:
+            elif duration >= 120 or turn_count >= 3:
                 interest_level = "Medium"
             else:
                 interest_level = "Low"
@@ -2642,7 +2749,44 @@ Rules:
 
             persona_label = ""
             if self._detected_persona:
-                persona_label = self._detected_persona.replace("_", " ").title()
+                if self._custom_persona_keywords:
+                    persona_label = self._detected_persona
+                else:
+                    persona_label = self._detected_persona.replace("_", " ").title()
+
+            # Extract objections and pain points from key_facts collected during the call
+            objections = []
+            pain_points = []
+            for fact in self._key_facts:
+                if fact.startswith("Objection"):
+                    # Extract the user's text after the prefix "Objection (turn N): "
+                    obj_text = fact.split(": ", 1)[1] if ": " in fact else fact
+                    objections.append(obj_text)
+                elif fact.startswith("Pain point"):
+                    pp_text = fact.split(": ", 1)[1] if ": " in fact else fact
+                    pain_points.append(pp_text)
+
+            # Build collected_responses from intelligence gathered during the call
+            collected_responses = {}
+            if self._detected_persona:
+                collected_responses["detected_persona"] = persona_label
+            if self._active_situations:
+                collected_responses["situations"] = ", ".join(self._active_situations)
+            if self._active_product_sections and self._active_product_sections != ["overview"]:
+                collected_responses["product_sections"] = ", ".join(set(self._active_product_sections))
+            if pain_points:
+                collected_responses["pain_points"] = "; ".join(pain_points)
+
+            # Completion rate: proportion of conversation stages reached
+            # Stage 1 = opener, Stage 2 = discovery, Stage 3 = cost/pain, Stage 4 = pitch
+            stages_reached = 1  # Always reach stage 1 (opener)
+            if pain_points or any("Pain point" in f for f in self._key_facts):
+                stages_reached = 2  # Reached discovery
+            if any("Product mentioned" in f for f in self._key_facts):
+                stages_reached = 4  # Reached pitch (implies cost stage passed)
+            elif stages_reached >= 2 and turn_count >= 4:
+                stages_reached = 3  # Likely reached cost stage
+            completion_rate = round(stages_reached / 4, 2)
 
             payload = {
                 "event": "call_ended",
@@ -2655,17 +2799,17 @@ Rules:
                 # Transcript
                 "transcript": transcript,
                 "transcript_entries": normalized_entries,
-                # Persona (replaces question stats in UI)
+                # Persona
                 "persona": persona_label,
                 "triggered_persona": self._detected_persona,
-                # Legacy question stats (zeroed out — no longer meaningful)
-                "questions_completed": 0,
-                "total_questions": 0,
-                "completion_rate": 0,
+                # Call engagement stats
+                "questions_completed": turn_count,
+                "total_questions": max(turn_count, 8),
+                "completion_rate": completion_rate,
                 "interest_level": interest_level,
                 "call_summary": call_summary,
-                "objections_raised": [],
-                "collected_responses": {},
+                "objections_raised": objections,
+                "collected_responses": collected_responses,
                 "question_pairs": [],
                 "call_metrics": {
                     "total_duration_s": round(duration, 1),

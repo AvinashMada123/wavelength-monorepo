@@ -15,11 +15,7 @@ import {
   Clock,
   MessageSquare,
   FileText,
-  Gauge,
   AlertTriangle,
-  Activity,
-  Zap,
-  Timer,
   Target,
   Brain,
   CheckCircle,
@@ -68,7 +64,7 @@ function MetricCard({ label, value, unit, icon: Icon }: { label: string; value: 
   );
 }
 
-type Tab = "summary" | "transcript" | "metrics" | "qualification" | "intelligence" | "moments";
+type Tab = "summary" | "transcript" | "qualification" | "intelligence" | "moments";
 
 export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>("summary");
@@ -82,7 +78,6 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
     { id: "intelligence", label: "Intelligence", icon: Brain },
     { id: "moments", label: "Moments", icon: Sparkles },
     { id: "transcript", label: "Transcript", icon: MessageSquare },
-    { id: "metrics", label: "Metrics", icon: Gauge },
   ];
 
   return (
@@ -114,10 +109,9 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
               animate={{ opacity: 1, y: 0 }}
               className="space-y-3 mt-4"
             >
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <MetricCard icon={Clock} label="Duration" value={data.duration_seconds || 0} unit="s" />
-                <MetricCard icon={Activity} label="Completion" value={`${Math.round((typeof data.completion_rate === 'number' ? (data.completion_rate > 1 ? data.completion_rate : data.completion_rate * 100) : 0))}%`} />
-                <MetricCard icon={MessageSquare} label="Questions" value={`${data.questions_completed || 0}/${data.total_questions || 0}`} />
+                <MetricCard icon={MessageSquare} label="Turns" value={data.call_metrics?.turn_count || data.questions_completed || 0} />
               </div>
               {call.status === "completed" && call.callUuid && (
                 <div className="rounded-lg border bg-muted/30 p-3">
@@ -413,30 +407,6 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
                         </div>
                       ) : (
                         <p className="text-sm text-muted-foreground">No transcript available.</p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── METRICS TAB ── */}
-                  {activeTab === "metrics" && (
-                    <div className="space-y-5">
-                      <h4 className="text-sm font-semibold mb-2">Call Performance Metrics</h4>
-                      <div className="grid grid-cols-2 gap-3">
-                        <MetricCard icon={Clock} label="Total Duration" value={data.call_metrics.total_duration_s} unit="s" />
-                        <MetricCard icon={MessageSquare} label="Questions Completed" value={data.call_metrics.questions_completed} />
-                        <MetricCard icon={Zap} label="Avg Latency" value={data.call_metrics.avg_latency_ms} unit="ms" />
-                        <MetricCard icon={Activity} label="P90 Latency" value={data.call_metrics.p90_latency_ms} unit="ms" />
-                        <MetricCard icon={Gauge} label="Min Latency" value={data.call_metrics.min_latency_ms} unit="ms" />
-                        <MetricCard icon={Timer} label="Max Latency" value={data.call_metrics.max_latency_ms} unit="ms" />
-                      </div>
-
-                      {data.call_metrics.total_nudges > 0 && (
-                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-                          <p className="text-sm text-amber-400">
-                            <AlertTriangle className="inline h-3.5 w-3.5 mr-1.5" />
-                            {data.call_metrics.total_nudges} nudge{data.call_metrics.total_nudges > 1 ? "s" : ""} were needed during this call
-                          </p>
-                        </div>
                       )}
                     </div>
                   )}
