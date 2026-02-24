@@ -2076,8 +2076,6 @@ Rules:
                     self.greeting_audio_complete = True
                     self._turn_count += 1
                     self._current_turn_id += 1
-                    # Always reset per-turn flags on turnComplete
-                    self._has_output_transcription = False
 
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
@@ -2304,15 +2302,20 @@ Rules:
                                 "waiting for their response" in ai_text
                             )
                             if ai_text and not is_thinking and len(ai_text) > 3:
-                                # Skip if outputTranscription already captured this speech
-                                # (prevents duplicate "Got it... Got it..." after tool calls)
+                                # Skip entirely if outputTranscription already captured this speech
+                                # (prevents duplicate "Got it... Got it..." in transcript and buffer)
                                 if not self._has_output_transcription:
                                     self._current_turn_agent_text.append(ai_text)
-                                self._save_transcript("AGENT", ai_text)
-                                self._log_conversation("model", ai_text)
-                                # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
-                                if not self._closing_call and self._is_goodbye_message(ai_text):
-                                    self._goodbye_pending = True
+                                    self._save_transcript("AGENT", ai_text)
+                                    self._log_conversation("model", ai_text)
+                                    # Defer goodbye detection to turnComplete (avoid cutting call mid-sentence)
+                                    if not self._closing_call and self._is_goodbye_message(ai_text):
+                                        self._goodbye_pending = True
+
+                # Reset per-turn dedup flag AFTER processing all content in this message
+                # (moved from turnComplete to avoid resetting before content is processed)
+                if sc.get("turnComplete"):
+                    self._has_output_transcription = False
         except Exception as e:
             logger.error(f"Error processing Google message: {e} - continuing session")
 
