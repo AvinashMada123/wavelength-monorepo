@@ -150,7 +150,7 @@ def detect_voice_from_prompt(prompt: str) -> str:
 TOOL_DECLARATIONS = [
     {
         "name": "end_call",
-        "description": "End the phone call. ONLY call this AFTER the conversation is complete AND you have said goodbye. NEVER call this just because the user paused or was quiet.",
+        "description": "End the phone call. ONLY call this AFTER you have tried at least 2-3 reframes AND the customer explicitly says stop/no/end. NEVER end just because they said 'not interested' once — that is normal in sales. Try different angles first. Only call this after a firm third rejection or explicit 'please stop'.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -274,10 +274,11 @@ class PlivoGeminiSession:
         # Latency tracking - only logs if > threshold
         self._last_user_speech_time = None
 
-        # Silence monitoring - 3 second SLA
+        # Silence monitoring - 5 second SLA (gives customer time to think after AI asks a question)
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 3.0  # Must respond within 3 seconds
+        self._silence_sla_seconds = 3.0  # Safety net: nudge AI if no response 3s after user speaks
         self._last_ai_audio_time = None  # Track when AI last sent audio
+        self._last_agent_turn_end_time = None  # Track when AI finished speaking (for nudge guard)
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
         self._turn_start_time = None  # Track when current turn started (for latency logging)
@@ -333,7 +334,7 @@ class PlivoGeminiSession:
 
         # Session split - reset audio KV cache every N turns to keep latency low
         self._turns_since_reconnect = 0
-        self._session_split_interval = 3  # Split every 3 turns (stable config)
+        self._session_split_interval = 3  # Split every 3 turns (lower latency)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
@@ -891,6 +892,8 @@ Rules:
         self._timeout_task = asyncio.create_task(self._monitor_call_duration())
         # Start silence monitor (3 second SLA)
         self._silence_monitor_task = asyncio.create_task(self._monitor_silence())
+        # Start session watchdog — detects dead Gemini sessions
+        asyncio.create_task(self._session_watchdog())
 
     async def _send_preloaded_audio(self):
         """Send preloaded audio directly to plivo_send_queue"""
@@ -961,12 +964,23 @@ Rules:
             logger.error(f"Error sending wrap-up message: {e}")
 
     async def _monitor_silence(self):
-        """Monitor for silence - nudge AI if no response after user speaks"""
+        """Monitor for silence - nudge AI if no response after user speaks.
+        IMPORTANT: Do NOT nudge if the AI just finished speaking (it asked a question
+        and is waiting for the customer). Only nudge when the customer spoke and the AI
+        hasn't responded."""
         try:
             while self.is_active and not self._closing_call:
                 await asyncio.sleep(0.3)  # Check every 0.3 seconds for faster response
 
                 if self._last_user_speech_time is None:
+                    continue
+
+                # Guard: If the AI finished speaking AFTER the user's last speech,
+                # the AI already responded — no nudge needed. The AI is now waiting
+                # for the customer to speak next.
+                if (self._last_agent_turn_end_time
+                        and self._last_agent_turn_end_time > self._last_user_speech_time):
+                    self._last_user_speech_time = None  # Reset, AI already responded
                     continue
 
                 silence_duration = time.time() - self._last_user_speech_time
@@ -982,6 +996,41 @@ Rules:
             pass
         except Exception as e:
             logger.error(f"Error in silence monitor: {e}")
+
+    async def _session_watchdog(self):
+        """Detect dead Gemini sessions and force reconnection.
+        Only fires when the session is GENUINELY dead — not when the AI is mid-generation.
+        Key guard: if _current_turn_audio_chunks > 0, the AI is actively generating — NOT stuck."""
+        try:
+            # Wait 20 seconds — enough for greeting + user response + AI Turn 2
+            await asyncio.sleep(20.0)
+
+            while self.is_active and not self._closing_call:
+                # Guard: never fire if AI is currently generating audio or swap is in progress
+                if self._current_turn_audio_chunks > 0 or self._swap_in_progress or self._agent_speaking:
+                    await asyncio.sleep(3.0)
+                    continue
+
+                # Check: user audio has been flowing for 8+ seconds but AI has generated
+                # ZERO audio chunks since the last turn ended. Session is dead.
+                if (self._last_user_audio_time
+                        and self._last_agent_turn_end_time):
+                    time_since_agent = time.time() - self._last_agent_turn_end_time
+                    time_since_user = time.time() - self._last_user_audio_time
+                    # AI silent for 15+ seconds AND user audio is recent (within 5s)
+                    if time_since_agent > 15.0 and time_since_user < 5.0:
+                        self.log.warn(f"Session watchdog: AI dead for {time_since_agent:.0f}s "
+                                      f"(0 chunks generating) — forcing reconnect")
+                        self._save_transcript("SYSTEM", "Watchdog: session dead, forcing reconnect")
+                        asyncio.create_task(self._emergency_session_split())
+                        await asyncio.sleep(20.0)  # Long cooldown after reconnect
+                        continue
+
+                await asyncio.sleep(3.0)  # Check every 3 seconds
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error in session watchdog: {e}")
 
     async def _send_silence_nudge(self):
         """Send a nudge to AI when silence detected"""
@@ -1235,33 +1284,23 @@ Rules:
             self._swap_in_progress = False
 
     async def _send_context_to_ws(self, ws):
-        """Send anti-repetition reinforcement to WS before hot-swap.
-        The system_instruction already has the full summary; this adds a
-        strong reminder via client_content so Gemini doesn't repeat itself."""
-        last_user = self._last_user_text[:200] if self._last_user_text else ""
-        # Use most recent agent text (not stale question from earlier turns)
-        agent_ref = (self._last_agent_text or self._last_agent_question or "")[:200]
-
-        # Build forbidden list from ALL agent statements (not just questions)
-        forbidden = ""
-        for ex in self._turn_exchanges:
-            if ex.get("agent"):
-                forbidden += f'  - "{ex["agent"][:150]}"\n'
+        """Send minimal anti-repetition nudge via client_content.
+        Full conversation context is already in the system_instruction — this just
+        reinforces 'don't repeat' and 'wait for customer'."""
+        last_user = self._last_user_text[:150] if self._last_user_text else ""
+        agent_ref = (self._last_agent_text or self._last_agent_question or "")[:150]
 
         if agent_ref and last_user:
             trigger = (
-                f'[CRITICAL: Your last message was: "{agent_ref}". '
-                f'The customer replied: "{last_user}". '
-                f'EVERYTHING YOU ALREADY SAID (FORBIDDEN to repeat):\n{forbidden}'
-                f'You MUST NOT repeat any of these. Respond to what they said and advance to the NEXT NEW step. '
-                f'DO NOT speak until the customer speaks.]'
+                f'[Customer just said: "{last_user}". '
+                f'Do NOT repeat yourself. Respond to this and move forward. Keep it short.]'
             )
         elif agent_ref:
-            trigger = f'[CRITICAL: You just said: "{agent_ref}". DO NOT repeat it. Wait for the customer to speak.]'
+            trigger = '[Wait for the customer to speak. Do NOT repeat yourself.]'
         else:
-            trigger = "[Continue the conversation. Wait for the customer to speak.]"
+            trigger = "[Wait for the customer to speak.]"
 
-        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": False}}
+        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": trigger}]}], "turn_complete": True}}
         await ws.send(json.dumps(msg))
         self.log.detail(f"Anti-repetition sent: last='{agent_ref[:50]}'")
 
@@ -1343,24 +1382,23 @@ Rules:
             self._swap_in_progress = False
 
     def _build_compact_summary(self) -> str:
-        """Build conversation summary for session split context.
-        Includes turn numbers and clearly marks all covered topics as DONE."""
+        """Build compact conversation summary for session split.
+        Uses compressed format to minimize tokens while preserving full context."""
         if not self._turn_exchanges:
             return ""
         lines = []
-        exchanges = self._turn_exchanges[-8:]  # Last 8 turns
-        total = len(exchanges)
-        for i, exchange in enumerate(exchanges):
-            turn_num = self._turn_count - total + i + 1
-            is_last = (i == total - 1)
-            prefix = f"Turn {turn_num} [DONE]"
-            if is_last:
-                prefix = f"Turn {turn_num} [MOST RECENT — DONE, move FORWARD]"
-            if exchange.get("agent"):
-                lines.append(f"{prefix} — You asked: {exchange['agent'][:300]}")
-            if exchange.get("user"):
-                lines.append(f"  Customer replied: {exchange['user'][:300]}")
-        lines.append("\nALL topics above are DONE. Your NEXT response must advance to a NEW topic.")
+        exchanges = self._turn_exchanges[-6:]  # Last 6 turns max
+        for i, ex in enumerate(exchanges):
+            turn_num = self._turn_count - len(exchanges) + i + 1
+            agent = ex.get("agent", "")[:150]
+            user = ex.get("user", "")[:150]
+            if agent and user:
+                lines.append(f"T{turn_num}: You: {agent} | Customer: {user}")
+            elif agent:
+                lines.append(f"T{turn_num}: You: {agent}")
+            elif user:
+                lines.append(f"T{turn_num}: Customer: {user}")
+        lines.append("ALL ABOVE IS DONE. Advance to NEXT NEW topic. Do NOT re-ask anything above.")
         return "\n".join(lines)
 
     async def _run_google_live_session(self):
@@ -1497,9 +1535,13 @@ Rules:
         # Inject pre-call intelligence into system prompt (not as user message)
         if self._intelligence_brief:
             full_prompt += (
-                "\n\n[BACKGROUND INTEL ON THIS PROSPECT - use naturally, "
-                "NEVER mention you looked anything up or did any research. "
-                "Weave facts casually like 'Oh I heard...']\n"
+                "\n\n[BACKGROUND INTEL ON PROSPECT'S COMPANY/INDUSTRY — optional reference only. "
+                "NEVER use this in your opening or greeting. Only reference IF the customer brings up "
+                "their company or industry first. NEVER mention you looked anything up. "
+                "IMPORTANT: This is about the COMPANY/INDUSTRY only — not the person. "
+                "If the prospect's memory (above) contains their role, background, or interests, "
+                "ALWAYS trust the memory over this intel. Never contradict memory data. "
+                "Do NOT weave intel into conversation unprompted — wait for the customer to mention it.]\n"
                 f"{self._intelligence_brief}"
             )
 
@@ -1532,30 +1574,41 @@ Rules:
                 "4) Keep responses SHORT (1-2 sentences max) even when using search results"
             )
 
+        # Universal call behavior rules (applied to ALL prompts)
+        full_prompt += (
+            "\n\n[CALL BEHAVIOR RULES — ALWAYS FOLLOW]"
+            "\n1. RESPONSE LENGTH (CRITICAL): Maximum 1-2 short sentences, then STOP. "
+            "This applies to EVERYTHING including pitches and product descriptions. "
+            "NEVER give a long pitch. Break it into small pieces across multiple turns."
+            "\n2. WAIT FOR RESPONSE: After saying ANYTHING, STOP and WAIT for the customer. "
+            "NEVER continue talking after asking a question. NEVER answer your own questions. "
+            "NEVER say 'I was just saying...' — if the customer asks 'can you hear me', "
+            "just say 'Yes!' and ask a NEW question. Move forward, don't repeat."
+            "\n3. PERSEVERANCE (CRITICAL FOR SALES): NEVER give up after one pushback. "
+            "When customer says 'not interested', 'not convinced', 'I don't know', 'I'll think about it' — "
+            "this is NORMAL in sales. You MUST try at least 2-3 different angles before ending: "
+            "(a) First pushback: Acknowledge, then reframe using THEIR specific pain point from earlier. "
+            "(b) Second pushback: Try a different angle — share a quick relatable story, or flip the frame. "
+            "(c) Third pushback or explicit 'stop'/'no thanks'/'end the call': NOW end warmly. "
+            "Key: Each reframe must use a DIFFERENT angle. Never repeat the same pitch twice."
+            "\n4. ONE QUESTION AT A TIME: Ask one short question, then stop. Do not stack multiple questions."
+        )
+
         # On reconnect or hot-swap, append conversation context + anti-repetition
         # to system_instruction so AI knows where the conversation is.
         if not self._is_first_connection:
             summary = self._build_compact_summary()
             if summary:
                 full_prompt += f"\n\n[CONVERSATION SO FAR — you are mid-call, do NOT greet again:]\n{summary}"
-                # Anti-repetition marker — use MOST RECENT agent text (not stale question)
+                # Anti-repetition — compact, includes both sides
                 agent_ref = self._last_agent_text or self._last_agent_question
                 if agent_ref:
                     last_user = self._last_user_text or "(customer is about to respond)"
-                    full_prompt += f'\n\n[CRITICAL ANTI-REPETITION — YOUR LAST MESSAGE was: "{agent_ref[:300]}"'
-                    full_prompt += f' Customer responded: "{last_user[:200]}".'
                     full_prompt += (
-                        '\n\nEVERYTHING YOU ALREADY SAID (FORBIDDEN to repeat in any form):\n'
-                    )
-                    # List ALL agent statements from turn history (not just questions)
-                    for ex in self._turn_exchanges:
-                        if ex.get("agent"):
-                            full_prompt += f'  - "{ex["agent"][:200]}"\n'
-                    full_prompt += (
-                        '\nYou MUST pick up EXACTLY where the conversation left off.'
-                        ' Respond to what the customer just said, then advance to the NEXT NEW step.'
-                        ' If you repeat ANY of the above statements (even rephrased), the call will fail.'
-                        ' NEVER re-say instructions, questions, or information already covered above.]'
+                        f'\n\n[ANTI-REPETITION — Last exchange: You said: "{agent_ref[:200]}" '
+                        f'Customer replied: "{last_user[:200]}". '
+                        'Pick up from HERE. Do NOT repeat anything from the summary above. '
+                        'Respond to what the customer said and advance to the NEXT step.]'
                     )
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
             else:
@@ -1682,6 +1735,35 @@ Rules:
             if tool_name == "end_call":
                 reason = tool_args.get("reason", "conversation ended")
                 self.log.detail(f"End call: {reason}")
+
+                # PERSEVERANCE GUARD: Block premature end_call before turn 8
+                # This ensures the AI tries multiple reframes before giving up
+                if self._turn_count < 8:
+                    self.log.warn(f"end_call BLOCKED at turn {self._turn_count} (min 8) — telling AI to persist")
+                    self._save_transcript("SYSTEM", f"end_call blocked at turn {self._turn_count}: {reason}")
+                    try:
+                        tool_response = {
+                            "tool_response": {
+                                "function_responses": [{
+                                    "id": call_id,
+                                    "name": tool_name,
+                                    "response": {
+                                        "success": False,
+                                        "message": (
+                                            "REJECTED: Too early to end. You have NOT tried enough reframes. "
+                                            "The customer saying 'don't know' or 'not interested' is NORMAL. "
+                                            "Try a different angle: share a story, use social proof, or flip the frame. "
+                                            "Keep going — do NOT end the call yet."
+                                        )
+                                    }
+                                }]
+                            }
+                        }
+                        await self.goog_live_ws.send(json.dumps(tool_response))
+                    except Exception:
+                        pass
+                    return
+
                 self._save_transcript("SYSTEM", f"Agent requested call end: {reason}")
 
                 # Mark agent as having said goodbye
@@ -2062,6 +2144,7 @@ Rules:
 
                     # Reset turn audio counter
                     self._current_turn_audio_chunks = 0
+                    self._last_agent_turn_end_time = time.time()
 
                     # Process deferred goodbye detection (agent finished speaking)
                     if self._goodbye_pending and not self._closing_call:
@@ -2071,15 +2154,23 @@ Rules:
                         self._check_mutual_goodbye()
 
                 if sc.get("interrupted"):
-                    logger.debug(f"[{self.call_uuid[:8]}] AI interrupted")
-                    # Drain queued audio that hasn't been sent yet
-                    while not self._plivo_send_queue.empty():
-                        try:
-                            self._plivo_send_queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                    if self.plivo_ws:
-                        await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
+                    # Only clear audio if significant audio has already been sent for this turn.
+                    # This prevents residual user noise from wiping out the AI's response
+                    # before the user has heard anything.
+                    chunks_sent = self._current_turn_audio_chunks
+                    if chunks_sent > 10:
+                        # Genuine interruption — user spoke while AI was talking
+                        self.log.warn(f"AI interrupted (after {chunks_sent} chunks sent) — clearing audio")
+                        while not self._plivo_send_queue.empty():
+                            try:
+                                self._plivo_send_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                        if self.plivo_ws:
+                            await self.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": self.stream_id}))
+                    else:
+                        # Likely residual noise — don't clear, let the audio play
+                        self.log.warn(f"AI interrupt IGNORED (only {chunks_sent} chunks sent — likely noise)")
 
                 # Capture user speech transcription from Gemini
                 # Handle both field names: inputTranscription (current API) and inputTranscript (legacy)
