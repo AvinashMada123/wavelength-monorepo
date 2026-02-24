@@ -1002,8 +1002,8 @@ Rules:
         Only fires when the session is GENUINELY dead — not when the AI is mid-generation.
         Key guard: if _current_turn_audio_chunks > 0, the AI is actively generating — NOT stuck."""
         try:
-            # Wait 20 seconds — enough for greeting + user response + AI Turn 2
-            await asyncio.sleep(20.0)
+            # Wait 15 seconds — enough for greeting + user to answer
+            await asyncio.sleep(15.0)
 
             while self.is_active and not self._closing_call:
                 # Guard: never fire if AI is currently generating audio or swap is in progress
@@ -1011,19 +1011,31 @@ Rules:
                     await asyncio.sleep(3.0)
                     continue
 
-                # Check: user audio has been flowing for 8+ seconds but AI has generated
-                # ZERO audio chunks since the last turn ended. Session is dead.
+                # CRITICAL CHECK: If goog_live_ws is None and we're not already reconnecting,
+                # the main session loop died without recovery. Force emergency reconnect.
+                if (not self.goog_live_ws
+                        and not self._swap_in_progress
+                        and self._last_user_audio_time
+                        and (time.time() - self._last_user_audio_time) < 5.0):
+                    self.log.warn("Session watchdog: WS is None but user audio flowing — forcing reconnect")
+                    self._save_transcript("SYSTEM", "Watchdog: WS dead, forcing reconnect")
+                    asyncio.create_task(self._emergency_session_split())
+                    await asyncio.sleep(15.0)  # Cooldown after reconnect
+                    continue
+
+                # Check: user audio has been flowing but AI has generated
+                # ZERO audio chunks since the last turn ended. Session is alive but unresponsive.
                 if (self._last_user_audio_time
                         and self._last_agent_turn_end_time):
                     time_since_agent = time.time() - self._last_agent_turn_end_time
                     time_since_user = time.time() - self._last_user_audio_time
-                    # AI silent for 15+ seconds AND user audio is recent (within 5s)
-                    if time_since_agent > 15.0 and time_since_user < 5.0:
-                        self.log.warn(f"Session watchdog: AI dead for {time_since_agent:.0f}s "
-                                      f"(0 chunks generating) — forcing reconnect")
-                        self._save_transcript("SYSTEM", "Watchdog: session dead, forcing reconnect")
+                    # AI silent for 12+ seconds AND user audio is recent (within 5s)
+                    if time_since_agent > 12.0 and time_since_user < 5.0:
+                        self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s "
+                                      f"— forcing reconnect")
+                        self._save_transcript("SYSTEM", "Watchdog: AI unresponsive, forcing reconnect")
                         asyncio.create_task(self._emergency_session_split())
-                        await asyncio.sleep(20.0)  # Long cooldown after reconnect
+                        await asyncio.sleep(15.0)  # Cooldown after reconnect
                         continue
 
                 await asyncio.sleep(3.0)  # Check every 3 seconds
@@ -1166,6 +1178,7 @@ Rules:
         except websockets.exceptions.ConnectionClosed as e:
             if not is_standby:
                 self.log.warn(f"Active WS closed: {e.code}")
+                raise  # Re-raise so _run_google_live_session can reconnect
 
     async def _prewarm_standby_connection(self):
         """Pre-warm standby: connect WebSocket only (setup deferred to swap time for fresh context).
@@ -1428,6 +1441,16 @@ Rules:
                 # If WS was replaced by hot-swap, exit this loop
                 if self.goog_live_ws is not None and self.goog_live_ws is not ws:
                     return
+
+                # Receive loop ended normally (WS closed cleanly, e.g. async for swallowed close).
+                # If the call is still active, this is unexpected — reconnect.
+                if self.is_active and not self._closing_call:
+                    self.log.warn("WS receive loop ended unexpectedly — reconnecting")
+                    self._is_reconnecting = True
+                    reconnect_attempts += 1
+                    asyncio.create_task(self._send_reconnection_filler())
+                    await asyncio.sleep(0.2)
+                    continue
                 break
 
             except asyncio.CancelledError:
@@ -2303,6 +2326,9 @@ Rules:
             if self.agent_said_goodbye or self._closing_call:
                 return
             if not self.goog_live_ws:
+                # Track user audio time even when buffering — watchdog needs this
+                # to detect dead sessions and trigger reconnection
+                self._last_user_audio_time = time.time()
                 # Buffer audio during reconnection (don't lose user speech)
                 if len(self._reconnect_audio_buffer) < self._max_reconnect_buffer:
                     self._reconnect_audio_buffer.append(audio_b64)
