@@ -182,7 +182,8 @@ export async function POST(request: NextRequest) {
     }
 
     const host = request.headers.get("host") || "localhost:3000";
-    const protocol = host.includes("localhost") ? "http" : "https";
+    const forwardedProto = request.headers.get("x-forwarded-proto");
+    const protocol = forwardedProto || (host.includes("localhost") ? "http" : "http");
     const callEndWebhookUrl = `${protocol}://${host}/api/call-ended${orgId ? `?orgId=${orgId}` : ""}`;
 
     // Read org settings (GHL + Plivo)
