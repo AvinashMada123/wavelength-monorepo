@@ -7,6 +7,7 @@ import { Plus, Pencil, Trash2, Zap, Bot, Loader2, MessageSquare } from "lucide-r
 import { toast } from "sonner";
 
 import { useAuth } from "@/hooks/use-auth";
+import { generateId } from "@/lib/utils";
 import { RoleGuard } from "@/components/auth/role-guard";
 import { DEFAULT_BOT_CONFIG } from "@/lib/default-bot-config";
 import type { BotConfig } from "@/types/bot-config";
@@ -98,7 +99,7 @@ function BotConfigContent() {
   async function handleCreateNew() {
     if (!user) return;
     try {
-      const id = crypto.randomUUID();
+      const id = generateId();
       const now = new Date().toISOString();
       const newConfig: BotConfig = {
         ...DEFAULT_BOT_CONFIG,

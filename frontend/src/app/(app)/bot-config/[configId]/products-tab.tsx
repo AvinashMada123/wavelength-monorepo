@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { cn } from "@/lib/utils";
+import { cn, generateShortId } from "@/lib/utils";
 import { KeywordConfigEditor, type KeywordCategory } from "@/components/shared/keyword-config-editor";
 
 const ACCEPTED_TYPES = [".txt", ".pdf", ".docx"];
@@ -221,7 +221,7 @@ export function ProductsTab({ orgId, user, enabled, onToggle }: ProductsTabProps
     setSections((prev) => [
       ...prev,
       {
-        id: `sec_${crypto.randomUUID().slice(0, 8)}`,
+        id: generateShortId("sec"),
         name: "",
         content: "",
         keywords: [],

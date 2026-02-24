@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import type { Persona, Situation } from "@/types/persona";
 
+import { generateShortId } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -166,7 +167,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
     setPersonas((prev) => [
       ...prev,
       {
-        id: `persona_${crypto.randomUUID().slice(0, 8)}`,
+        id: generateShortId("persona"),
         name: "",
         content: "",
         keywords: [],
@@ -180,7 +181,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
     setSituations((prev) => [
       ...prev,
       {
-        id: `sit_${crypto.randomUUID().slice(0, 8)}`,
+        id: generateShortId("sit"),
         name: "",
         content: "",
         keywords: [],

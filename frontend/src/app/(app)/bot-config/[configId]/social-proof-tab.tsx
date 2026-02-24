@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import type { SocialProofCompany, SocialProofCity, SocialProofRole } from "@/types/social-proof";
 
+import { generateShortId } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -105,7 +106,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
     setCompanies((prev) => [
       ...prev,
       {
-        id: `comp_${crypto.randomUUID().slice(0, 8)}`,
+        id: generateShortId("comp"),
         companyName: "",
         enrollmentsCount: 0,
         notableOutcomes: "",
@@ -150,7 +151,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
     setCities((prev) => [
       ...prev,
       {
-        id: `city_${crypto.randomUUID().slice(0, 8)}`,
+        id: generateShortId("city"),
         cityName: "",
         enrollmentsCount: 0,
         trending: false,
@@ -194,7 +195,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
     setRoles((prev) => [
       ...prev,
       {
-        id: `role_${crypto.randomUUID().slice(0, 8)}`,
+        id: generateShortId("role"),
         roleName: "",
         enrollmentsCount: 0,
         successStories: "",
