@@ -109,18 +109,18 @@ export async function POST(request: NextRequest) {
         ]);
         personaPayload = {
           personas,
-          personaKeywords: personas.reduce((acc: Record<string, { keywords: string[]; phrases: string[] }>, p) => {
+          personaKeywords: personas.reduce((acc: Record<string, { keywords: string[]; prompt: string }>, p) => {
             acc[p.name as string] = {
               keywords: ((p.keywords as string[]) || []),
-              phrases: ((p.phrases as string[]) || []),
+              prompt: ((p.content as string) || ""),
             };
             return acc;
           }, {}),
           situations,
-          situationKeywords: situations.reduce((acc: Record<string, { keywords: string[]; hint: string }>, s) => {
+          situationKeywords: situations.reduce((acc: Record<string, { keywords: string[]; prompt: string }>, s) => {
             acc[s.name as string] = {
               keywords: ((s.keywords as string[]) || []),
-              hint: ((s.hint as string) || ""),
+              prompt: ((s.content as string) || ""),
             };
             return acc;
           }, {}),

@@ -43,8 +43,8 @@ def get_vertex_ai_token():
         return None
 
 # Latency threshold - only log if slower than this (ms)
-# 300ms silence_duration_ms + ~200ms Gemini inference = ~500ms baseline; warn above 700ms
-LATENCY_THRESHOLD_MS = 700
+# 250ms silence_duration_ms + ~200ms Gemini inference = ~450ms baseline; warn above 1000ms
+LATENCY_THRESHOLD_MS = 1000
 
 # Recording directory
 RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
@@ -248,6 +248,7 @@ class PlivoGeminiSession:
         self.setup_complete = False
         self.preloaded_audio = []  # Store audio generated during preload
         self._preload_complete = asyncio.Event()
+        self._silence_keepalive_task = None  # Sends silence to Gemini between greeting and call answer
 
         # Audio recording - using queue and background thread (non-blocking)
         self.audio_chunks = []  # List of (role, audio_bytes) tuples
@@ -376,6 +377,11 @@ class PlivoGeminiSession:
         # Custom persona/situation keyword configs from DB (bypass file-based defaults)
         self._custom_persona_keywords = self.context.pop("_custom_persona_keywords", None)
         self._custom_situation_keywords = self.context.pop("_custom_situation_keywords", None)
+        if self._custom_persona_keywords:
+            persona_names = list(self._custom_persona_keywords.keys())
+            self.log.detail(f"Custom persona keywords from DB: {persona_names}")
+        elif self._use_persona_engine:
+            self.log.detail("No custom persona keywords — using file-based defaults")
         # Micro-Moment Detector (behavioral buying signal / resistance detection)
         self._micro_moment_detector = None
         self._agent_turn_complete_time = None   # Set at turnComplete
@@ -889,6 +895,14 @@ Rules:
         self.plivo_ws = plivo_ws
         self.call_start_time = datetime.now()
         self._call_answered_time = time.time()
+        # Stop silence keepalive — real user audio will flow now
+        if self._silence_keepalive_task:
+            self._silence_keepalive_task.cancel()
+            self._silence_keepalive_task = None
+        # Reset agent turn end time to NOW — the greeting is about to play to the caller.
+        # Without this, watchdog measures from preload generation time (seconds/minutes ago)
+        # and fires a false "unresponsive" alarm while greeting is still playing.
+        self._last_agent_turn_end_time = time.time()
         preload_count = len(self.preloaded_audio)
         self.log.phase("CALL ANSWERED")
         if self._preload_start_time:
@@ -923,6 +937,32 @@ Rules:
             first_audio_ms = (time.time() - self._call_answered_time) * 1000
             self.log.detail_last(f"First audio to caller: {first_audio_ms:.0f}ms ({count} chunks)")
         self.preloaded_audio = []
+
+    async def _send_silence_keepalive(self):
+        """Send silence frames to Gemini between greeting completion and call answer.
+        Prevents Gemini's VAD from going dormant during the ringing period.
+        Without this, the preloaded session becomes unresponsive to user audio."""
+        try:
+            # 20ms of silence at 16kHz mono (320 bytes of zeros)
+            silence_frame = base64.b64encode(bytes(320)).decode()
+            silence_msg = json.dumps({
+                "realtime_input": {
+                    "media_chunks": [{
+                        "mime_type": "audio/pcm;rate=16000",
+                        "data": silence_frame
+                    }]
+                }
+            })
+            while self.is_active and not self.plivo_ws and self.goog_live_ws:
+                try:
+                    await self.goog_live_ws.send(silence_msg)
+                except Exception:
+                    break
+                await asyncio.sleep(0.1)  # Send 10 silence frames per second
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"[{self.call_uuid[:8]}] Silence keepalive ended: {e}")
 
     async def _monitor_call_duration(self):
         """Monitor call duration with periodic heartbeat and trigger wrap-up at 8 minutes"""
@@ -1045,15 +1085,13 @@ Rules:
                     user_audio_flowing = time_since_user < 5.0
 
                     if user_audio_flowing and self._last_agent_turn_end_time:
-                        # How long since user started sending audio after the greeting?
-                        # If user has been sending audio for 6+ seconds with no AI response, session is dead.
-                        time_since_call_answered = time.time() - self._call_answered_time if self._call_answered_time else 0
                         time_since_agent = time.time() - self._last_agent_turn_end_time
 
-                        # After greeting, AI should respond within 6s of receiving user audio
-                        if time_since_call_answered > 6.0 and time_since_agent > 6.0 and self._turn_count <= 1:
-                            self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s after greeting "
-                                          f"(call answered {time_since_call_answered:.0f}s ago) — forcing reconnect")
+                        # Post-greeting: user needs time to hear the greeting (~5s) and respond.
+                        # Only fire ONCE (turn_count <= 1), then let general watchdog handle it.
+                        if self._turn_count <= 1 and time_since_agent > 15.0 and not getattr(self, '_post_greeting_watchdog_fired', False):
+                            self._post_greeting_watchdog_fired = True
+                            self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s after greeting — forcing reconnect")
                             self._save_transcript("SYSTEM", "Watchdog: AI unresponsive post-greeting, forcing reconnect")
                             asyncio.create_task(self._emergency_session_split())
                             await asyncio.sleep(10.0)  # Cooldown after reconnect
@@ -1556,23 +1594,32 @@ Rules:
         mirror_inst = compose_mirror_instruction(self._linguistic_style)
 
         if self._use_persona_engine:
-            # UI prompt is ALWAYS the base — persona engine adds lightweight hints
+            # UI prompt is ALWAYS the base — persona engine adds DB-configured prompts
             full_prompt = self.prompt
 
-            # Add detected persona hint
+            # Add detected persona prompt
             if self._detected_persona:
                 if self._custom_persona_keywords:
-                    # DB persona names are already display-ready (e.g. "Financial Advisor")
                     persona_label = self._detected_persona
+                    persona_config = self._custom_persona_keywords.get(self._detected_persona, {})
+                    persona_prompt = persona_config.get("prompt", "") if isinstance(persona_config, dict) else ""
                 else:
-                    # File-based keys are snake_case (e.g. "working_professional")
                     persona_label = self._detected_persona.replace("_", " ").title()
-                full_prompt += (
-                    f"\n\n[PERSONA DETECTED: {persona_label}. "
-                    f"Tailor your pitch to resonate with their specific needs, priorities, and pain points.]"
-                )
+                    persona_prompt = ""
 
-            # Add situation hints — use DB hints if available, fall back to hardcoded
+                if persona_prompt:
+                    full_prompt += f"\n\n[PERSONA: {persona_label}]\n{persona_prompt}"
+                else:
+                    # Fallback: generic hint if no custom prompt configured
+                    full_prompt += (
+                        f"\n\n[PERSONA DETECTED: {persona_label}. "
+                        f"Tailor your pitch to resonate with their specific needs, priorities, and pain points.]"
+                    )
+                self.log.detail(f"Persona prompt injected: {persona_label} ({len(persona_prompt)} chars)")
+            else:
+                self.log.detail("No persona detected yet — prompt has no persona hint")
+
+            # Add situation prompts — use DB prompts if available, fall back to hardcoded
             _FALLBACK_SITUATION_HINTS = {
                 "price_objection": "Price Concern — Focus on value and ROI rather than price. Don't discount.",
                 "high_interest": "High Interest — Customer is showing strong interest. Guide toward next steps and closing.",
@@ -1581,13 +1628,15 @@ Rules:
                 "competitor_comparison": "Competitor Comparison — Differentiate your offering, highlight unique strengths.",
             }
             for situation in self._active_situations[:2]:
-                hint = ""
+                sit_prompt = ""
                 if self._custom_situation_keywords:
                     sit_config = self._custom_situation_keywords.get(situation, {})
-                    hint = sit_config.get("hint", "") if isinstance(sit_config, dict) else ""
-                if not hint:
-                    hint = _FALLBACK_SITUATION_HINTS.get(situation, situation.replace("_", " ").title())
-                full_prompt += f"\n[SITUATION: {hint}]"
+                    sit_prompt = sit_config.get("prompt", "") if isinstance(sit_config, dict) else ""
+                if sit_prompt:
+                    full_prompt += f"\n\n[SITUATION: {situation}]\n{sit_prompt}"
+                else:
+                    fallback = _FALLBACK_SITUATION_HINTS.get(situation, situation.replace("_", " ").title())
+                    full_prompt += f"\n[SITUATION: {fallback}]"
 
             if mirror_inst:
                 full_prompt += "\n\n" + mirror_inst
@@ -1695,6 +1744,15 @@ Rules:
                         'Pick up from HERE. Do NOT repeat anything from the summary above. '
                         'Respond to what the customer said and advance to the NEXT step.]'
                     )
+                # Extra guard for post-greeting reconnects: the AI already greeted,
+                # so NEVER repeat the greeting even if the summary includes it
+                if self.greeting_sent and self._turn_count <= 1:
+                    full_prompt += (
+                        "\n\n[CRITICAL: You already greeted the customer with your opening line. "
+                        "Do NOT say your greeting again. Do NOT introduce yourself again. "
+                        "Do NOT say your name or company name again. "
+                        "Simply respond to whatever the customer says next — like 'Hello' or 'Hi'.]"
+                    )
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
             else:
                 file_history = self._load_conversation_from_file()
@@ -1706,6 +1764,16 @@ Rules:
                     history_text += "\n[Continue naturally. Do NOT greet again.]"
                     full_prompt += history_text
                     self._is_reconnecting = False
+                else:
+                    # Emergency split with no turns recorded yet — greeting was already played
+                    # but no conversation history exists. Prevent re-greeting.
+                    if self.greeting_sent:
+                        full_prompt += (
+                            "\n\n[SESSION RESUMED — you already greeted the customer. "
+                            "Do NOT greet again. Do NOT introduce yourself again. "
+                            "Wait silently for the customer to speak first, then respond naturally.]"
+                        )
+                        self.log.detail("Setup with no-regreet guard (no turns yet)")
 
         # Use explicit voice from UI/API if provided, otherwise auto-detect from prompt
         voice_name = self.context.get("_voice") or detect_voice_from_prompt(self.prompt)
@@ -1736,7 +1804,7 @@ Rules:
                         "disabled": False,
                         "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
                         "end_of_speech_sensitivity": "END_SENSITIVITY_HIGH",
-                        "prefix_padding_ms": 20,
+                        "prefix_padding_ms": 100,
                         "silence_duration_ms": 100,
                     }
                 },
@@ -1749,6 +1817,7 @@ Rules:
                 ]
             }
         }
+        self.log.detail(f"System instruction: {len(full_prompt):,} chars")
         await ws.send(json.dumps(msg))
         label = "standby" if is_standby else ("first" if self._is_first_connection else "reconnect")
         self.log.detail(f"Setup sent ({label}), voice: {voice_name}")
@@ -1787,23 +1856,15 @@ Rules:
         self.log.detail("Greeting trigger sent")
 
     async def _send_reconnection_trigger(self):
-        """Trigger AI to speak immediately after reconnection"""
+        """Send context after fallback reconnection.
+        CRITICAL: turn_complete=False so Gemini does NOT generate an immediate response.
+        Same fix as _send_context_to_ws — prevents 'Understood...' pattern."""
         if not self.goog_live_ws:
             return
 
-        reconnect_text = "[Continue the conversation]"
-
-        msg = {
-            "client_content": {
-                "turns": [{
-                    "role": "user",
-                    "parts": [{"text": reconnect_text}]
-                }],
-                "turn_complete": True
-            }
-        }
-        await self.goog_live_ws.send(json.dumps(msg))
-        logger.debug(f"[{self.call_uuid[:8]}] Reconnect trigger sent")
+        # Use the same context-sending logic as hot-swap
+        await self._send_context_to_ws(self.goog_live_ws)
+        logger.debug(f"[{self.call_uuid[:8]}] Reconnect context sent (turn_complete=False)")
 
     async def _handle_tool_call(self, tool_call):
         """Execute tool and send response back to Gemini - gracefully handles errors"""
@@ -2155,6 +2216,13 @@ Rules:
                     self._turn_count += 1
                     self._current_turn_id += 1
 
+                    # Start silence keepalive if call hasn't been answered yet.
+                    # This prevents Gemini's VAD from going dormant during ringing.
+                    if not self.plivo_ws and self._turn_count == 1:
+                        self._silence_keepalive_task = asyncio.create_task(
+                            self._send_silence_keepalive()
+                        )
+
                     if self._turn_start_time and self._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - self._turn_start_time) * 1000
                         full_agent = ""
@@ -2286,7 +2354,13 @@ Rules:
                     # This prevents residual user noise from wiping out the AI's response
                     # before the user has heard anything.
                     chunks_sent = self._current_turn_audio_chunks
-                    if chunks_sent > 10:
+                    has_real_user_speech = self._last_user_transcript_time > 0
+
+                    if not has_real_user_speech:
+                        # No user has spoken yet (just background noise from phone pickup).
+                        # NEVER clear audio here — the greeting is still playing.
+                        self.log.warn(f"AI interrupt IGNORED (no user speech yet — protecting greeting)")
+                    elif chunks_sent > 10:
                         # Genuine interruption — user spoke while AI was talking
                         self.log.warn(f"AI interrupted (after {chunks_sent} chunks sent) — clearing audio")
                         while not self._plivo_send_queue.empty():

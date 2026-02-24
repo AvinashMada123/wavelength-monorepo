@@ -14,24 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { KeywordConfigEditor, type KeywordCategory } from "@/components/shared/keyword-config-editor";
-
-async function apiKeywordConfig(
-  user: { getIdToken: () => Promise<string> },
-  body: Record<string, unknown>
-) {
-  const idToken = await user.getIdToken();
-  const res = await fetch("/api/data/keyword-config", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${idToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error("Request failed");
-  return res.json();
-}
 
 async function apiPersonas(
   user: { getIdToken: () => Promise<string> },
@@ -63,9 +45,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
   const [situations, setSituations] = useState<Situation[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [personaKeywords, setPersonaKeywords] = useState<KeywordCategory[]>([]);
-  const [situationKeywords, setSituationKeywords] = useState<KeywordCategory[]>([]);
-  const [savingConfig, setSavingConfig] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -73,31 +52,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       const data = await apiPersonas(user, "GET");
       setPersonas(data.personas || []);
       setSituations(data.situations || []);
-
-      // Load keyword config from backend
-      try {
-        const config = await apiKeywordConfig(user, { action: "getPersonaConfig" });
-        if (config.persona_keywords) {
-          setPersonaKeywords(
-            Object.entries(config.persona_keywords).map(([name, val]) => ({
-              name,
-              keywords: (val as { keywords?: string[]; phrases?: string[] }).keywords || [],
-              phrases: (val as { keywords?: string[]; phrases?: string[] }).phrases || [],
-            }))
-          );
-        }
-        if (config.situation_keywords) {
-          setSituationKeywords(
-            Object.entries(config.situation_keywords).map(([name, val]) => ({
-              name,
-              keywords: (val as { keywords?: string[]; hint?: string }).keywords || [],
-              hint: (val as { keywords?: string[]; hint?: string }).hint || "",
-            }))
-          );
-        }
-      } catch {
-        // Config loading is non-critical
-      }
     } catch {
       toast.error("Failed to load persona data");
     } finally {
@@ -114,7 +68,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       setSavingId(persona.id);
       const existing = personas.find((p) => p.id === persona.id && p.updatedAt);
       await apiPersonas(user, "POST", existing
-        ? { action: "updatePersona", personaId: persona.id, updates: { name: persona.name, content: persona.content, keywords: persona.keywords, phrases: persona.phrases } }
+        ? { action: "updatePersona", personaId: persona.id, updates: { name: persona.name, content: persona.content, keywords: persona.keywords } }
         : { action: "createPersona", persona }
       );
       toast.success("Persona saved");
@@ -141,7 +95,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       setSavingId(situation.id);
       const existing = situations.find((s) => s.id === situation.id && s.updatedAt);
       await apiPersonas(user, "POST", existing
-        ? { action: "updateSituation", situationId: situation.id, updates: { name: situation.name, content: situation.content, keywords: situation.keywords, hint: situation.hint } }
+        ? { action: "updateSituation", situationId: situation.id, updates: { name: situation.name, content: situation.content, keywords: situation.keywords } }
         : { action: "createSituation", situation }
       );
       toast.success("Situation saved");
@@ -171,7 +125,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
         name: "",
         content: "",
         keywords: [],
-        phrases: [],
         updatedAt: "",
       },
     ]);
@@ -185,7 +138,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
         name: "",
         content: "",
         keywords: [],
-        hint: "",
         updatedAt: "",
       },
     ]);
@@ -205,29 +157,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       updated[index] = { ...updated[index], ...updates };
       return updated;
     });
-  }
-
-  async function handleSaveKeywordConfig() {
-    try {
-      setSavingConfig(true);
-      const pConfig: Record<string, { keywords: string[]; phrases: string[] }> = {};
-      for (const cat of personaKeywords) {
-        pConfig[cat.name] = { keywords: cat.keywords, phrases: cat.phrases || [] };
-      }
-      const sConfig: Record<string, { keywords: string[]; hint: string }> = {};
-      for (const cat of situationKeywords) {
-        sConfig[cat.name] = { keywords: cat.keywords, hint: cat.hint || "" };
-      }
-      await apiKeywordConfig(user, {
-        action: "updatePersonaConfig",
-        config: { persona_keywords: pConfig, situation_keywords: sConfig },
-      });
-      toast.success("Detection keywords config saved");
-    } catch {
-      toast.error("Failed to save keyword config");
-    } finally {
-      setSavingConfig(false);
-    }
   }
 
   if (loading) {
@@ -277,16 +206,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
                       />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Content</Label>
-                      <Textarea
-                        value={p.content}
-                        onChange={(e) => updatePersonaLocal(index, { content: e.target.value })}
-                        rows={3}
-                        className="text-sm"
-                        placeholder="Persona description and behavior guidelines..."
-                      />
-                    </div>
-                    <div>
                       <Label className="text-xs text-muted-foreground">Keywords (comma-separated)</Label>
                       <Input
                         value={p.keywords.join(", ")}
@@ -296,20 +215,17 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
                           })
                         }
                         className="h-8 text-sm"
-                        placeholder="keyword1, keyword2"
+                        placeholder="engineer, developer, coding, software"
                       />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Phrases (comma-separated)</Label>
-                      <Input
-                        value={p.phrases.join(", ")}
-                        onChange={(e) =>
-                          updatePersonaLocal(index, {
-                            phrases: e.target.value.split(",").map((k) => k.trim()).filter(Boolean),
-                          })
-                        }
-                        className="h-8 text-sm"
-                        placeholder="phrase1, phrase2"
+                      <Label className="text-xs text-muted-foreground">Prompt</Label>
+                      <Textarea
+                        value={p.content}
+                        onChange={(e) => updatePersonaLocal(index, { content: e.target.value })}
+                        rows={6}
+                        className="text-sm"
+                        placeholder="Prompt injected when this persona is detected..."
                       />
                     </div>
                   </div>
@@ -366,16 +282,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
                       />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Content</Label>
-                      <Textarea
-                        value={s.content}
-                        onChange={(e) => updateSituationLocal(index, { content: e.target.value })}
-                        rows={3}
-                        className="text-sm"
-                        placeholder="Situation description and handling guidelines..."
-                      />
-                    </div>
-                    <div>
                       <Label className="text-xs text-muted-foreground">Keywords (comma-separated)</Label>
                       <Input
                         value={s.keywords.join(", ")}
@@ -385,16 +291,17 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
                           })
                         }
                         className="h-8 text-sm"
-                        placeholder="keyword1, keyword2"
+                        placeholder="expensive, costly, budget, afford"
                       />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Hint</Label>
-                      <Input
-                        value={s.hint}
-                        onChange={(e) => updateSituationLocal(index, { hint: e.target.value })}
-                        className="h-8 text-sm"
-                        placeholder="Short hint for the AI agent"
+                      <Label className="text-xs text-muted-foreground">Prompt</Label>
+                      <Textarea
+                        value={s.content}
+                        onChange={(e) => updateSituationLocal(index, { content: e.target.value })}
+                        rows={6}
+                        className="text-sm"
+                        placeholder="Prompt injected when this situation is detected..."
                       />
                     </div>
                   </div>
@@ -427,30 +334,6 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
         </Button>
       </div>
 
-      {/* Detection Keywords Config */}
-      {personaKeywords.length > 0 && (
-        <KeywordConfigEditor
-          title="Persona Detection Keywords"
-          description="Keywords and phrases that trigger persona detection during calls"
-          categories={personaKeywords}
-          onCategoriesChange={setPersonaKeywords}
-          showPhrases
-          saving={savingConfig}
-          onSave={handleSaveKeywordConfig}
-        />
-      )}
-
-      {situationKeywords.length > 0 && (
-        <KeywordConfigEditor
-          title="Situation Detection Keywords"
-          description="Keywords and hints that trigger situation detection during calls"
-          categories={situationKeywords}
-          onCategoriesChange={setSituationKeywords}
-          showHints
-          saving={savingConfig}
-          onSave={handleSaveKeywordConfig}
-        />
-      )}
     </div>
   );
 }

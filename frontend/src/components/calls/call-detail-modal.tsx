@@ -182,17 +182,17 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
                             AI Intelligence
                           </h4>
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div className="rounded-md border bg-background/60 p-3">
+                            <div className="rounded-md border bg-background/60 p-3 min-w-0">
                               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Persona</p>
                               {data.triggered_persona && typeof data.triggered_persona === 'string' ? (
-                                <Badge className="bg-purple-500/15 text-purple-400 border-purple-500/20 text-xs">
+                                <Badge className="bg-purple-500/15 text-purple-400 border-purple-500/20 text-xs whitespace-normal h-auto">
                                   {data.triggered_persona.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                                 </Badge>
                               ) : (
                                 <span className="text-xs text-muted-foreground">Not detected</span>
                               )}
                             </div>
-                            <div className="rounded-md border bg-background/60 p-3">
+                            <div className="rounded-md border bg-background/60 p-3 min-w-0">
                               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Products Triggered</p>
                               {data.triggered_product_sections && data.triggered_product_sections.length > 0 ? (
                                 <div className="flex flex-wrap gap-1">

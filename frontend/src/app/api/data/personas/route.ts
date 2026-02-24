@@ -54,13 +54,13 @@ export async function POST(request: NextRequest) {
         const vals: unknown[] = [];
         let idx = 1;
         const fieldMap: Record<string, string> = {
-          name: "name", content: "content", keywords: "keywords", phrases: "phrases",
+          name: "name", content: "content", keywords: "keywords",
         };
         for (const [k, v] of Object.entries(updates || {})) {
           const col = fieldMap[k];
           if (col) {
             sets.push(`${col} = $${idx++}`);
-            vals.push(["keywords", "phrases"].includes(col) ? JSON.stringify(v) : v);
+            vals.push(col === "keywords" ? JSON.stringify(v) : v);
           }
         }
         sets.push(`updated_at = $${idx++}`);
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
         const vals: unknown[] = [];
         let idx = 1;
         const fieldMap: Record<string, string> = {
-          name: "name", content: "content", keywords: "keywords", hint: "hint",
+          name: "name", content: "content", keywords: "keywords",
         };
         for (const [k, v] of Object.entries(updates || {})) {
           const col = fieldMap[k];

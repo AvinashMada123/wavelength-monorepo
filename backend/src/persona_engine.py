@@ -140,10 +140,6 @@ def detect_persona(accumulated_text: str, custom_config: dict = None) -> Optiona
             if keyword in text_lower:
                 score += 1
 
-        for phrase in persona_config.get("phrases", []):
-            if phrase in text_lower:
-                score += 3
-
         if score > best_score:
             best_score = score
             best_persona = persona_key
@@ -188,13 +184,18 @@ def detect_situations(user_text: str, custom_config: dict = None) -> list[str]:
 
 
 def get_situation_hint(situation_key: str, custom_config: dict = None) -> str:
-    """Get the short hint for immediate injection via client_content."""
+    """Get the prompt/hint for immediate injection via client_content."""
     if custom_config:
         config = custom_config
     else:
         config = _load_json_config(SITUATION_KEYWORDS_FILE)
     situation = config.get(situation_key, {})
-    return situation.get("hint", "")
+    # Prefer 'prompt' (from DB), fall back to 'hint' (legacy file config)
+    prompt = situation.get("prompt", "") or situation.get("hint", "")
+    if not prompt:
+        return ""
+    # Truncate for real-time injection (full prompt is in session setup)
+    return prompt if len(prompt) <= 500 else prompt[:500] + "..."
 
 
 # =============================================================================

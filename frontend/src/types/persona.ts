@@ -3,7 +3,6 @@ export interface Persona {
   name: string;
   content: string;
   keywords: string[];
-  phrases: string[];
   updatedAt: string;
 }
 
@@ -12,6 +11,5 @@ export interface Situation {
   name: string;
   content: string;
   keywords: string[];
-  hint: string;
   updatedAt: string;
 }
