@@ -80,6 +80,7 @@ export function Header() {
         >
           {mounted ? (theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />) : <Sun className="h-4 w-4" />}
         </Button>
+        {mounted && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="flex items-center gap-2 px-2">
@@ -112,6 +113,7 @@ export function Header() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
       </div>
     </motion.header>
   );
