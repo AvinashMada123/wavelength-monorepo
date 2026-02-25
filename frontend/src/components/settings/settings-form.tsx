@@ -234,39 +234,19 @@ export function SettingsForm() {
         </Card>
       </motion.div>
 
-      {/* Section 2: Webhook Configuration */}
+      {/* Section 2: CRM & Webhook Configuration */}
       <motion.div variants={itemVariants}>
         <Card>
           <CardHeader>
-            <CardTitle>Webhook Configuration</CardTitle>
+            <CardTitle>CRM Integration</CardTitle>
+            <CardDescription>
+              Connect your CRM to enable contact tagging, lead sync, and workflow automations.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="webhookUrl">Webhook URL</Label>
-              <Input
-                id="webhookUrl"
-                value={webhookUrl}
-                onChange={(e) => setWebhookUrl(e.target.value)}
-                placeholder="https://example.com/webhook"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="ghlWhatsappWebhookUrl">
-                GHL WhatsApp Webhook URL
-              </Label>
-              <Input
-                id="ghlWhatsappWebhookUrl"
-                value={ghlWhatsappWebhookUrl}
-                onChange={(e) => setGhlWhatsappWebhookUrl(e.target.value)}
-                placeholder="https://services.leadconnectorhq.com/hooks/..."
-              />
-              <p className="text-xs text-muted-foreground">
-                GoHighLevel inbound webhook URL for triggering WhatsApp messages during calls
-              </p>
-            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="ghlApiKey">GHL API Key</Label>
+                <Label htmlFor="ghlApiKey">Private Integration Token</Label>
                 <Input
                   id="ghlApiKey"
                   type="password"
@@ -275,11 +255,11 @@ export function SettingsForm() {
                   placeholder="pit-xxxxxxxx..."
                 />
                 <p className="text-xs text-muted-foreground">
-                  Settings &rarr; Integrations &rarr; API Keys
+                  Settings &rarr; Integrations &rarr; Private Integrations &rarr; Create &rarr; Copy Token
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="ghlLocationId">GHL Location ID</Label>
+                <Label htmlFor="ghlLocationId">CRM Location ID</Label>
                 <Input
                   id="ghlLocationId"
                   value={ghlLocationId}
@@ -290,6 +270,15 @@ export function SettingsForm() {
                   Settings &rarr; Business Profile &rarr; Location ID
                 </p>
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="webhookUrl">Webhook URL</Label>
+              <Input
+                id="webhookUrl"
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://example.com/webhook"
+              />
             </div>
           </CardContent>
         </Card>

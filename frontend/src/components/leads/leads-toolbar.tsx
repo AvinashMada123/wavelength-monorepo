@@ -207,7 +207,7 @@ export function LeadsToolbar() {
               <SelectItem value="manual">Manual</SelectItem>
               <SelectItem value="csv">CSV</SelectItem>
               <SelectItem value="excel">Excel</SelectItem>
-              <SelectItem value="ghl">GoHighLevel</SelectItem>
+              <SelectItem value="ghl">CRM</SelectItem>
             </SelectContent>
           </Select>
 

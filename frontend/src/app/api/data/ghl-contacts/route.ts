@@ -23,21 +23,73 @@ interface GHLResponse {
   meta: { startAfterId?: string; total?: number };
 }
 
-async function fetchGHLTags(apiKey: string, locationId: string): Promise<string[]> {
-  console.log("[GHL Tags] Fetching tags for location:", locationId);
-  const res = await fetch(`${GHL_API_BASE}/locations/${locationId}/tags`, {
-    headers: { Authorization: `Bearer ${apiKey}`, Version: GHL_API_VERSION },
-  });
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error(`[GHL Tags] API error: ${res.status} - ${errorText}`);
-    throw new Error(`GHL Tags API error ${res.status}: ${errorText}`);
+async function fetchGHLTags(apiKey: string, locationId: string, orgId: string): Promise<string[]> {
+  const allTags = new Set<string>();
+
+  // Strategy 1: Try the dedicated tags endpoint (fastest, most complete)
+  console.log("[GHL Tags] Trying /locations/{id}/tags endpoint...");
+  try {
+    const res = await fetch(`${GHL_API_BASE}/locations/${locationId}/tags`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Version: GHL_API_VERSION },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const tags: string[] = (data.tags ?? [])
+        .map((t: { name?: string } | string) => (typeof t === "string" ? t : t.name ?? ""))
+        .filter(Boolean);
+      console.log(`[GHL Tags] Found ${tags.length} tags via tags endpoint`);
+      if (tags.length > 0) return tags.sort();
+    } else {
+      console.log(`[GHL Tags] Tags endpoint returned ${res.status}, using fallback`);
+    }
+  } catch (err) {
+    console.log("[GHL Tags] Tags endpoint failed:", err);
   }
-  const data = await res.json();
-  const tags: string[] = (data.tags ?? [])
-    .map((t: { name?: string } | string) => (typeof t === "string" ? t : t.name ?? ""))
-    .filter(Boolean);
-  console.log(`[GHL Tags] Found ${tags.length} tags`);
+
+  // Strategy 2: Read tags from locally synced leads in our DB
+  console.log("[GHL Tags] Reading tags from local DB...");
+  try {
+    const rows = await query<{ tags: string }>(
+      "SELECT DISTINCT tags FROM leads WHERE org_id = $1 AND source = 'ghl' AND tags IS NOT NULL AND tags != '[]'",
+      [orgId]
+    );
+    for (const row of rows) {
+      try {
+        const parsed = typeof row.tags === "string" ? JSON.parse(row.tags) : row.tags;
+        if (Array.isArray(parsed)) {
+          for (const tag of parsed) {
+            if (typeof tag === "string" && tag.trim()) allTags.add(tag.trim());
+          }
+        }
+      } catch { /* skip invalid JSON */ }
+    }
+    console.log(`[GHL Tags] Found ${allTags.size} tags from local DB`);
+  } catch (err) {
+    console.log("[GHL Tags] DB query failed:", err);
+  }
+
+  // Strategy 3: Also scan a few GHL pages to catch new tags not yet synced
+  console.log("[GHL Tags] Scanning GHL contacts for additional tags...");
+  let cursor: string | undefined;
+  for (let page = 0; page < 3; page++) {
+    try {
+      const params = new URLSearchParams({ locationId, limit: "100" });
+      if (cursor) params.set("startAfterId", cursor);
+      const res = await fetch(`${GHL_API_BASE}/contacts/?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${apiKey}`, Version: GHL_API_VERSION },
+      });
+      if (!res.ok) break;
+      const data: GHLResponse = await res.json();
+      for (const contact of data.contacts) {
+        for (const tag of contact.tags || []) allTags.add(tag);
+      }
+      cursor = data.meta?.startAfterId;
+      if (!cursor || data.contacts.length < 100) break;
+    } catch { break; }
+  }
+
+  const tags = Array.from(allTags).sort();
+  console.log(`[GHL Tags] Total: ${tags.length} unique tags (DB + GHL scan)`);
   return tags;
 }
 
@@ -67,7 +119,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.action === "fetchTags") {
-      const tags = await fetchGHLTags(ghlApiKey, ghlLocationId);
+      const tags = await fetchGHLTags(ghlApiKey, ghlLocationId, orgId);
       return NextResponse.json({ success: true, tags });
     }
 
@@ -76,10 +128,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Sync: fetch ONE page of 100 contacts
-    const filterTag: string | undefined = body.tag || undefined;
+    // Support both single tag (legacy) and multiple tags
+    const filterTags: string[] = body.tags?.length ? body.tags : body.tag ? [body.tag] : [];
     const cursor: string | undefined = body.cursor || undefined;
 
-    console.log(`[GHL Sync] Fetching batch for org: ${orgId}${filterTag ? ` (tag: "${filterTag}")` : ""}${cursor ? ` (cursor: ${cursor})` : " (first batch)"}`);
+    console.log(`[GHL Sync] Fetching batch for org: ${orgId}${filterTags.length ? ` (tags: ${JSON.stringify(filterTags)})` : ""}${cursor ? ` (cursor: ${cursor})` : " (first batch)"}`);
 
     const params = new URLSearchParams({ locationId: ghlLocationId, limit: String(GHL_PAGE_LIMIT) });
     if (cursor) params.set("startAfterId", cursor);
@@ -97,11 +150,12 @@ export async function POST(request: NextRequest) {
     const ghlData: GHLResponse = await ghlRes.json();
     const totalInGHL = ghlData.meta?.total ?? 0;
 
-    const contacts = filterTag
-      ? ghlData.contacts.filter((c) => c.tags?.includes(filterTag))
+    // Filter contacts that have ANY of the selected tags
+    const contacts = filterTags.length > 0
+      ? ghlData.contacts.filter((c) => c.tags?.some((t) => filterTags.includes(t)))
       : ghlData.contacts;
 
-    console.log(`[GHL Sync] Got ${ghlData.contacts.length} contacts from GHL, ${contacts.length} matched${filterTag ? ` tag "${filterTag}"` : ""} (total in GHL: ${totalInGHL})`);
+    console.log(`[GHL Sync] Got ${ghlData.contacts.length} contacts from GHL, ${contacts.length} matched${filterTags.length ? ` tags ${JSON.stringify(filterTags)}` : ""} (total in GHL: ${totalInGHL})`);
 
     // Load existing GHL leads for upsert
     let synced = 0;

@@ -7,7 +7,7 @@ export async function triggerCall(
 ): Promise<ApiCallResponse> {
   // When a bot config is selected, strip context fields — the server resolves
   // them from the bot config's contextVariables.  Form fields are hidden so any
-  // values here are stale defaults (e.g. agentName:"Agent") that would conflict.
+  // values here are stale defaults that would conflict with bot config values.
   let cleanPayload: Record<string, unknown> = { ...payload };
   if (payload.botConfigId) {
     delete cleanPayload.agentName;
@@ -15,6 +15,8 @@ export async function triggerCall(
     delete cleanPayload.eventName;
     delete cleanPayload.eventHost;
     delete cleanPayload.location;
+    delete cleanPayload.voice;
+    delete cleanPayload.clientName;
   }
 
   // Include leadId so the backend can look up bot notes

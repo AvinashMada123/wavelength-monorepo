@@ -3,7 +3,7 @@
 import { useState, useCallback, Fragment } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { MoreHorizontal, Phone, Trash2, Users, StickyNote, Save, Loader2, X } from "lucide-react";
+import { MoreHorizontal, Phone, Trash2, Users, StickyNote, Save, Loader2, X, Brain } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -24,6 +24,8 @@ import { LeadStatusBadge } from "@/components/shared/status-badge";
 import { QualificationBadge } from "@/components/shared/qualification-badge";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/shared/empty-state";
+import { MemoryDetailDialog } from "@/components/memory/memory-detail-dialog";
+import type { ContactMemory } from "@/types/memory";
 import { useLeads } from "@/hooks/use-leads";
 import { useAuthContext } from "@/context/auth-context";
 import { formatPhoneNumber } from "@/lib/utils";
@@ -43,6 +45,11 @@ export function LeadsTable() {
   const [notesOpenId, setNotesOpenId] = useState<string | null>(null);
   const [notesText, setNotesText] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
+
+  // Memory dialog state
+  const [memoryDialogOpen, setMemoryDialogOpen] = useState(false);
+  const [memoryData, setMemoryData] = useState<ContactMemory | null>(null);
+  const [loadingMemory, setLoadingMemory] = useState(false);
 
   const handleOpenNotes = useCallback((leadId: string, currentNotes: string) => {
     if (notesOpenId === leadId) {
@@ -80,6 +87,54 @@ export function LeadsTable() {
     }
   }, [user, notesText, updateLead]);
 
+  const handleViewMemory = useCallback(async (phone: string) => {
+    if (!user || !phone) return;
+    setLoadingMemory(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/data/memory?phone=${encodeURIComponent(phone)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.memory) {
+        setMemoryData(data.memory);
+        setMemoryDialogOpen(true);
+      } else {
+        toast.info("No memory found for this contact yet");
+      }
+    } catch {
+      toast.error("Failed to load contact memory");
+    } finally {
+      setLoadingMemory(false);
+    }
+  }, [user]);
+
+  const handleMemorySave = useCallback(async (phone: string, updates: Record<string, unknown>) => {
+    if (!user) return;
+    const token = await user.getIdToken();
+    await fetch("/api/data/memory", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action: "update", phone, updates }),
+    });
+  }, [user]);
+
+  const handleMemoryDelete = useCallback(async (phone: string) => {
+    if (!user) return;
+    const token = await user.getIdToken();
+    await fetch("/api/data/memory", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action: "delete", phone }),
+    });
+  }, [user]);
+
   const allSelected =
     paginatedLeads.length > 0 &&
     paginatedLeads.every((lead) => selectedIds.includes(lead.id));
@@ -111,13 +166,14 @@ export function LeadsTable() {
       case "manual":
         return "Manual";
       case "ghl":
-        return "GHL";
+        return "CRM";
       default:
         return source;
     }
   };
 
   return (
+    <>
     <div className="rounded-md border">
       <Table>
         <TableHeader>
@@ -219,6 +275,13 @@ export function LeadsTable() {
                         Call
                       </Link>
                     </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => handleViewMemory(lead.phoneNumber)}
+                      disabled={loadingMemory}
+                    >
+                      <Brain className="mr-2 h-4 w-4" />
+                      {loadingMemory ? "Loading..." : "View Memory"}
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => handleOpenNotes(lead.id, lead.botNotes || "")}>
                       <StickyNote className="mr-2 h-4 w-4" />
                       Bot Notes
@@ -274,5 +337,15 @@ export function LeadsTable() {
         </TableBody>
       </Table>
     </div>
+
+    {/* Memory Detail Dialog */}
+    <MemoryDetailDialog
+      memory={memoryData}
+      open={memoryDialogOpen}
+      onOpenChange={setMemoryDialogOpen}
+      onSave={handleMemorySave}
+      onDelete={handleMemoryDelete}
+    />
+    </>
   );
 }

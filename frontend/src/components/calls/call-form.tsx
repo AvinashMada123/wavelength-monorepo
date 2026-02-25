@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Phone, Loader2, X } from "lucide-react";
+import { Phone, Loader2, X, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,8 @@ export function CallForm() {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [selectedConfig, setSelectedConfig] = useState<BotConfig | null>(null);
+  const [showOverrides, setShowOverrides] = useState(false);
 
   // Read URL params (from leads table "Call" action)
   useEffect(() => {
@@ -67,11 +69,6 @@ export function CallForm() {
         const matchingLead = leads.find((l) => l.phoneNumber === phone);
         if (matchingLead) {
           if (!leadId) setSelectedLeadId(matchingLead.id);
-          setForm((prev) => ({
-            ...prev,
-            ...(matchingLead.location && { location: matchingLead.location }),
-            ...(matchingLead.company && { companyName: matchingLead.company }),
-          }));
         }
       }
 
@@ -97,8 +94,6 @@ export function CallForm() {
       ...prev,
       phoneNumber: lead.phoneNumber,
       contactName: lead.contactName,
-      ...(lead.location && { location: lead.location }),
-      ...(lead.company && { companyName: lead.company }),
     }));
     setErrors({});
   };
@@ -157,6 +152,7 @@ export function CallForm() {
         ...prev,
         phoneNumber: "",
         contactName: "",
+        jobTitle: "",
       }));
       setSelectedLeadId(null);
     } catch {
@@ -166,6 +162,9 @@ export function CallForm() {
     }
   };
 
+  const hasConfig = !!selectedConfig;
+  const cv = selectedConfig?.contextVariables;
+
   return (
     <Card>
       <CardHeader>
@@ -173,6 +172,55 @@ export function CallForm() {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Bot config selector — top of form, determines all context */}
+          <BotConfigSelector
+            value={form.botConfigId || ""}
+            onChange={(value: string, config?: BotConfig) => {
+              setSelectedConfig(config || null);
+              setForm((prev) => ({
+                ...prev,
+                botConfigId: value,
+                ...(config?.contextVariables?.agentName && { agentName: config.contextVariables.agentName }),
+                ...(config?.contextVariables?.companyName && { companyName: config.contextVariables.companyName }),
+                ...(config?.contextVariables?.eventName && { eventName: config.contextVariables.eventName }),
+                ...(config?.contextVariables?.eventHost && { eventHost: config.contextVariables.eventHost }),
+                ...(config?.contextVariables?.location && { location: config.contextVariables.location }),
+                ...(config?.voice && { voice: config.voice }),
+              }));
+            }}
+          />
+
+          {/* Config summary — shows what the selected config provides */}
+          {hasConfig && (
+            <div className="rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 space-y-1.5">
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {cv?.agentName && (
+                  <span>Agent: <span className="text-foreground font-medium">{cv.agentName}</span></span>
+                )}
+                {cv?.companyName && (
+                  <span>Company: <span className="text-foreground font-medium">{cv.companyName}</span></span>
+                )}
+                {selectedConfig?.voice && (
+                  <span>Voice: <span className="text-foreground font-medium">{selectedConfig.voice}</span></span>
+                )}
+                {cv?.eventName && (
+                  <span>Event: <span className="text-foreground font-medium">{cv.eventName}</span></span>
+                )}
+                {cv?.location && (
+                  <span>Location: <span className="text-foreground font-medium">{cv.location}</span></span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOverrides(!showOverrides)}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Settings2 className="h-3 w-3" />
+                {showOverrides ? "Hide overrides" : "Override for this call"}
+              </button>
+            </div>
+          )}
+
           {/* Lead selector */}
           <div className="space-y-2">
             <Label>Select Lead</Label>
@@ -198,8 +246,8 @@ export function CallForm() {
             )}
           </div>
 
-          {/* Primary fields */}
-          <div className="space-y-3">
+          {/* Primary fields — always visible */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="contactName">Contact Name</Label>
               <Input
@@ -227,140 +275,107 @@ export function CallForm() {
             </div>
           </div>
 
-          {/* Client name — always required */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="clientName" className="text-xs">
-                Client Name
-              </Label>
-              <Input
-                id="clientName"
-                className="h-8 text-sm"
-                value={form.clientName}
-                onChange={(e) => updateField("clientName", e.target.value)}
-              />
-              {errors.clientName && (
-                <p className="text-xs text-red-500">{errors.clientName}</p>
-              )}
-            </div>
+          {/* Job title — lead-specific, always visible */}
+          <div className="space-y-2">
+            <Label htmlFor="jobTitle" className="text-xs">
+              Job Title
+            </Label>
+            <Input
+              id="jobTitle"
+              className="h-8 text-sm"
+              placeholder="e.g. Software Engineer"
+              value={form.jobTitle || ""}
+              onChange={(e) => updateField("jobTitle", e.target.value)}
+            />
           </div>
 
-          {/* Context fields — pre-filled from bot config but always editable */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="agentName" className="text-xs">
-                Agent Name
-              </Label>
-              <Input
-                id="agentName"
-                className="h-8 text-sm"
-                value={form.agentName}
-                onChange={(e) => updateField("agentName", e.target.value)}
-              />
-              {errors.agentName && (
-                <p className="text-xs text-red-500">{errors.agentName}</p>
+          {/* Override fields — hidden when config is selected, unless user clicks "Override" */}
+          {(!hasConfig || showOverrides) && (
+            <div className="space-y-3">
+              {hasConfig && (
+                <p className="text-xs text-muted-foreground">Override bot config values for this call only:</p>
               )}
-            </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="agentName" className="text-xs">
+                    Agent Name
+                  </Label>
+                  <Input
+                    id="agentName"
+                    className="h-8 text-sm"
+                    value={form.agentName}
+                    onChange={(e) => updateField("agentName", e.target.value)}
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="companyName" className="text-xs">
-                Company Name
-              </Label>
-              <Input
-                id="companyName"
-                className="h-8 text-sm"
-                value={form.companyName}
-                onChange={(e) => updateField("companyName", e.target.value)}
+                <div className="space-y-2">
+                  <Label htmlFor="companyName" className="text-xs">
+                    Company Name
+                  </Label>
+                  <Input
+                    id="companyName"
+                    className="h-8 text-sm"
+                    value={form.companyName}
+                    onChange={(e) => updateField("companyName", e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="eventName" className="text-xs">
+                    Event Name
+                  </Label>
+                  <Input
+                    id="eventName"
+                    className="h-8 text-sm"
+                    value={form.eventName}
+                    onChange={(e) => updateField("eventName", e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="eventHost" className="text-xs">
+                    Event Host
+                  </Label>
+                  <Input
+                    id="eventHost"
+                    className="h-8 text-sm"
+                    value={form.eventHost}
+                    onChange={(e) => updateField("eventHost", e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="location" className="text-xs">
+                    Location
+                  </Label>
+                  <Input
+                    id="location"
+                    className="h-8 text-sm"
+                    value={form.location}
+                    onChange={(e) => updateField("location", e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="clientName" className="text-xs">
+                    Client Name
+                  </Label>
+                  <Input
+                    id="clientName"
+                    className="h-8 text-sm"
+                    value={form.clientName}
+                    onChange={(e) => updateField("clientName", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Voice selector */}
+              <VoiceSelector
+                value={form.voice}
+                onChange={(value) => updateField("voice", value)}
               />
-              {errors.companyName && (
-                <p className="text-xs text-red-500">{errors.companyName}</p>
-              )}
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="eventName" className="text-xs">
-                Event Name
-              </Label>
-              <Input
-                id="eventName"
-                className="h-8 text-sm"
-                value={form.eventName}
-                onChange={(e) => updateField("eventName", e.target.value)}
-              />
-              {errors.eventName && (
-                <p className="text-xs text-red-500">{errors.eventName}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="eventHost" className="text-xs">
-                Event Host
-              </Label>
-              <Input
-                id="eventHost"
-                className="h-8 text-sm"
-                value={form.eventHost}
-                onChange={(e) => updateField("eventHost", e.target.value)}
-              />
-              {errors.eventHost && (
-                <p className="text-xs text-red-500">{errors.eventHost}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="location" className="text-xs">
-                Location
-              </Label>
-              <Input
-                id="location"
-                className="h-8 text-sm"
-                value={form.location}
-                onChange={(e) => updateField("location", e.target.value)}
-              />
-              {errors.location && (
-                <p className="text-xs text-red-500">{errors.location}</p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="jobTitle" className="text-xs">
-                Job Title
-              </Label>
-              <Input
-                id="jobTitle"
-                className="h-8 text-sm"
-                placeholder="e.g. Software Engineer"
-                value={form.jobTitle || ""}
-                onChange={(e) => updateField("jobTitle", e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Voice selector */}
-          <VoiceSelector
-            value={form.voice}
-            onChange={(value) => updateField("voice", value)}
-          />
-          {errors.voice && (
-            <p className="text-xs text-red-500">{errors.voice}</p>
           )}
-
-          {/* Bot config selector */}
-          <BotConfigSelector
-            value={form.botConfigId || ""}
-            onChange={(value: string, config?: BotConfig) => {
-              setForm((prev) => ({
-                ...prev,
-                botConfigId: value,
-                ...(config?.contextVariables?.agentName && { agentName: config.contextVariables.agentName }),
-                ...(config?.contextVariables?.companyName && { companyName: config.contextVariables.companyName }),
-                ...(config?.contextVariables?.eventName && { eventName: config.contextVariables.eventName }),
-                ...(config?.contextVariables?.eventHost && { eventHost: config.contextVariables.eventHost }),
-                ...(config?.contextVariables?.location && { location: config.contextVariables.location }),
-                ...(config?.voice && { voice: config.voice }),
-              }));
-            }}
-          />
 
           {/* Submit button */}
           <motion.button
