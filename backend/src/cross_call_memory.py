@@ -57,6 +57,7 @@ def extract_and_save_memory(
     duration: float,
     interest_level: str = "",
     linguistic_style: dict = None,
+    org_id: str = "",
 ):
     """
     Extract key facts from a completed call and save/update contact memory.
@@ -69,13 +70,14 @@ def extract_and_save_memory(
     # Normalize phone (ensure +country code format)
     phone = _normalize_phone(phone)
 
-    # Load existing memory (if repeat caller)
-    existing = session_db.get_contact_memory(phone)
+    # Load existing memory (if repeat caller) — scoped to org
+    existing = session_db.get_contact_memory(phone, org_id)
 
     # Extract facts from this call
     company = _extract_company(accumulated_user_text)
     role = _extract_role(accumulated_user_text)
     objections = _extract_objections(active_situations)
+    interest_areas = _extract_interest_areas(accumulated_user_text, turn_exchanges)
     key_facts = _extract_key_facts(turn_exchanges, accumulated_user_text)
     call_summary = _build_call_summary(turn_exchanges, detected_persona, objections)
 
@@ -108,6 +110,15 @@ def extract_and_save_memory(
             except Exception:
                 prev_facts = []
         merged_facts = list(dict.fromkeys(prev_facts + key_facts))[-10:]
+        # Merge interest areas (deduplicate)
+        prev_interests = existing.get("interest_areas") or []
+        if isinstance(prev_interests, str):
+            import json
+            try:
+                prev_interests = json.loads(prev_interests)
+            except Exception:
+                prev_interests = []
+        merged_interests = list(dict.fromkeys(prev_interests + interest_areas))[-10:]
         # Keep best detected values (don't overwrite with None)
         final_persona = detected_persona or existing.get("persona")
         final_company = company or existing.get("company")
@@ -118,6 +129,7 @@ def extract_and_save_memory(
         all_uuids = [call_uuid]
         merged_objections = objections
         merged_facts = key_facts[-10:]
+        merged_interests = interest_areas
         final_persona = detected_persona
         final_company = company
         final_role = role
@@ -134,15 +146,15 @@ def extract_and_save_memory(
             except Exception:
                 final_style = {}
 
-    # Save to DB
+    # Save to DB — scoped to org
     session_db.save_contact_memory(
-        phone,
+        phone, org_id,
         name=final_name,
         persona=final_persona,
         company=final_company,
         role=final_role,
         objections=merged_objections,
-        interest_areas=[],  # TODO: extract from conversation
+        interest_areas=merged_interests,
         key_facts=merged_facts,
         call_count=call_count,
         last_call_date=datetime.now().isoformat(),
@@ -169,6 +181,7 @@ def save_from_tool_call(
     role: Optional[str] = None,
     name: Optional[str] = None,
     key_detail: Optional[str] = None,
+    org_id: str = "",
 ):
     """Save user info extracted by Gemini via function calling.
     MORE RELIABLE than transcription parsing — Gemini's audio model
@@ -176,7 +189,7 @@ def save_from_tool_call(
     if not phone:
         return
     phone = _normalize_phone(phone)
-    existing = session_db.get_contact_memory(phone)
+    existing = session_db.get_contact_memory(phone, org_id)
 
     if existing:
         # Merge — tool call data takes priority (more accurate than transcription)
@@ -195,7 +208,7 @@ def save_from_tool_call(
             key_facts = key_facts[-10:]
 
         session_db.save_contact_memory(
-            phone,
+            phone, org_id,
             name=final_name,
             company=final_company,
             role=final_role,
@@ -212,7 +225,7 @@ def save_from_tool_call(
     else:
         # First contact — create minimal record, full save happens post-call
         session_db.save_contact_memory(
-            phone,
+            phone, org_id,
             name=name,
             company=company,
             role=role,
@@ -220,14 +233,14 @@ def save_from_tool_call(
             call_count=0,  # Will be set to 1 by post-call extract_and_save_memory
         )
 
-    logger.info(f"Tool call saved for {phone}: company={company}, role={role}, name={name}")
+    logger.info(f"Tool call saved for {phone} (org={org_id}): company={company}, role={role}, name={name}")
 
 
 # =============================================================================
 # Pre-Call: Load & Format Memory for Prompt Injection
 # =============================================================================
 
-def load_memory_context(phone: str) -> dict:
+def load_memory_context(phone: str, org_id: str = "") -> dict:
     """
     Load contact memory and return a dict with prompt text + metadata.
     Returns {"prompt": str, "persona": str|None} or empty dict if no memory.
@@ -236,7 +249,7 @@ def load_memory_context(phone: str) -> dict:
         return {}
 
     phone = _normalize_phone(phone)
-    memory = session_db.get_contact_memory(phone)
+    memory = session_db.get_contact_memory(phone, org_id)
 
     if not memory or not memory.get("call_count"):
         return {}
@@ -267,12 +280,16 @@ def _format_memory_for_prompt(memory: dict) -> str:
     # Header
     parts.append(f"[PREVIOUS INTERACTION — you have spoken with {name} {call_count} time(s) before]")
 
-    # Last call info
+    # Current date/time so the AI knows what "today" is
+    now = datetime.now()
+    parts.append(f"Today's date: {now.strftime('%A, %B %d, %Y at %I:%M %p')}")
+
+    # Last call info — include both actual date and relative time
     last_date = memory.get("last_call_date")
     if last_date:
         try:
             dt = datetime.fromisoformat(last_date)
-            days_ago = (datetime.now() - dt).days
+            days_ago = (now - dt).days
             if days_ago == 0:
                 time_str = "earlier today"
             elif days_ago == 1:
@@ -285,7 +302,9 @@ def _format_memory_for_prompt(memory: dict) -> str:
             else:
                 months = days_ago // 30
                 time_str = f"{months} month{'s' if months > 1 else ''} ago"
-            parts.append(f"Last call: {time_str}")
+            # Include both actual date and relative for accuracy
+            last_date_formatted = dt.strftime("%B %d, %Y at %I:%M %p")
+            parts.append(f"Last call: {last_date_formatted} ({time_str})")
         except Exception:
             pass
 
@@ -294,15 +313,15 @@ def _format_memory_for_prompt(memory: dict) -> str:
     if persona:
         parts.append(f"Profile: {persona.replace('_', ' ')}")
 
-    # Company/Role
+    # Company/Role — use soft language, never assert as fact
     company = memory.get("company")
     role = memory.get("role")
     if company and role:
-        parts.append(f"Works as {role} at {company}")
+        parts.append(f"May have mentioned working as {role} at {company} — confirm before referencing")
     elif company:
-        parts.append(f"Works at {company}")
+        parts.append(f"May have mentioned {company} — confirm before referencing")
     elif role:
-        parts.append(f"Role: {role}")
+        parts.append(f"May have mentioned being a {role} — confirm before referencing")
 
     # Last call outcome
     outcome = memory.get("last_call_outcome")
@@ -348,11 +367,11 @@ def _format_memory_for_prompt(memory: dict) -> str:
     # Context referencing comes AFTER greeting, as a natural follow-up
     instruction += "AFTER GREETING: "
     if role and company:
-        instruction += f"They previously mentioned working as a {role} at {company} — verify naturally (e.g. 'You're still at {company}?') rather than asserting it. "
+        instruction += f"They may have mentioned being a {role} at {company} — verify casually (e.g. 'You mentioned you were at {company}, right?') before building on it. "
     elif role:
-        instruction += f"They previously mentioned being a {role} — verify naturally. "
+        instruction += f"They may have mentioned being a {role} — verify casually before building on it. "
     elif company:
-        instruction += f"They previously mentioned {company} — verify naturally (e.g. 'You're still at {company}?') rather than stating it as fact. "
+        instruction += f"They may have mentioned {company} — verify casually (e.g. 'You mentioned {company} last time, right?') before building on it. "
     instruction += (
         "Then go straight into VALUE — skip discovery questions. "
         "Use PAIN POINTS and VALUE FRAMING from the persona module to build urgency, "
@@ -444,7 +463,7 @@ def _is_valid_text(text: str) -> bool:
             return False
     # Reject very short word content (after stripping punctuation)
     words = re.findall(r'[a-z]+', lower)
-    if len(words) < 3:
+    if len(words) < 2:
         return False
     # Reject text with too many fragmented single-letter words (garbled transcription)
     single_letter_words = sum(1 for w in lower.split() if len(w) == 1 and w.isalpha())
@@ -600,9 +619,70 @@ def _extract_objections(active_situations: list) -> list:
     return objections
 
 
+def _extract_interest_areas(user_text: str, turn_exchanges: list) -> list:
+    """Extract interest areas/topics from user speech.
+    Looks for things the user expressed interest in, asked about, or mentioned wanting."""
+    if not user_text:
+        return []
+
+    text_lower = user_text.lower()
+    interests = []
+
+    # Pattern 1: Explicit interest signals
+    interest_patterns = [
+        r'(?:interested in|want to learn|looking for|curious about|thinking about|considering)\s+(.{5,40?})(?:\.|,|$|\?)',
+        r'(?:i want|i need|i\'m looking for|i\'d like)\s+(.{5,40?})(?:\.|,|$|\?)',
+        r'(?:tell me (?:more )?about|how does|what about)\s+(.{5,40?})(?:\.|,|$|\?)',
+    ]
+    for pattern in interest_patterns:
+        for match in re.finditer(pattern, text_lower):
+            topic = match.group(1).strip().rstrip(".")
+            if len(topic) > 4 and _is_valid_text(topic + " extra words"):
+                interests.append(_clean_for_storage(topic))
+
+    # Pattern 2: Known topic/domain keywords
+    topic_keywords = {
+        "AI": ["artificial intelligence", "ai ", " ai,", "machine learning", "deep learning", "chatgpt", "generative ai", "gen ai"],
+        "data science": ["data science", "data analytics", "data analysis", "data engineering"],
+        "cloud computing": ["cloud", "aws", "azure", "gcp", "devops"],
+        "web development": ["web development", "frontend", "backend", "full stack", "fullstack", "react", "node"],
+        "mobile development": ["mobile app", "android", "ios", "flutter", "react native"],
+        "cybersecurity": ["cybersecurity", "cyber security", "security", "ethical hacking"],
+        "digital marketing": ["digital marketing", "seo", "social media marketing"],
+        "product management": ["product management", "product manager", "product design"],
+        "business": ["business", "entrepreneurship", "startup", "mba"],
+        "finance": ["finance", "investment", "trading", "stock market", "fintech"],
+        "automation": ["automation", "rpa", "workflow", "no code", "low code"],
+        "prompt engineering": ["prompt engineering", "prompt", "prompting"],
+    }
+    for topic, keywords in topic_keywords.items():
+        for kw in keywords:
+            if kw in text_lower:
+                if topic not in interests:
+                    interests.append(topic)
+                break
+
+    # Pattern 3: Extract from user's questions to the AI (what they asked about)
+    for exchange in turn_exchanges:
+        user_said = (exchange.get("user") or "").strip().lower()
+        if not user_said:
+            continue
+        # Questions about specific topics indicate interest
+        q_patterns = [
+            r'(?:what|how|can you|does|is there).*(?:about|with|for)\s+(.{5,30}?)(?:\?|$)',
+        ]
+        for pattern in q_patterns:
+            for match in re.finditer(pattern, user_said):
+                topic = match.group(1).strip().rstrip("?.")
+                if len(topic) > 4 and topic not in interests:
+                    interests.append(_clean_for_storage(topic))
+
+    return list(dict.fromkeys(interests))[:8]
+
+
 def _extract_key_facts(turn_exchanges: list, user_text: str) -> list:
-    """Extract validated key facts from user's speech.
-    Only stores clean, meaningful statements — not questions, filler, or garbage."""
+    """Extract key facts from user's speech.
+    Stores meaningful statements — not questions, filler, or garbage."""
     facts = []
     if not turn_exchanges:
         return facts
@@ -616,10 +696,10 @@ def _extract_key_facts(turn_exchanges: list, user_text: str) -> list:
             continue
         # Clean up fragmented transcription for storage
         cleaned = _clean_for_storage(user_said)
-        if cleaned and len(cleaned) > 10:
-            facts.append(cleaned[:150])
+        if cleaned and len(cleaned) > 8:
+            facts.append(cleaned[:200])
 
-    return facts[-5:]
+    return facts[-8:]
 
 
 def _clean_for_storage(text: str) -> str:
@@ -643,19 +723,21 @@ def _build_call_summary(
     if persona:
         parts.append(f"Customer is a {persona.replace('_', ' ')}.")
 
-    # Only use validated user statements
+    # Collect validated user statements for summary
     valid_statements = []
     for exchange in turn_exchanges:
         user_said = exchange.get("user", "").strip()
         if _is_valid_text(user_said) and not user_said.rstrip().endswith("?"):
             valid_statements.append(_clean_for_storage(user_said))
 
+    # Include up to 3 most relevant statements (last ones tend to be most specific)
     if valid_statements:
-        last = valid_statements[-1][:200]
-        parts.append(f"Last discussed: {last}")
+        recent = valid_statements[-3:]
+        for stmt in recent:
+            parts.append(stmt[:150])
 
     if objections:
-        parts.append(f"Objections: {', '.join(objections)}.")
+        parts.append(f"Objections raised: {', '.join(objections)}.")
 
     summary = " ".join(parts)
-    return summary[:500] if summary else "Brief call, limited conversation."
+    return summary[:600] if summary else "Brief call, limited conversation."

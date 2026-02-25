@@ -457,7 +457,7 @@ class PlivoGeminiSession:
 
         # Add configurable GHL workflow tools (during_call only — pre/post are handled server-side)
         for wf in self._ghl_workflows:
-            if wf.get("timing") == "during_call" and wf.get("enabled") and wf.get("webhookUrl"):
+            if wf.get("timing") == "during_call" and wf.get("enabled") and wf.get("tag"):
                 tools.append({
                     "name": f"ghl_workflow_{wf['id']}",
                     "description": wf.get("description", f"Trigger the '{wf.get('name', 'workflow')}' workflow"),
@@ -1725,6 +1725,11 @@ Rules:
                 "4) Keep responses SHORT (1-2 sentences max) even when using search results"
             )
 
+        # Inject current date/time so the AI knows "today" for all calls
+        from datetime import datetime as _dt
+        _now = _dt.now()
+        full_prompt += f"\n\n[CURRENT DATE/TIME: {_now.strftime('%A, %B %d, %Y at %I:%M %p')}]"
+
         # Universal call behavior rules (applied to ALL prompts)
         full_prompt += (
             "\n\n[CALL BEHAVIOR RULES — ALWAYS FOLLOW]"
@@ -1748,6 +1753,16 @@ Rules:
             "'I see what we were talking about', or paraphrase the context. "
             "Just WAIT SILENTLY for the customer to speak, then respond naturally to what THEY say. "
             "Pick up the conversation as if there was no interruption."
+            "\n6. NO ASSUMPTIONS (CRITICAL): NEVER assume or guess the customer's business type, "
+            "industry, job title, or personal details. Only reference what THEY explicitly told you. "
+            "If you are unsure about something, ASK them — do NOT fill in gaps with guesses. "
+            "NEVER say things like 'So you run a restaurant' or 'As a business owner' unless "
+            "the customer specifically said that."
+            "\n7. FORWARD MOMENTUM: When the customer answers a question, acknowledge briefly "
+            "and move to a NEW topic. Do NOT rephrase what they said, do NOT ask follow-up "
+            "questions on the same topic unless absolutely necessary. Keep the conversation "
+            "moving forward. If you catch yourself about to ask something similar to what "
+            "you already asked — STOP and move to the next stage instead."
         )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition
@@ -1761,10 +1776,12 @@ Rules:
                 if agent_ref:
                     last_user = self._last_user_text or "(customer is about to respond)"
                     full_prompt += (
-                        f'\n\n[ANTI-REPETITION — Last exchange: You said: "{agent_ref[:200]}" '
-                        f'Customer replied: "{last_user[:200]}". '
-                        'Pick up from HERE. Do NOT repeat anything from the summary above. '
-                        'Respond to what the customer said and advance to the NEXT step.]'
+                        f'\n\n[ANTI-REPETITION — Last exchange: You said: "{agent_ref[:400]}" '
+                        f'Customer replied: "{last_user[:400]}". '
+                        'Pick up EXACTLY from here. Respond directly to what the customer '
+                        'just said and move the conversation FORWARD to a new topic. '
+                        'Do NOT rephrase or revisit anything from the conversation above. '
+                        'Do NOT ask a question similar to anything already asked above.]'
                     )
                 # Extra guard for post-greeting reconnects: the AI already greeted,
                 # so NEVER repeat the greeting even if the summary includes it
@@ -1796,6 +1813,10 @@ Rules:
                             "Wait silently for the customer to speak first, then respond naturally.]"
                         )
                         self.log.detail("Setup with no-regreet guard (no turns yet)")
+
+        # Render variables in the full composed prompt so {agent_name}, {company_name}
+        # etc. work inside persona content, situation content, and product sections too
+        full_prompt = render_prompt(full_prompt, self.context)
 
         # Use explicit voice from UI/API if provided, otherwise auto-detect from prompt
         voice_name = self.context.get("_voice") or detect_voice_from_prompt(self.prompt)
@@ -1975,6 +1996,7 @@ Rules:
                         role=t_role,
                         name=t_name,
                         key_detail=t_key_detail,
+                        org_id=self.context.get("_org_id", ""),
                     )
                     self.log.detail(f"User info saved: company={t_company}, role={t_role}, name={t_name}")
 
@@ -1995,11 +2017,14 @@ Rules:
                             self._key_facts.append(fact)
 
                     # Update session state for persona detection
+                    # NOTE: Do NOT inject fabricated text into _accumulated_user_text —
+                    # it must stay user-speech-only for memory extraction accuracy.
+                    # Build a separate string for persona detection only.
                     if t_role and not self._detected_persona:
                         from src.persona_engine import detect_persona
                         role_text = f"I work as a {t_role}" + (f" at {t_company}" if t_company else "")
-                        self._accumulated_user_text += " " + role_text
-                        detected = detect_persona(self._accumulated_user_text, self._custom_persona_keywords)
+                        detection_text = self._accumulated_user_text + " " + role_text
+                        detected = detect_persona(detection_text, self._custom_persona_keywords)
                         if detected:
                             self._detected_persona = detected
                             self.log.detail(f"Persona detected from tool call: {detected}")
@@ -2052,7 +2077,7 @@ Rules:
                     pass
                 return
 
-            # Handle configurable GHL workflow tools
+            # Handle configurable GHL workflow tools (tag-based)
             if tool_name.startswith("ghl_workflow_"):
                 wf_id = tool_name.replace("ghl_workflow_", "")
                 reason = tool_args.get("reason", "")
@@ -2062,24 +2087,26 @@ Rules:
 
                 if wf_id in self._triggered_workflows:
                     msg = f"Workflow '{wf.get('name', wf_id) if wf else wf_id}' already triggered this call"
-                elif not wf or not wf.get("webhookUrl"):
-                    msg = "Workflow not found or missing webhook URL"
+                elif not wf or not wf.get("tag"):
+                    msg = "Workflow not found or missing tag"
+                elif not self.ghl_api_key or not self.ghl_location_id:
+                    msg = "GHL API key or Location ID not configured in org settings"
                 else:
                     self._triggered_workflows.add(wf_id)
-                    from src.services.ghl_whatsapp import trigger_ghl_workflow
+                    from src.services.ghl_whatsapp import tag_ghl_contact
                     try:
-                        wf_result = await trigger_ghl_workflow(
+                        wf_result = await tag_ghl_contact(
                             phone=self.caller_phone,
-                            contact_name=self.context.get("customer_name", "Customer"),
-                            webhook_url=wf["webhookUrl"],
                             email=self.context.get("email", ""),
-                            extra_context={"trigger_reason": reason, "workflow_name": wf.get("name", "")},
+                            api_key=self.ghl_api_key,
+                            location_id=self.ghl_location_id,
+                            tag=wf["tag"],
                         )
                         if wf_result.get("success"):
-                            msg = f"Workflow '{wf.get('name', wf_id)}' triggered successfully"
+                            msg = f"Tag '{wf['tag']}' added to contact — workflow '{wf.get('name', wf_id)}' triggered"
                         else:
                             msg = f"Workflow failed: {wf_result.get('error', 'unknown')}"
-                        self.log.detail(f"GHL workflow result: {wf_result}")
+                        self.log.detail(f"GHL tag result: {wf_result}")
                     except Exception as e:
                         msg = f"Workflow trigger failed: {e}"
                         self.log.warn(msg)
@@ -2687,19 +2714,22 @@ Rules:
 
         self._save_transcript("SYSTEM", "Call ended")
 
-        # Trigger post-call GHL workflows
+        # Trigger post-call GHL workflows (tag-based)
         for wf in self._ghl_workflows:
-            if wf.get("timing") == "post_call" and wf.get("enabled") and wf.get("webhookUrl"):
+            if wf.get("timing") == "post_call" and wf.get("enabled") and wf.get("tag"):
+                if not self.ghl_api_key or not self.ghl_location_id:
+                    logger.warning(f"Post-call GHL workflow '{wf.get('name', wf.get('id', '?'))}' skipped — GHL API key or Location ID not configured")
+                    continue
                 try:
-                    from src.services.ghl_whatsapp import trigger_ghl_workflow
-                    result = await trigger_ghl_workflow(
+                    from src.services.ghl_whatsapp import tag_ghl_contact
+                    result = await tag_ghl_contact(
                         phone=self.caller_phone,
-                        contact_name=self.context.get("customer_name", "Customer"),
-                        webhook_url=wf["webhookUrl"],
                         email=self.context.get("email", ""),
-                        extra_context={"trigger_reason": "post_call", "workflow_name": wf.get("name", "")},
+                        api_key=self.ghl_api_key,
+                        location_id=self.ghl_location_id,
+                        tag=wf["tag"],
                     )
-                    self.log.detail(f"Post-call GHL workflow '{wf.get('name', wf['id'])}': {result}")
+                    self.log.detail(f"Post-call GHL workflow '{wf.get('name', wf['id'])}' tag '{wf['tag']}': {result}")
                 except Exception as e:
                     logger.warning(f"Post-call GHL workflow '{wf.get('name', wf.get('id', '?'))}' failed: {e}")
 
@@ -2799,6 +2829,7 @@ Rules:
                         duration=duration,
                         interest_level=interest_level,
                         linguistic_style=self._linguistic_style,
+                        org_id=self.context.get("_org_id", ""),
                     )
                 except Exception as e:
                     logger.error(f"Cross-call memory save error: {e}")
