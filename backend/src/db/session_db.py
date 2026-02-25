@@ -284,12 +284,17 @@ class SessionDB:
     # Cross-Call Memory
     # ==================================================================
 
-    def get_contact_memory(self, phone: str) -> dict:
-        """Load contact memory by phone number."""
+    def get_contact_memory(self, phone: str, org_id: str = "") -> dict:
+        """Load contact memory by phone number and org (also checks legacy empty org_id)."""
         conn = self._get_read_conn()
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute("SELECT * FROM contact_memory WHERE phone = %s", (phone,))
+            # Match the provided org_id, and also check empty string for legacy data
+            cur.execute(
+                "SELECT * FROM contact_memory WHERE phone = %s AND org_id IN (%s, '') "
+                "ORDER BY CASE WHEN org_id = %s THEN 0 ELSE 1 END LIMIT 1",
+                (phone, org_id, org_id)
+            )
             row = cur.fetchone()
             cur.close()
         finally:
@@ -305,7 +310,7 @@ class SessionDB:
             return result
         return None
 
-    def save_contact_memory(self, phone: str, **kwargs):
+    def save_contact_memory(self, phone: str, org_id: str = "", **kwargs):
         """Upsert contact memory (non-blocking). JSON fields are auto-serialized."""
         if not phone:
             return
@@ -319,37 +324,58 @@ class SessionDB:
             return
         fields["updated_at"] = datetime.now().isoformat()
         columns = list(fields.keys())
-        values = [phone] + [fields[c] for c in columns]
+        values = [phone, org_id] + [fields[c] for c in columns]
         placeholders = ", ".join(["%s"] * len(values))
-        col_list = "phone, " + ", ".join(columns)
+        col_list = "phone, org_id, " + ", ".join(columns)
         conflict_updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in columns)
         self._write_queue.put((
             f"""INSERT INTO contact_memory ({col_list})
                 VALUES ({placeholders})
-                ON CONFLICT(phone) DO UPDATE SET {conflict_updates}""",
+                ON CONFLICT(phone, org_id) DO UPDATE SET {conflict_updates}""",
             tuple(values)
         ))
 
-    def get_all_contact_memories(self, limit: int = 100) -> list:
-        """List all contact memories for dashboard/API."""
+    def get_all_contact_memories(self, org_id: str = "", limit: int = 100) -> list:
+        """List all contact memories, filtered by org (includes legacy empty org_id)."""
         conn = self._get_read_conn()
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute(
-                "SELECT phone, name, persona, company, role, call_count, "
-                "last_call_date, last_call_outcome, updated_at "
-                "FROM contact_memory ORDER BY updated_at DESC LIMIT %s", (limit,)
-            )
+            if org_id:
+                # Match the provided org_id AND legacy empty-string records
+                cur.execute(
+                    "SELECT phone, org_id, name, persona, company, role, call_count, "
+                    "last_call_date, last_call_outcome, objections, interest_areas, "
+                    "key_facts, linguistic_style, updated_at "
+                    "FROM contact_memory WHERE org_id IN (%s, '') ORDER BY updated_at DESC LIMIT %s",
+                    (org_id, limit)
+                )
+            else:
+                cur.execute(
+                    "SELECT phone, org_id, name, persona, company, role, call_count, "
+                    "last_call_date, last_call_outcome, objections, interest_areas, "
+                    "key_facts, linguistic_style, updated_at "
+                    "FROM contact_memory ORDER BY updated_at DESC LIMIT %s", (limit,)
+                )
             rows = cur.fetchall()
             cur.close()
         finally:
             self._put_read_conn(conn)
-        return [dict(row) for row in rows]
+        results = []
+        for row in rows:
+            d = dict(row)
+            for field in ('objections', 'interest_areas', 'key_facts', 'linguistic_style'):
+                if d.get(field) and isinstance(d[field], str):
+                    try:
+                        d[field] = json.loads(d[field])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            results.append(d)
+        return results
 
-    def delete_contact_memory(self, phone: str):
-        """Delete contact memory for a phone number (non-blocking)."""
+    def delete_contact_memory(self, phone: str, org_id: str = ""):
+        """Delete contact memory for a phone number + org (non-blocking). Also cleans up legacy empty org_id."""
         self._write_queue.put((
-            "DELETE FROM contact_memory WHERE phone = %s", (phone,)
+            "DELETE FROM contact_memory WHERE phone = %s AND org_id IN (%s, '')", (phone, org_id)
         ))
 
     # ==================================================================

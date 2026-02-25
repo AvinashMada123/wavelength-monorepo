@@ -29,12 +29,12 @@ function camelizeMemory(raw: Record<string, unknown>) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireUidAndOrg(request);
+    const { orgId } = await requireUidAndOrg(request);
     const phone = request.nextUrl.searchParams.get("phone");
 
     const url = phone
-      ? `${BACKEND_BASE_URL}/memory/${encodeURIComponent(phone)}`
-      : `${BACKEND_BASE_URL}/memory`;
+      ? `${BACKEND_BASE_URL}/memory/${encodeURIComponent(phone)}?org_id=${encodeURIComponent(orgId)}`
+      : `${BACKEND_BASE_URL}/memory?org_id=${encodeURIComponent(orgId)}`;
 
     const res = await fetch(url);
     if (!res.ok) {
@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireUidAndOrg(request);
+    const { orgId } = await requireUidAndOrg(request);
     const body = await request.json();
     const { action } = body;
 
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       case "update": {
         const { phone, updates } = body;
         const res = await fetch(
-          `${BACKEND_BASE_URL}/memory/${encodeURIComponent(phone)}`,
+          `${BACKEND_BASE_URL}/memory/${encodeURIComponent(phone)}?org_id=${encodeURIComponent(orgId)}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
       case "delete": {
         const { phone } = body;
         const res = await fetch(
-          `${BACKEND_BASE_URL}/memory/${encodeURIComponent(phone)}`,
+          `${BACKEND_BASE_URL}/memory/${encodeURIComponent(phone)}?org_id=${encodeURIComponent(orgId)}`,
           { method: "DELETE" }
         );
         if (!res.ok) {

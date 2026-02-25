@@ -319,25 +319,25 @@ async def update_persona_config(request: Request):
 # ============================================================================
 
 @app.get("/memory")
-async def list_memories():
-    """List all contact memories"""
-    memories = session_db.get_all_contact_memories(limit=200)
+async def list_memories(org_id: str = ""):
+    """List all contact memories, optionally filtered by org."""
+    memories = session_db.get_all_contact_memories(org_id=org_id, limit=200)
     return {"memories": memories, "total": len(memories)}
 
 
 @app.get("/memory/{phone}")
-async def get_memory(phone: str):
+async def get_memory(phone: str, org_id: str = ""):
     """Get contact memory for a phone number"""
     # URL-decode phone (+ becomes space in URL params)
     phone = phone.replace(" ", "+")
-    memory = session_db.get_contact_memory(phone)
+    memory = session_db.get_contact_memory(phone, org_id=org_id)
     if memory:
         return {"success": True, "memory": memory}
     return {"success": False, "error": f"No memory found for {phone}"}
 
 
 @app.post("/memory/{phone}")
-async def update_memory(phone: str, request: Request):
+async def update_memory(phone: str, request: Request, org_id: str = ""):
     """Update contact memory for a phone number"""
     phone = phone.replace(" ", "+")
     body = await request.json()
@@ -350,15 +350,15 @@ async def update_memory(phone: str, request: Request):
     updates = {k: v for k, v in body.items() if k in valid_fields}
     if not updates:
         return {"error": "No valid fields to update"}
-    session_db.save_contact_memory(phone, **updates)
+    session_db.save_contact_memory(phone, org_id, **updates)
     return {"success": True, "message": f"Memory updated for {phone}"}
 
 
 @app.delete("/memory/{phone}")
-async def delete_memory(phone: str):
+async def delete_memory(phone: str, org_id: str = ""):
     """Delete contact memory for a phone number"""
     phone = phone.replace(" ", "+")
-    session_db.delete_contact_memory(phone)
+    session_db.delete_contact_memory(phone, org_id=org_id)
     return {"success": True, "message": f"Memory deleted for {phone}"}
 
 
@@ -901,6 +901,7 @@ _call_data_lock = asyncio.Lock()
 class PlivoMakeCallRequest(BaseModel):
     phoneNumber: str
     contactName: Optional[str] = "Customer"
+    orgId: Optional[str] = ""  # Organization ID for tenant-scoped memory
     prompt: Optional[str] = None  # Custom AI prompt (optional, uses default if not provided)
     context: Optional[dict] = None  # Context for templates: customer_name, course_name, price, etc.
     webhookUrl: Optional[str] = None  # URL to call when call ends (webhook back to frontend)
@@ -921,7 +922,7 @@ class PlivoMakeCallRequest(BaseModel):
     plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
     maxCallDuration: Optional[int] = 480  # Max call duration in seconds (default 8 min)
-    ghlWorkflows: Optional[list] = []  # GHL workflow triggers [{id, name, description, webhookUrl, timing, enabled}]
+    ghlWorkflows: Optional[list] = []  # GHL workflow triggers [{id, name, description, tag, timing, enabled}]
 
 
 @app.post("/plivo/make-call")
@@ -1020,9 +1021,12 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         logger.info(f"Preloading Gemini session + intelligence for {call_uuid}...")
         logger.info(f"  preResearchEnabled={request.preResearchEnabled}, memoryRecallEnabled={request.memoryRecallEnabled}")
 
+        # Pass org_id through context so the stream session can use it for memory
+        context["_org_id"] = request.orgId or ""
+
         # Step 1: Load cross-call memory (only if enabled)
         if request.memoryRecallEnabled:
-            memory_data = load_memory_context(request.phoneNumber)
+            memory_data = load_memory_context(request.phoneNumber, org_id=request.orgId or "")
             if memory_data:
                 context["_memory_context"] = memory_data.get("prompt", "")
                 # If memory has a persona, pre-set it so AI skips discovery
@@ -1031,14 +1035,16 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
                 # Pre-load linguistic style for Linguistic Mirror
                 if memory_data.get("linguistic_style"):
                     context["_memory_linguistic_style"] = memory_data["linguistic_style"]
-                # Feed memory company/role into context for pre-research
-                memory_raw = session_db.get_contact_memory(request.phoneNumber.replace(" ", "+"))
+                # Feed memory company/role into context for pre-research (use same normalized phone + org_id)
+                from src.cross_call_memory import _normalize_phone
+                normalized_phone = _normalize_phone(request.phoneNumber)
+                memory_raw = session_db.get_contact_memory(normalized_phone, request.orgId or "")
                 if memory_raw:
                     if memory_raw.get("company") and not context.get("company_name"):
                         context["company_name"] = memory_raw["company"]
                     if memory_raw.get("role") and not context.get("role"):
                         context["role"] = memory_raw["role"]
-                logger.info(f"Cross-call memory loaded for {request.phoneNumber} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
+                logger.info(f"Cross-call memory loaded for {request.phoneNumber} org={request.orgId} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
             # Also inject bot notes from UI if available
             if request.botNotes:
                 context["_bot_notes"] = request.botNotes
@@ -1065,17 +1071,22 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         else:
             logger.info("Social proof DISABLED — skipping")
 
-        # Step 2.7: Trigger pre-call GHL workflows
+        # Step 2.7: Trigger pre-call GHL workflows (tag-based)
         for wf in (request.ghlWorkflows or []):
-            if wf.get("timing") == "pre_call" and wf.get("enabled") and wf.get("webhookUrl"):
+            if wf.get("timing") == "pre_call" and wf.get("enabled") and wf.get("tag"):
+                if not request.ghlApiKey or not request.ghlLocationId:
+                    logger.warning(f"Pre-call GHL workflow '{wf.get('name', wf.get('id', '?'))}' skipped — GHL API key or Location ID not configured")
+                    continue
                 try:
-                    from src.services.ghl_whatsapp import trigger_ghl_workflow
-                    result = await trigger_ghl_workflow(
+                    from src.services.ghl_whatsapp import tag_ghl_contact
+                    result = await tag_ghl_contact(
                         phone=request.phoneNumber,
-                        contact_name=request.contactName or "Customer",
-                        webhook_url=wf["webhookUrl"],
+                        email="",
+                        api_key=request.ghlApiKey,
+                        location_id=request.ghlLocationId,
+                        tag=wf["tag"],
                     )
-                    logger.info(f"Pre-call GHL workflow '{wf.get('name', wf['id'])}': {result}")
+                    logger.info(f"Pre-call GHL workflow '{wf.get('name', wf['id'])}' tag '{wf['tag']}': {result}")
                 except Exception as e:
                     logger.warning(f"Pre-call GHL workflow '{wf.get('name', wf['id'])}' failed: {e}")
 

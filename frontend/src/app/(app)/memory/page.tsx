@@ -45,11 +45,10 @@ async function apiMemory(
 }
 
 const outcomeBadgeColor: Record<string, string> = {
-  interested: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  warm: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  hot: "bg-red-500/10 text-red-400 border-red-500/20",
-  cold: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  not_interested: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+  high: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  medium: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  low: "bg-red-500/10 text-red-400 border-red-500/20",
+  unknown: "bg-gray-500/10 text-gray-400 border-gray-500/20",
 };
 
 export default function MemoryPage() {
@@ -84,8 +83,19 @@ export default function MemoryPage() {
       (m.name || "").toLowerCase().includes(q) ||
       (m.phone || "").includes(q) ||
       (m.company || "").toLowerCase().includes(q) ||
-      (m.persona || "").toLowerCase().includes(q)
+      (m.persona || "").toLowerCase().includes(q) ||
+      (m.role || "").toLowerCase().includes(q) ||
+      (m.keyFacts || []).some((f) => f.toLowerCase().includes(q)) ||
+      (m.interestAreas || []).some((a) => a.toLowerCase().includes(q))
     );
+  });
+
+  // Sort by last call date (most recent first), then by call count
+  const sorted = [...filtered].sort((a, b) => {
+    const dateA = a.lastCallDate ? new Date(a.lastCallDate).getTime() : 0;
+    const dateB = b.lastCallDate ? new Date(b.lastCallDate).getTime() : 0;
+    if (dateB !== dateA) return dateB - dateA;
+    return (b.callCount || 0) - (a.callCount || 0);
   });
 
   function openDetail(memory: ContactMemory) {
@@ -131,8 +141,8 @@ export default function MemoryPage() {
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search by name, phone, company..."
-              className="w-72 pl-8 h-9"
+              placeholder="Search by name, phone, company, interests..."
+              className="w-80 pl-8 h-9"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -147,7 +157,7 @@ export default function MemoryPage() {
       {/* Table */}
       <Card>
         <CardContent className="p-0">
-          {filtered.length === 0 ? (
+          {sorted.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <p className="text-sm">
                 {search ? "No contacts match your search" : "No contact memories yet"}
@@ -164,16 +174,16 @@ export default function MemoryPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Phone</TableHead>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Persona</TableHead>
+                  <TableHead>Profile</TableHead>
+                  <TableHead>Tags</TableHead>
                   <TableHead className="text-center">Calls</TableHead>
-                  <TableHead>Last Outcome</TableHead>
+                  <TableHead>Outcome</TableHead>
                   <TableHead>Last Called</TableHead>
                   <TableHead>Style</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((m) => (
+                {sorted.map((m) => (
                   <TableRow
                     key={m.phone}
                     className="cursor-pointer hover:bg-muted/50"
@@ -185,17 +195,46 @@ export default function MemoryPage() {
                     <TableCell className="text-sm text-muted-foreground">
                       {formatPhoneNumber(m.phone)}
                     </TableCell>
-                    <TableCell className="text-sm">
-                      {m.company || "--"}
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1 max-w-[200px]">
+                        {m.company && (
+                          <span className="text-xs text-muted-foreground">{m.company}</span>
+                        )}
+                        {m.company && m.role && <span className="text-muted-foreground/50 text-xs">·</span>}
+                        {m.role && (
+                          <span className="text-xs text-muted-foreground">{m.role}</span>
+                        )}
+                        {m.persona && (
+                          <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-400 border-purple-500/20 h-5">
+                            {m.persona.replace(/_/g, " ")}
+                          </Badge>
+                        )}
+                        {!m.company && !m.role && !m.persona && (
+                          <span className="text-xs text-muted-foreground">--</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
-                      {m.persona ? (
-                        <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-400 border-purple-500/20">
-                          {m.persona.replace(/_/g, " ")}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">--</span>
-                      )}
+                      <div className="flex flex-wrap gap-1 max-w-[220px]">
+                        {(m.interestAreas || []).slice(0, 2).map((area, i) => (
+                          <Badge key={`i-${i}`} variant="outline" className="text-[10px] bg-blue-500/10 text-blue-400 border-blue-500/20 h-5">
+                            {area}
+                          </Badge>
+                        ))}
+                        {(m.objections || []).slice(0, 1).map((obj, i) => (
+                          <Badge key={`o-${i}`} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/20 h-5">
+                            {obj}
+                          </Badge>
+                        ))}
+                        {((m.interestAreas?.length || 0) + (m.objections?.length || 0)) > 3 && (
+                          <Badge variant="secondary" className="text-[10px] h-5">
+                            +{(m.interestAreas?.length || 0) + (m.objections?.length || 0) - 3}
+                          </Badge>
+                        )}
+                        {!(m.interestAreas?.length || 0) && !(m.objections?.length || 0) && (
+                          <span className="text-xs text-muted-foreground">--</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-center text-sm">
                       {m.callCount || 0}
@@ -204,9 +243,9 @@ export default function MemoryPage() {
                       {m.lastCallOutcome ? (
                         <Badge
                           variant="outline"
-                          className={`text-xs ${outcomeBadgeColor[m.lastCallOutcome] || ""}`}
+                          className={`text-xs ${outcomeBadgeColor[m.lastCallOutcome.toLowerCase()] || outcomeBadgeColor.unknown}`}
                         >
-                          {m.lastCallOutcome.replace(/_/g, " ")}
+                          {m.lastCallOutcome}
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">--</span>
@@ -214,7 +253,10 @@ export default function MemoryPage() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {m.lastCallDate
-                        ? new Date(m.lastCallDate).toLocaleDateString()
+                        ? new Date(m.lastCallDate).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })
                         : "--"}
                     </TableCell>
                     <TableCell>

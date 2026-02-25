@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS calls (
 
 -- contact_memory table
 CREATE TABLE IF NOT EXISTS contact_memory (
-    phone TEXT PRIMARY KEY,
+    phone TEXT NOT NULL,
+    org_id TEXT NOT NULL DEFAULT '',
     name TEXT,
     persona TEXT,
     company TEXT,
@@ -41,7 +42,8 @@ CREATE TABLE IF NOT EXISTS contact_memory (
     last_call_outcome TEXT,
     all_call_uuids TEXT DEFAULT '[]',
     created_at TEXT DEFAULT '',
-    updated_at TEXT DEFAULT ''
+    updated_at TEXT DEFAULT '',
+    PRIMARY KEY (phone, org_id)
 );
 
 -- social_proof_company
