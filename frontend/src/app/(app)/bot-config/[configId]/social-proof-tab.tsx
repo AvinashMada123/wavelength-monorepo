@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
-import { Plus, Trash2, Loader2, Upload, FileText } from "lucide-react";
+import { Plus, Trash2, Loader2, Upload, FileText, Save, Check } from "lucide-react";
 import { toast } from "sonner";
 
 import type { SocialProofCompany, SocialProofCity, SocialProofRole } from "@/types/social-proof";
@@ -59,6 +59,7 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
   const [roles, setRoles] = useState<SocialProofRole[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [bulkJson, setBulkJson] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
@@ -87,9 +88,10 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
   async function handleSaveCompany(company: SocialProofCompany) {
     try {
       setSavingId(company.id);
+      setSavedId(null);
       await apiSocialProof(user, "POST", { action: "upsertCompany", company, botConfigId: configId });
-      toast.success("Company saved");
-      loadData();
+      setSavedId(company.id);
+      setTimeout(() => setSavedId((prev) => prev === company.id ? null : prev), 2000);
     } catch {
       toast.error("Failed to save company");
     } finally {
@@ -132,9 +134,10 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
   async function handleSaveCity(city: SocialProofCity) {
     try {
       setSavingId(city.id);
+      setSavedId(null);
       await apiSocialProof(user, "POST", { action: "upsertCity", city, botConfigId: configId });
-      toast.success("City saved");
-      loadData();
+      setSavedId(city.id);
+      setTimeout(() => setSavedId((prev) => prev === city.id ? null : prev), 2000);
     } catch {
       toast.error("Failed to save city");
     } finally {
@@ -176,9 +179,10 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
   async function handleSaveRole(role: SocialProofRole) {
     try {
       setSavingId(role.id);
+      setSavedId(null);
       await apiSocialProof(user, "POST", { action: "upsertRole", role, botConfigId: configId });
-      toast.success("Role saved");
-      loadData();
+      setSavedId(role.id);
+      setTimeout(() => setSavedId((prev) => prev === role.id ? null : prev), 2000);
     } catch {
       toast.error("Failed to save role");
     } finally {
@@ -406,11 +410,19 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
                     <div className="flex flex-col gap-1 mt-5">
                       <Button
                         variant="outline"
-                        size="icon-sm"
+                        size="sm"
+                        className={`h-7 text-xs px-2 ${savedId === c.id ? "border-green-500 text-green-500" : ""}`}
                         onClick={() => handleSaveCompany(c)}
-                        disabled={savingId === c.id}
+                        disabled={savingId === c.id || savedId === c.id}
                       >
-                        {savingId === c.id ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+                        {savingId === c.id ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : savedId === c.id ? (
+                          <Check className="size-3" />
+                        ) : (
+                          <Save className="size-3" />
+                        )}
+                        <span className="ml-1">{savingId === c.id ? "Saving" : savedId === c.id ? "Saved" : "Save"}</span>
                       </Button>
                       <Button
                         variant="ghost"
@@ -477,11 +489,19 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
                     <div className="flex flex-col gap-1 mt-5">
                       <Button
                         variant="outline"
-                        size="icon-sm"
+                        size="sm"
+                        className={`h-7 text-xs px-2 ${savedId === c.id ? "border-green-500 text-green-500" : ""}`}
                         onClick={() => handleSaveCity(c)}
-                        disabled={savingId === c.id}
+                        disabled={savingId === c.id || savedId === c.id}
                       >
-                        {savingId === c.id ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+                        {savingId === c.id ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : savedId === c.id ? (
+                          <Check className="size-3" />
+                        ) : (
+                          <Save className="size-3" />
+                        )}
+                        <span className="ml-1">{savingId === c.id ? "Saving" : savedId === c.id ? "Saved" : "Save"}</span>
                       </Button>
                       <Button
                         variant="ghost"
@@ -550,11 +570,19 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
                     <div className="flex flex-col gap-1 mt-5">
                       <Button
                         variant="outline"
-                        size="icon-sm"
+                        size="sm"
+                        className={`h-7 text-xs px-2 ${savedId === r.id ? "border-green-500 text-green-500" : ""}`}
                         onClick={() => handleSaveRole(r)}
-                        disabled={savingId === r.id}
+                        disabled={savingId === r.id || savedId === r.id}
                       >
-                        {savingId === r.id ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+                        {savingId === r.id ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : savedId === r.id ? (
+                          <Check className="size-3" />
+                        ) : (
+                          <Save className="size-3" />
+                        )}
+                        <span className="ml-1">{savingId === r.id ? "Saving" : savedId === r.id ? "Saved" : "Save"}</span>
                       </Button>
                       <Button
                         variant="ghost"

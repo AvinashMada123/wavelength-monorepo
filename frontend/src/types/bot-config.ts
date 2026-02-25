@@ -16,7 +16,7 @@ export interface GhlWorkflow {
   id: string;
   name: string;
   description: string;
-  webhookUrl: string;
+  tag: string;
   timing: "pre_call" | "during_call" | "post_call";
   enabled: boolean;
 }

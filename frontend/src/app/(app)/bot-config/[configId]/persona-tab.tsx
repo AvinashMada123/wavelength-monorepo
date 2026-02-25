@@ -2,14 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Plus, Trash2, Loader2 } from "lucide-react";
+import { Plus, Trash2, Loader2, Save, Check } from "lucide-react";
 import { toast } from "sonner";
 
 import type { Persona, Situation } from "@/types/persona";
 
 import { generateShortId } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -50,6 +50,7 @@ export function PersonaTab({ orgId, configId, user, enabled, onToggle }: Persona
   const [situations, setSituations] = useState<Situation[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -71,13 +72,16 @@ export function PersonaTab({ orgId, configId, user, enabled, onToggle }: Persona
   async function handleSavePersona(persona: Persona) {
     try {
       setSavingId(persona.id);
+      setSavedId(null);
       const existing = personas.find((p) => p.id === persona.id && p.updatedAt);
       await apiPersonas(user, "POST", existing
         ? { action: "updatePersona", personaId: persona.id, updates: { name: persona.name, content: persona.content, keywords: persona.keywords } }
         : { action: "createPersona", persona, botConfigId: configId }
       );
-      toast.success("Persona saved");
-      loadData();
+      // Mark as persisted locally instead of reloading
+      setPersonas((prev) => prev.map((p) => p.id === persona.id ? { ...p, updatedAt: new Date().toISOString() } : p));
+      setSavedId(persona.id);
+      setTimeout(() => setSavedId((prev) => prev === persona.id ? null : prev), 2000);
     } catch {
       toast.error("Failed to save persona");
     } finally {
@@ -98,13 +102,16 @@ export function PersonaTab({ orgId, configId, user, enabled, onToggle }: Persona
   async function handleSaveSituation(situation: Situation) {
     try {
       setSavingId(situation.id);
+      setSavedId(null);
       const existing = situations.find((s) => s.id === situation.id && s.updatedAt);
       await apiPersonas(user, "POST", existing
         ? { action: "updateSituation", situationId: situation.id, updates: { name: situation.name, content: situation.content, keywords: situation.keywords } }
         : { action: "createSituation", situation, botConfigId: configId }
       );
-      toast.success("Situation saved");
-      loadData();
+      // Mark as persisted locally instead of reloading
+      setSituations((prev) => prev.map((s) => s.id === situation.id ? { ...s, updatedAt: new Date().toISOString() } : s));
+      setSavedId(situation.id);
+      setTimeout(() => setSavedId((prev) => prev === situation.id ? null : prev), 2000);
     } catch {
       toast.error("Failed to save situation");
     } finally {
@@ -230,18 +237,29 @@ export function PersonaTab({ orgId, configId, user, enabled, onToggle }: Persona
                         onChange={(e) => updatePersonaLocal(index, { content: e.target.value })}
                         rows={6}
                         className="text-sm"
-                        placeholder="Prompt injected when this persona is detected..."
+                        placeholder="Prompt injected when this persona is detected... You can use {agent_name}, {company_name} etc."
                       />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Variables: {"{agent_name}"}, {"{company_name}"}, {"{customer_name}"}, {"{event_name}"}, {"{location}"}
+                      </p>
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 mt-5">
                     <Button
                       variant="outline"
-                      size="icon-sm"
+                      size="sm"
+                      className={`h-7 text-xs px-2 ${savedId === p.id ? "border-green-500 text-green-500" : ""}`}
                       onClick={() => handleSavePersona(p)}
-                      disabled={savingId === p.id}
+                      disabled={savingId === p.id || savedId === p.id}
                     >
-                      {savingId === p.id ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+                      {savingId === p.id ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : savedId === p.id ? (
+                        <Check className="size-3" />
+                      ) : (
+                        <Save className="size-3" />
+                      )}
+                      <span className="ml-1">{savingId === p.id ? "Saving" : savedId === p.id ? "Saved" : "Save"}</span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -306,18 +324,29 @@ export function PersonaTab({ orgId, configId, user, enabled, onToggle }: Persona
                         onChange={(e) => updateSituationLocal(index, { content: e.target.value })}
                         rows={6}
                         className="text-sm"
-                        placeholder="Prompt injected when this situation is detected..."
+                        placeholder="Prompt injected when this situation is detected... You can use {agent_name}, {company_name} etc."
                       />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Variables: {"{agent_name}"}, {"{company_name}"}, {"{customer_name}"}, {"{event_name}"}, {"{location}"}
+                      </p>
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 mt-5">
                     <Button
                       variant="outline"
-                      size="icon-sm"
+                      size="sm"
+                      className={`h-7 text-xs px-2 ${savedId === s.id ? "border-green-500 text-green-500" : ""}`}
                       onClick={() => handleSaveSituation(s)}
-                      disabled={savingId === s.id}
+                      disabled={savingId === s.id || savedId === s.id}
                     >
-                      {savingId === s.id ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+                      {savingId === s.id ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : savedId === s.id ? (
+                        <Check className="size-3" />
+                      ) : (
+                        <Save className="size-3" />
+                      )}
+                      <span className="ml-1">{savingId === s.id ? "Saving" : savedId === s.id ? "Saved" : "Save"}</span>
                     </Button>
                     <Button
                       variant="ghost"

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
-import { Plus, Trash2, Loader2, Upload, FileText, X } from "lucide-react";
+import { Plus, Trash2, Loader2, Upload, FileText, X, Save, Check } from "lucide-react";
 import { toast } from "sonner";
 
 import type { ProductSection } from "@/types/product";
@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn, generateShortId } from "@/lib/utils";
-import { KeywordConfigEditor, type KeywordCategory } from "@/components/shared/keyword-config-editor";
 
 const ACCEPTED_TYPES = [".txt", ".pdf", ".docx"];
 const ACCEPTED_MIME: Record<string, string> = {
@@ -59,10 +58,9 @@ export function ProductsTab({ orgId, configId, user, enabled, onToggle }: Produc
   const [sections, setSections] = useState<ProductSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
   const [uploadText, setUploadText] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [productKeywords, setProductKeywords] = useState<KeywordCategory[]>([]);
-  const [savingConfig, setSavingConfig] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -72,30 +70,6 @@ export function ProductsTab({ orgId, configId, user, enabled, onToggle }: Produc
       setLoading(true);
       const data = await apiProducts(user, "GET", undefined, configId);
       setSections(data.sections || []);
-
-      // Load product keyword config
-      try {
-        const idToken = await user.getIdToken();
-        const configRes = await fetch("/api/data/keyword-config", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ action: "getProductConfig" }),
-        });
-        if (configRes.ok) {
-          const config = await configRes.json();
-          setProductKeywords(
-            Object.entries(config).map(([name, val]) => ({
-              name,
-              keywords: (val as { keywords?: string[] }).keywords || [],
-            }))
-          );
-        }
-      } catch {
-        // Non-critical
-      }
     } catch {
       toast.error("Failed to load product sections");
     } finally {
@@ -199,13 +173,15 @@ export function ProductsTab({ orgId, configId, user, enabled, onToggle }: Produc
   async function handleSaveSection(section: ProductSection) {
     try {
       setSavingId(section.id);
+      setSavedId(null);
       const existing = sections.find((s) => s.id === section.id && s.updatedAt);
       await apiProducts(user, "POST", existing
         ? { action: "updateSection", sectionId: section.id, updates: { name: section.name, content: section.content, keywords: section.keywords } }
         : { action: "createSection", section, botConfigId: configId }
       );
-      toast.success("Section saved");
-      loadData();
+      setSections((prev) => prev.map((s) => s.id === section.id ? { ...s, updatedAt: new Date().toISOString() } : s));
+      setSavedId(section.id);
+      setTimeout(() => setSavedId((prev) => prev === section.id ? null : prev), 2000);
     } catch {
       toast.error("Failed to save section");
     } finally {
@@ -242,31 +218,6 @@ export function ProductsTab({ orgId, configId, user, enabled, onToggle }: Produc
       updated[index] = { ...updated[index], ...updates };
       return updated;
     });
-  }
-
-  async function handleSaveProductConfig() {
-    try {
-      setSavingConfig(true);
-      const config: Record<string, { keywords: string[] }> = {};
-      for (const cat of productKeywords) {
-        config[cat.name] = { keywords: cat.keywords };
-      }
-      const idToken = await user.getIdToken();
-      const res = await fetch("/api/data/keyword-config", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ action: "updateProductConfig", config }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      toast.success("Product detection keywords saved");
-    } catch {
-      toast.error("Failed to save product config");
-    } finally {
-      setSavingConfig(false);
-    }
   }
 
   if (loading) {
@@ -412,31 +363,29 @@ export function ProductsTab({ orgId, configId, user, enabled, onToggle }: Produc
                         onChange={(e) => updateSectionLocal(index, { content: e.target.value })}
                         rows={4}
                         className="text-sm"
-                        placeholder="Section content..."
+                        placeholder="Section content... You can use variables like {agent_name}, {company_name}, {customer_name}"
                       />
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Keywords (comma-separated)</Label>
-                      <Input
-                        value={s.keywords.join(", ")}
-                        onChange={(e) =>
-                          updateSectionLocal(index, {
-                            keywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean),
-                          })
-                        }
-                        className="h-8 text-sm"
-                        placeholder="keyword1, keyword2"
-                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Variables: {"{agent_name}"}, {"{company_name}"}, {"{customer_name}"}, {"{event_name}"}, {"{location}"}
+                      </p>
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 mt-5">
                     <Button
                       variant="outline"
-                      size="icon-sm"
+                      size="sm"
+                      className={`h-7 text-xs px-2 ${savedId === s.id ? "border-green-500 text-green-500" : ""}`}
                       onClick={() => handleSaveSection(s)}
-                      disabled={savingId === s.id}
+                      disabled={savingId === s.id || savedId === s.id}
                     >
-                      {savingId === s.id ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+                      {savingId === s.id ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : savedId === s.id ? (
+                        <Check className="size-3" />
+                      ) : (
+                        <Save className="size-3" />
+                      )}
+                      <span className="ml-1">{savingId === s.id ? "Saving" : savedId === s.id ? "Saved" : "Save"}</span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -458,17 +407,6 @@ export function ProductsTab({ orgId, configId, user, enabled, onToggle }: Produc
         </Button>
       </div>
 
-      {/* Product Detection Keywords Config */}
-      {productKeywords.length > 0 && (
-        <KeywordConfigEditor
-          title="Product Detection Keywords"
-          description="Keywords that trigger which product sections are loaded during calls"
-          categories={productKeywords}
-          onCategoriesChange={setProductKeywords}
-          saving={savingConfig}
-          onSave={handleSaveProductConfig}
-        />
-      )}
     </div>
   );
 }

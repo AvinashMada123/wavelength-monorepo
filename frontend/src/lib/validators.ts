@@ -19,11 +19,11 @@ export function validateCallRequest(
   }
 
   if (!req.contactName?.trim()) errors.contactName = "Contact name is required";
-  if (!req.clientName?.trim()) errors.clientName = "Client name is required";
-  if (!req.voice?.trim()) errors.voice = "Voice is required";
 
   // These fields are optional when a bot config is selected (bot config provides context variables)
   if (!hasBotConfig) {
+    if (!req.clientName?.trim()) errors.clientName = "Client name is required";
+    if (!req.voice?.trim()) errors.voice = "Voice is required";
     if (!req.agentName?.trim()) errors.agentName = "Agent name is required";
     if (!req.companyName?.trim()) errors.companyName = "Company name is required";
     if (!req.eventName?.trim()) errors.eventName = "Event name is required";

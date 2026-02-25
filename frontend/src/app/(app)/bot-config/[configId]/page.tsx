@@ -12,11 +12,14 @@ import {
   X,
   Trash2,
   Workflow,
+  Download,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAuth } from "@/hooks/use-auth";
 import { generateId } from "@/lib/utils";
+import { downloadJson } from "@/lib/bot-config-io";
 import type { BotConfig, BotContextVariables, GhlWorkflow } from "@/types/bot-config";
 
 import { Button } from "@/components/ui/button";
@@ -61,6 +64,7 @@ export default function BotConfigEditorPage() {
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("prompt");
 
@@ -156,35 +160,50 @@ export default function BotConfigEditorPage() {
     }
   }
 
+  async function saveConfig() {
+    if (!user || !config) return;
+    await apiBotConfigs(user, "POST", {
+      action: "update",
+      configId,
+      updates: {
+        name,
+        prompt,
+        contextVariables,
+        personaEngineEnabled,
+        productIntelligenceEnabled,
+        socialProofEnabled,
+        preResearchEnabled,
+        memoryRecallEnabled,
+        maxCallDuration,
+        ghlWorkflows,
+        voice,
+      },
+    });
+    refreshProfile();
+  }
+
   async function handleSave() {
     if (!user || !config) return;
     try {
       setSaving(true);
-
-      await apiBotConfigs(user, "POST", {
-        action: "update",
-        configId,
-        updates: {
-          name,
-          prompt,
-          contextVariables,
-          personaEngineEnabled,
-          productIntelligenceEnabled,
-          socialProofEnabled,
-          preResearchEnabled,
-          memoryRecallEnabled,
-          maxCallDuration,
-          ghlWorkflows,
-          voice,
-        },
-      });
+      await saveConfig();
       toast.success("Configuration saved successfully");
-      // Refresh auth context so initialData/cache has the updated bot config
-      refreshProfile();
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2000);
     } catch {
       toast.error("Failed to save configuration");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveQuiet() {
+    if (!user || !config) return;
+    try {
+      await saveConfig();
+    } catch {
+      toast.error("Failed to save configuration");
+      throw new Error("save failed");
     }
   }
 
@@ -194,7 +213,7 @@ export default function BotConfigEditorPage() {
     { id: "persona", label: "Persona" },
     { id: "products", label: "Products" },
     { id: "social-proof", label: "Social Proof" },
-    { id: "ghl-workflows", label: "GHL Workflows" },
+    { id: "ghl-workflows", label: "CRM Workflows" },
     { id: "options", label: "Additional Options" },
   ];
 
@@ -233,9 +252,33 @@ export default function BotConfigEditorPage() {
             {seeding ? <Loader2 className="size-4 animate-spin mr-2" /> : null}
             {seeding ? "Seeding..." : "Seed Demo Data"}
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            Save Changes
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              if (!config || !user) return;
+              try {
+                const data = await apiBotConfigs(user, "POST", { action: "export", configId });
+                const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+                downloadJson(data, `${slug || "bot-config"}.json`);
+                toast.success("Config exported (includes personas, products, social proof)");
+              } catch {
+                toast.error("Failed to export config");
+              }
+            }}
+          >
+            <Download className="size-4" />
+            Export JSON
+          </Button>
+          <Button onClick={handleSave} disabled={saving || justSaved}>
+            {saving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : justSaved ? (
+              <Check className="size-4" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            {saving ? "Saving..." : justSaved ? "Saved" : "Save Changes"}
           </Button>
         </div>
       </div>
@@ -312,6 +355,8 @@ export default function BotConfigEditorPage() {
           <GhlWorkflowsTab
             workflows={ghlWorkflows}
             onChange={setGhlWorkflows}
+            onSave={handleSaveQuiet}
+            saving={saving}
           />
         )}
         {activeTab === "options" && user && (
@@ -567,6 +612,7 @@ function AdditionalOptionsTab({
 }) {
   const [mmConfig, setMmConfig] = useState<Record<string, unknown> | null>(null);
   const [mmSaving, setMmSaving] = useState(false);
+  const [mmJustSaved, setMmJustSaved] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -604,6 +650,8 @@ function AdditionalOptionsTab({
       });
       if (!res.ok) throw new Error("Failed");
       toast.success("Micro-moments config saved");
+      setMmJustSaved(true);
+      setTimeout(() => setMmJustSaved(false), 2000);
     } catch {
       toast.error("Failed to save micro-moments config");
     } finally {
@@ -744,9 +792,15 @@ function AdditionalOptionsTab({
               </div>
             ) : null}
 
-            <Button size="sm" onClick={handleSaveMmConfig} disabled={mmSaving}>
-              {mmSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-              Save Micro-Moments Config
+            <Button size="sm" onClick={handleSaveMmConfig} disabled={mmSaving || mmJustSaved}>
+              {mmSaving ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : mmJustSaved ? (
+                <Check className="size-3.5" />
+              ) : (
+                <Save className="size-3.5" />
+              )}
+              {mmSaving ? "Saving..." : mmJustSaved ? "Saved" : "Save Micro-Moments Config"}
             </Button>
           </CardContent>
         </Card>
@@ -755,7 +809,7 @@ function AdditionalOptionsTab({
   );
 }
 
-/* ========== GHL Workflows Tab ========== */
+/* ========== CRM Workflows Tab ========== */
 
 const TIMING_OPTIONS: { value: GhlWorkflow["timing"]; label: string; description: string }[] = [
   { value: "pre_call", label: "Pre-Call", description: "Triggers before the call connects" },
@@ -766,10 +820,26 @@ const TIMING_OPTIONS: { value: GhlWorkflow["timing"]; label: string; description
 function GhlWorkflowsTab({
   workflows,
   onChange,
+  onSave,
+  saving,
 }: {
   workflows: GhlWorkflow[];
   onChange: (v: GhlWorkflow[]) => void;
+  onSave: () => Promise<void>;
+  saving: boolean;
 }) {
+  const [savingWfId, setSavingWfId] = useState<string | null>(null);
+  const [savedWfId, setSavedWfId] = useState<string | null>(null);
+
+  async function handleWfSave(wfId: string) {
+    setSavingWfId(wfId);
+    setSavedWfId(null);
+    await onSave();
+    setSavingWfId(null);
+    setSavedWfId(wfId);
+    setTimeout(() => setSavedWfId(null), 2000);
+  }
+
   function addWorkflow() {
     onChange([
       ...workflows,
@@ -777,7 +847,7 @@ function GhlWorkflowsTab({
         id: `wf_${generateId().slice(0, 8)}`,
         name: "",
         description: "",
-        webhookUrl: "",
+        tag: "",
         timing: "during_call",
         enabled: true,
       },
@@ -800,11 +870,10 @@ function GhlWorkflowsTab({
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Workflow className="size-5" />
-                GHL Workflow Triggers
+                CRM Workflow Triggers
               </CardTitle>
               <p className="text-sm text-muted-foreground mt-1">
-                Configure GoHighLevel workflows that the AI can trigger during calls.
-                Each workflow is a webhook URL that gets called with the contact&apos;s details.
+                Each workflow adds a tag to the contact in your CRM. Set up CRM automations to trigger on &quot;tag added&quot;.
               </p>
             </div>
             <Button onClick={addWorkflow} size="sm">
@@ -818,37 +887,81 @@ function GhlWorkflowsTab({
             <div className="text-center py-8 text-muted-foreground">
               <Workflow className="size-10 mx-auto mb-3 opacity-40" />
               <p className="text-sm">No workflows configured yet</p>
-              <p className="text-xs mt-1">Add a workflow to let the AI trigger GHL automations</p>
+              <p className="text-xs mt-1">Add a workflow to let the AI trigger CRM automations</p>
             </div>
           ) : (
             workflows.map((wf) => (
-              <div key={wf.id} className="rounded-lg border p-4 space-y-3">
+              <div
+                key={wf.id}
+                className={`rounded-lg border p-4 space-y-3 transition-opacity ${wf.enabled ? "" : "opacity-50"}`}
+              >
+                {/* Row 1: Name, Tag, Enable toggle, Save, Delete */}
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <Label className="text-xs">Workflow Name</Label>
                       <Input
-                        value={wf.name}
+                        value={wf.name || ""}
                         onChange={(e) => updateWorkflow(wf.id, { name: e.target.value })}
                         placeholder="e.g. Send Welcome WhatsApp"
                         className="h-8 text-sm"
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Webhook URL</Label>
+                      <Label className="text-xs">CRM Tag</Label>
                       <Input
-                        value={wf.webhookUrl}
-                        onChange={(e) => updateWorkflow(wf.id, { webhookUrl: e.target.value })}
-                        placeholder="https://services.leadconnectorhq.com/hooks/..."
-                        className="h-8 text-sm font-mono"
+                        value={wf.tag || ""}
+                        onChange={(e) => updateWorkflow(wf.id, { tag: e.target.value })}
+                        placeholder="e.g. ai-interested"
+                        className="h-8 text-sm"
                       />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Trigger Timing</Label>
+                      <div className="flex gap-1">
+                        {TIMING_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => updateWorkflow(wf.id, { timing: opt.value })}
+                            className={`flex-1 rounded-md border px-2 py-1.5 text-center text-xs font-medium transition-colors ${
+                              wf.timing === opt.value
+                                ? "border-primary bg-primary/10 text-foreground"
+                                : "border-border text-muted-foreground hover:border-primary/50"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 pt-5">
-                    <Switch
-                      checked={wf.enabled}
-                      onCheckedChange={(v) => updateWorkflow(wf.id, { enabled: v })}
-                    />
+                    <div className="flex items-center gap-1.5">
+                      <Switch
+                        checked={wf.enabled}
+                        onCheckedChange={(v) => updateWorkflow(wf.id, { enabled: v })}
+                      />
+                      <span className={`text-xs ${wf.enabled ? "text-green-500" : "text-muted-foreground"}`}>
+                        {wf.enabled ? "On" : "Off"}
+                      </span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`h-7 text-xs px-2 ${savedWfId === wf.id ? "border-green-500 text-green-500" : ""}`}
+                      onClick={() => handleWfSave(wf.id)}
+                      disabled={savingWfId !== null || savedWfId === wf.id}
+                    >
+                      {savingWfId === wf.id ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : savedWfId === wf.id ? (
+                        <Check className="size-3" />
+                      ) : (
+                        <Save className="size-3" />
+                      )}
+                      <span className="ml-1">{savingWfId === wf.id ? "Saving" : savedWfId === wf.id ? "Saved" : "Save"}</span>
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -860,42 +973,24 @@ function GhlWorkflowsTab({
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs">
-                    AI Trigger Description
-                    <span className="text-muted-foreground ml-1 font-normal">
-                      (tells the AI when to trigger this workflow)
-                    </span>
-                  </Label>
-                  <Textarea
-                    value={wf.description}
-                    onChange={(e) => updateWorkflow(wf.id, { description: e.target.value })}
-                    placeholder="e.g. Trigger when the customer confirms they want more information about the course. Send them a WhatsApp with details."
-                    rows={2}
-                    className="text-sm"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Trigger Timing</Label>
-                  <div className="flex gap-2">
-                    {TIMING_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => updateWorkflow(wf.id, { timing: opt.value })}
-                        className={`flex-1 rounded-md border px-3 py-2 text-left transition-colors ${
-                          wf.timing === opt.value
-                            ? "border-primary bg-primary/5 text-foreground"
-                            : "border-border text-muted-foreground hover:border-primary/50"
-                        }`}
-                      >
-                        <div className="text-xs font-medium">{opt.label}</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">{opt.description}</div>
-                      </button>
-                    ))}
+                {/* Row 2: AI Trigger Description — only for during_call */}
+                {wf.timing === "during_call" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">
+                      AI Trigger Description
+                      <span className="text-muted-foreground ml-1 font-normal">
+                        (tells the AI when to trigger this workflow)
+                      </span>
+                    </Label>
+                    <Textarea
+                      value={wf.description || ""}
+                      onChange={(e) => updateWorkflow(wf.id, { description: e.target.value })}
+                      placeholder="e.g. Trigger when the customer confirms they want more information about the course."
+                      rows={2}
+                      className="text-sm"
+                    />
                   </div>
-                </div>
+                )}
               </div>
             ))
           )}
