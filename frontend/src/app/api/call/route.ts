@@ -102,10 +102,12 @@ export async function POST(request: NextRequest) {
     let socialProofPayload: Record<string, unknown> = {};
 
     if (orgId && configDoc) {
+      const cfgId = configDoc.id as string;
+
       if (configDoc.persona_engine_enabled) {
         const [personas, situations] = await Promise.all([
-          query("SELECT * FROM personas WHERE org_id = $1", [orgId]),
-          query("SELECT * FROM situations WHERE org_id = $1", [orgId]),
+          query("SELECT * FROM personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+          query("SELECT * FROM situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
         ]);
         personaPayload = {
           personas,
@@ -129,8 +131,8 @@ export async function POST(request: NextRequest) {
 
       if (configDoc.product_intelligence_enabled) {
         const productSections = await query(
-          "SELECT * FROM product_sections WHERE org_id = $1",
-          [orgId]
+          "SELECT * FROM product_sections WHERE org_id = $1 AND bot_config_id = $2",
+          [orgId, cfgId]
         );
         productPayload = {
           productSections,
@@ -143,9 +145,9 @@ export async function POST(request: NextRequest) {
 
       if (configDoc.social_proof_enabled) {
         const [companies, cities, roles] = await Promise.all([
-          query("SELECT * FROM ui_social_proof_companies WHERE org_id = $1", [orgId]),
-          query("SELECT * FROM ui_social_proof_cities WHERE org_id = $1", [orgId]),
-          query("SELECT * FROM ui_social_proof_roles WHERE org_id = $1", [orgId]),
+          query("SELECT * FROM ui_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+          query("SELECT * FROM ui_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+          query("SELECT * FROM ui_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
         ]);
         socialProofPayload = {
           socialProofCompanies: companies,
@@ -234,6 +236,7 @@ export async function POST(request: NextRequest) {
       productIntelligenceEnabled: configDoc?.product_intelligence_enabled ?? false,
       ...(botNotes ? { botNotes } : {}),
       ...(payload.jobTitle ? { jobTitle: payload.jobTitle } : {}),
+      maxCallDuration: configDoc?.max_call_duration ?? 480,
       ...(configDoc?.voice || payload.voice ? { voice: configDoc?.voice || payload.voice } : {}),
     };
 

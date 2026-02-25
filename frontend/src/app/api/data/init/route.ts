@@ -92,6 +92,27 @@ export async function POST(request: NextRequest) {
     // Add bot_notes column if it does not exist
     await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS bot_notes TEXT`);
 
+    // Add bot_config_id to data tables so each bot config has independent data
+    const tablesNeedingBotConfigId = [
+      "personas", "situations", "product_sections",
+      "ui_social_proof_companies", "ui_social_proof_cities", "ui_social_proof_roles",
+    ];
+    for (const table of tablesNeedingBotConfigId) {
+      await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS bot_config_id TEXT`);
+    }
+
+    // Add max_call_duration column to bot_configs
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS max_call_duration INTEGER DEFAULT 480`);
+
+    // Migrate existing rows: assign to the org's active bot config
+    for (const table of tablesNeedingBotConfigId) {
+      await query(
+        `UPDATE ${table} t SET bot_config_id = (
+          SELECT id FROM bot_configs WHERE org_id = t.org_id AND is_active = true LIMIT 1
+        ) WHERE t.bot_config_id IS NULL`
+      );
+    }
+
     return NextResponse.json({ success: true, message: "Database initialized" });
   } catch (error) {
     console.error("[Init API] POST error:", error);

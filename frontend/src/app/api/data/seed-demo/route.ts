@@ -118,16 +118,18 @@ const SOCIAL_PROOF_ROLES = [
 export async function POST(request: NextRequest) {
   try {
     const { orgId } = await requireUidAndOrg(request);
-    
+    const body = await request.json().catch(() => ({}));
+    const botConfigId = (body as Record<string, string>).botConfigId || null;
+
     let totalSeeded = 0;
 
     // Seed Personas
     for (const persona of PERSONAS) {
       const id = crypto.randomUUID();
       await query(
-        `INSERT INTO personas (id, org_id, name, content, keywords, phrases, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
-        [id, orgId, persona.name, persona.content, JSON.stringify(persona.keywords), JSON.stringify(persona.phrases)]
+        `INSERT INTO personas (id, org_id, bot_config_id, name, content, keywords, phrases, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+        [id, orgId, botConfigId, persona.name, persona.content, JSON.stringify(persona.keywords), JSON.stringify(persona.phrases)]
       );
       totalSeeded++;
     }
@@ -136,9 +138,9 @@ export async function POST(request: NextRequest) {
     for (const situation of SITUATIONS) {
       const id = crypto.randomUUID();
       await query(
-        `INSERT INTO situations (id, org_id, name, content, keywords, hint, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
-        [id, orgId, situation.name, situation.content, JSON.stringify(situation.keywords), situation.hint]
+        `INSERT INTO situations (id, org_id, bot_config_id, name, content, keywords, hint, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+        [id, orgId, botConfigId, situation.name, situation.content, JSON.stringify(situation.keywords), situation.hint]
       );
       totalSeeded++;
     }
@@ -148,9 +150,9 @@ export async function POST(request: NextRequest) {
     for (const section of PRODUCT_SECTIONS) {
       const id = crypto.randomUUID();
       await query(
-        `INSERT INTO product_sections (id, org_id, name, content, keywords, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
-        [id, orgId, section.name, section.content, JSON.stringify(section.keywords)]
+        `INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+        [id, orgId, botConfigId, section.name, section.content, JSON.stringify(section.keywords)]
       );
       totalSeeded++;
     }
@@ -160,30 +162,30 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < SOCIAL_PROOF_COMPANIES.length; i++) {
       const c = SOCIAL_PROOF_COMPANIES[i];
       await query(
-        `INSERT INTO ui_social_proof_companies (id, org_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())
-         ON CONFLICT (id) DO UPDATE SET org_id = $2, company_name = $3, enrollments_count = $4, notable_outcomes = $5, trending = $6, updated_at = NOW()`,
-        [`company_${i + 1}`, orgId, c.companyName, c.enrollmentsCount, c.notableOutcomes, c.trending]
+        `INSERT INTO ui_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (id) DO UPDATE SET company_name = $4, enrollments_count = $5, notable_outcomes = $6, trending = $7, updated_at = NOW()`,
+        [`company_${i + 1}`, orgId, botConfigId, c.companyName, c.enrollmentsCount, c.notableOutcomes, c.trending]
       );
       totalSeeded++;
     }
     for (let i = 0; i < SOCIAL_PROOF_CITIES.length; i++) {
       const c = SOCIAL_PROOF_CITIES[i];
       await query(
-        `INSERT INTO ui_social_proof_cities (id, org_id, city_name, enrollments_count, trending, updated_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
-         ON CONFLICT (id) DO UPDATE SET org_id = $2, city_name = $3, enrollments_count = $4, trending = $5, updated_at = NOW()`,
-        [`city_${i + 1}`, orgId, c.cityName, c.enrollmentsCount, c.trending]
+        `INSERT INTO ui_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count, trending, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (id) DO UPDATE SET city_name = $4, enrollments_count = $5, trending = $6, updated_at = NOW()`,
+        [`city_${i + 1}`, orgId, botConfigId, c.cityName, c.enrollmentsCount, c.trending]
       );
       totalSeeded++;
     }
     for (let i = 0; i < SOCIAL_PROOF_ROLES.length; i++) {
       const r = SOCIAL_PROOF_ROLES[i];
       await query(
-        `INSERT INTO ui_social_proof_roles (id, org_id, role_name, enrollments_count, success_stories, updated_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
-         ON CONFLICT (id) DO UPDATE SET org_id = $2, role_name = $3, enrollments_count = $4, success_stories = $5, updated_at = NOW()`,
-        [`role_${i + 1}`, orgId, r.roleName, r.enrollmentsCount, r.successStories]
+        `INSERT INTO ui_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count, success_stories, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (id) DO UPDATE SET role_name = $4, enrollments_count = $5, success_stories = $6, updated_at = NOW()`,
+        [`role_${i + 1}`, orgId, botConfigId, r.roleName, r.enrollmentsCount, r.successStories]
       );
       totalSeeded++;
     }

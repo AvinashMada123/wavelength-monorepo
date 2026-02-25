@@ -30,11 +30,10 @@ export function BotConfigSelector({ value, onChange }: BotConfigSelectorProps) {
 
     // Use initialData from auth context for instant render
     if (initialData?.botConfigs) {
-      const data = initialData.botConfigs as BotConfig[];
+      const data = (initialData.botConfigs as BotConfig[]).filter((c) => c.isActive);
       setConfigs(data);
-      if (!value) {
-        const active = data.find((c) => c.isActive);
-        if (active) onChange(active.id, active);
+      if (!value && data.length > 0) {
+        onChange(data[0].id, data[0]);
       }
       setLoading(false);
       return;
@@ -51,11 +50,10 @@ export function BotConfigSelector({ value, onChange }: BotConfigSelectorProps) {
         if (!res.ok) throw new Error("Failed");
         const json = await res.json();
         if (cancelled) return;
-        const data = json.configs as BotConfig[];
+        const data = (json.configs as BotConfig[]).filter((c: BotConfig) => c.isActive);
         setConfigs(data);
-        if (!value) {
-          const active = data.find((c) => c.isActive);
-          if (active) onChange(active.id, active);
+        if (!value && data.length > 0) {
+          onChange(data[0].id, data[0]);
         }
       } catch {
         // silent failure — configs list stays empty
@@ -106,11 +104,6 @@ export function BotConfigSelector({ value, onChange }: BotConfigSelectorProps) {
             <SelectItem key={config.id} value={config.id}>
               <div className="flex items-center gap-2">
                 <span>{config.name}</span>
-                {config.isActive && (
-                  <Badge variant="secondary" className="text-xs">
-                    Active
-                  </Badge>
-                )}
                 <span className="text-xs text-muted-foreground">
                   {config.questions?.length ?? 0}q
                 </span>

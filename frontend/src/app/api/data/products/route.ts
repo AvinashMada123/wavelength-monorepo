@@ -10,8 +10,11 @@ export async function GET(request: NextRequest) {
     const result = await getUidAndOrgFromToken(request);
     if (result instanceof NextResponse) return result;
     const { orgId } = result;
+    const botConfigId = request.nextUrl.searchParams.get("botConfigId");
 
-    const rows = await query("SELECT * FROM product_sections WHERE org_id = $1", [orgId]);
+    const rows = botConfigId
+      ? await query("SELECT * FROM product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+      : await query("SELECT * FROM product_sections WHERE org_id = $1", [orgId]);
     return NextResponse.json({ sections: toCamelRows(rows) });
   } catch (error) {
     console.error("[Products API] GET error:", error);
@@ -31,7 +34,7 @@ export async function POST(request: NextRequest) {
 
     switch (action) {
       case "upload": {
-        const { text, contentType } = body;
+        const { text, contentType, botConfigId } = body;
         const res = await fetch(`${BACKEND_BASE_URL}/products/upload`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -53,23 +56,25 @@ export async function POST(request: NextRequest) {
         for (const section of sections) {
           const id = section.id || `sec_${crypto.randomUUID().slice(0, 8)}`;
           await query(
-            `INSERT INTO product_sections (id, org_id, name, content, keywords, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $6)
-             ON CONFLICT (id) DO UPDATE SET name = $3, content = $4, keywords = $5, updated_at = $6`,
-            [id, orgId, section.name || "", section.content || "", JSON.stringify(section.keywords || []), now]
+            `INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+             ON CONFLICT (id) DO UPDATE SET name = $4, content = $5, keywords = $6, updated_at = $7`,
+            [id, orgId, botConfigId || null, section.name || "", section.content || "", JSON.stringify(section.keywords || []), now]
           );
         }
 
-        const rows = await query("SELECT * FROM product_sections WHERE org_id = $1", [orgId]);
+        const rows = botConfigId
+          ? await query("SELECT * FROM product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+          : await query("SELECT * FROM product_sections WHERE org_id = $1", [orgId]);
         return NextResponse.json({ success: true, sections: toCamelRows(rows) });
       }
 
       case "createSection": {
-        const { section } = body;
+        const { section, botConfigId } = body;
         await query(
-          `INSERT INTO product_sections (id, org_id, name, content, keywords, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $6)`,
-          [section.id, orgId, section.name || "", section.content || "", JSON.stringify(section.keywords || []), now]
+          `INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+          [section.id, orgId, botConfigId || null, section.name || "", section.content || "", JSON.stringify(section.keywords || []), now]
         );
         return NextResponse.json({ success: true });
       }

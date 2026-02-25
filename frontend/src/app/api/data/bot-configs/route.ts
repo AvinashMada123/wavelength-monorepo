@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
           socialProofEnabled: "social_proof_enabled",
           preResearchEnabled: "pre_research_enabled",
           memoryRecallEnabled: "memory_recall_enabled",
+          maxCallDuration: "max_call_duration",
           voice: "voice",
         };
 
@@ -109,9 +110,16 @@ export async function POST(request: NextRequest) {
 
       case "setActive": {
         const { configId } = body;
-        // Deactivate all, then activate the chosen one
-        await query("UPDATE bot_configs SET is_active = false WHERE org_id = $1", [orgId]);
         await query("UPDATE bot_configs SET is_active = true WHERE id = $1 AND org_id = $2", [configId, orgId]);
+        return NextResponse.json({ success: true });
+      }
+
+      case "toggleActive": {
+        const { configId } = body;
+        await query(
+          "UPDATE bot_configs SET is_active = NOT is_active, updated_at = NOW() WHERE id = $1 AND org_id = $2",
+          [configId, orgId]
+        );
         return NextResponse.json({ success: true });
       }
 

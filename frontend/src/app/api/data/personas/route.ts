@@ -6,10 +6,15 @@ export async function GET(request: NextRequest) {
     const result = await getUidAndOrgFromToken(request);
     if (result instanceof NextResponse) return result;
     const { orgId } = result;
+    const botConfigId = request.nextUrl.searchParams.get("botConfigId");
 
     const [personas, situations] = await Promise.all([
-      query("SELECT * FROM personas WHERE org_id = $1", [orgId]),
-      query("SELECT * FROM situations WHERE org_id = $1", [orgId]),
+      botConfigId
+        ? query("SELECT * FROM personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+        : query("SELECT * FROM personas WHERE org_id = $1", [orgId]),
+      botConfigId
+        ? query("SELECT * FROM situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+        : query("SELECT * FROM situations WHERE org_id = $1", [orgId]),
     ]);
 
     return NextResponse.json({
@@ -34,12 +39,13 @@ export async function POST(request: NextRequest) {
 
     switch (action) {
       case "createPersona": {
-        const { persona } = body;
+        const { persona, botConfigId } = body;
         await query(
-          `INSERT INTO personas (id, org_id, name, content, keywords, phrases, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+          `INSERT INTO personas (id, org_id, bot_config_id, name, content, keywords, phrases, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
           [
-            persona.id, orgId, persona.name || "",
+            persona.id, orgId, botConfigId || null,
+            persona.name || "",
             persona.content || "",
             JSON.stringify(persona.keywords || []),
             JSON.stringify(persona.phrases || []),
@@ -79,12 +85,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true });
       }
       case "createSituation": {
-        const { situation } = body;
+        const { situation, botConfigId } = body;
         await query(
-          `INSERT INTO situations (id, org_id, name, content, keywords, hint, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+          `INSERT INTO situations (id, org_id, bot_config_id, name, content, keywords, hint, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
           [
-            situation.id, orgId, situation.name || "",
+            situation.id, orgId, botConfigId || null,
+            situation.name || "",
             situation.content || "",
             JSON.stringify(situation.keywords || []),
             situation.hint || "",

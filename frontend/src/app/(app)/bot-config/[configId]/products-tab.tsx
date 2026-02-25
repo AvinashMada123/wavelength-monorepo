@@ -28,10 +28,14 @@ const ACCEPTED_MIME: Record<string, string> = {
 async function apiProducts(
   user: { getIdToken: () => Promise<string> },
   method: "GET" | "POST",
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
+  configId?: string
 ) {
   const idToken = await user.getIdToken();
-  const res = await fetch("/api/data/products", {
+  const url = method === "GET" && configId
+    ? `/api/data/products?botConfigId=${configId}`
+    : "/api/data/products";
+  const res = await fetch(url, {
     method,
     headers: {
       Authorization: `Bearer ${idToken}`,
@@ -45,12 +49,13 @@ async function apiProducts(
 
 interface ProductsTabProps {
   orgId: string;
+  configId: string;
   user: { getIdToken: () => Promise<string> };
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
 }
 
-export function ProductsTab({ orgId, user, enabled, onToggle }: ProductsTabProps) {
+export function ProductsTab({ orgId, configId, user, enabled, onToggle }: ProductsTabProps) {
   const [sections, setSections] = useState<ProductSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -65,7 +70,7 @@ export function ProductsTab({ orgId, user, enabled, onToggle }: ProductsTabProps
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await apiProducts(user, "GET");
+      const data = await apiProducts(user, "GET", undefined, configId);
       setSections(data.sections || []);
 
       // Load product keyword config
@@ -96,7 +101,7 @@ export function ProductsTab({ orgId, user, enabled, onToggle }: ProductsTabProps
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, configId]);
 
   useEffect(() => {
     if (orgId) loadData();
@@ -145,6 +150,7 @@ export function ProductsTab({ orgId, user, enabled, onToggle }: ProductsTabProps
         action: "upload",
         text: content,
         contentType,
+        botConfigId: configId,
       });
       setSections(data.sections || []);
       setUploadText("");
@@ -196,7 +202,7 @@ export function ProductsTab({ orgId, user, enabled, onToggle }: ProductsTabProps
       const existing = sections.find((s) => s.id === section.id && s.updatedAt);
       await apiProducts(user, "POST", existing
         ? { action: "updateSection", sectionId: section.id, updates: { name: section.name, content: section.content, keywords: section.keywords } }
-        : { action: "createSection", section }
+        : { action: "createSection", section, botConfigId: configId }
       );
       toast.success("Section saved");
       loadData();

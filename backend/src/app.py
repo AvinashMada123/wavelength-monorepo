@@ -920,6 +920,7 @@ class PlivoMakeCallRequest(BaseModel):
     plivoAuthId: Optional[str] = None  # Per-org Plivo Auth ID (overrides env default)
     plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
+    maxCallDuration: Optional[int] = 480  # Max call duration in seconds (default 8 min)
 
 
 @app.post("/plivo/make-call")
@@ -1068,6 +1069,7 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             webhook_url=request.webhookUrl,
             intelligence_brief=intelligence_brief,
             social_proof_summary=social_proof_summary,
+            max_call_duration=request.maxCallDuration or 480,
         )
 
         logger.info(f"Gemini preload complete for {call_uuid} - now making call")

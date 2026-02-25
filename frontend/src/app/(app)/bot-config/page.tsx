@@ -85,14 +85,14 @@ function BotConfigContent() {
     }
   }
 
-  async function handleSetActive(configId: string) {
+  async function handleToggleActive(configId: string) {
     if (!user) return;
     try {
-      await apiBotConfigs(user, "POST", { action: "setActive", configId });
-      toast.success("Active configuration updated");
+      await apiBotConfigs(user, "POST", { action: "toggleActive", configId });
+      toast.success("Configuration status updated");
       loadConfigs();
     } catch {
-      toast.error("Failed to set active configuration");
+      toast.error("Failed to update configuration status");
     }
   }
 
@@ -196,16 +196,14 @@ function BotConfigContent() {
                       <Pencil className="size-3.5" />
                       Edit
                     </Button>
-                    {!config.isActive && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleSetActive(config.id)}
-                      >
-                        <Zap className="size-3.5" />
-                        Set Active
-                      </Button>
-                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleToggleActive(config.id)}
+                    >
+                      <Zap className="size-3.5" />
+                      {config.isActive ? "Deactivate" : "Activate"}
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"

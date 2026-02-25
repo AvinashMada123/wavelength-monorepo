@@ -26,10 +26,14 @@ import {
 async function apiSocialProof(
   user: { getIdToken: () => Promise<string> },
   method: "GET" | "POST",
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
+  configId?: string
 ) {
   const idToken = await user.getIdToken();
-  const res = await fetch("/api/data/social-proof", {
+  const url = method === "GET" && configId
+    ? `/api/data/social-proof?botConfigId=${configId}`
+    : "/api/data/social-proof";
+  const res = await fetch(url, {
     method,
     headers: {
       Authorization: `Bearer ${idToken}`,
@@ -43,12 +47,13 @@ async function apiSocialProof(
 
 interface SocialProofTabProps {
   orgId: string;
+  configId: string;
   user: { getIdToken: () => Promise<string> };
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
 }
 
-export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTabProps) {
+export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: SocialProofTabProps) {
   const [companies, setCompanies] = useState<SocialProofCompany[]>([]);
   const [cities, setCities] = useState<SocialProofCity[]>([]);
   const [roles, setRoles] = useState<SocialProofRole[]>([]);
@@ -63,7 +68,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await apiSocialProof(user, "GET");
+      const data = await apiSocialProof(user, "GET", undefined, configId);
       setCompanies(data.companies || []);
       setCities(data.cities || []);
       setRoles(data.roles || []);
@@ -72,7 +77,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, configId]);
 
   useEffect(() => {
     if (orgId) loadData();
@@ -82,7 +87,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
   async function handleSaveCompany(company: SocialProofCompany) {
     try {
       setSavingId(company.id);
-      await apiSocialProof(user, "POST", { action: "upsertCompany", company });
+      await apiSocialProof(user, "POST", { action: "upsertCompany", company, botConfigId: configId });
       toast.success("Company saved");
       loadData();
     } catch {
@@ -127,7 +132,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
   async function handleSaveCity(city: SocialProofCity) {
     try {
       setSavingId(city.id);
-      await apiSocialProof(user, "POST", { action: "upsertCity", city });
+      await apiSocialProof(user, "POST", { action: "upsertCity", city, botConfigId: configId });
       toast.success("City saved");
       loadData();
     } catch {
@@ -171,7 +176,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
   async function handleSaveRole(role: SocialProofRole) {
     try {
       setSavingId(role.id);
-      await apiSocialProof(user, "POST", { action: "upsertRole", role });
+      await apiSocialProof(user, "POST", { action: "upsertRole", role, botConfigId: configId });
       toast.success("Role saved");
       loadData();
     } catch {
@@ -243,7 +248,7 @@ export function SocialProofTab({ orgId, user, enabled, onToggle }: SocialProofTa
     try {
       setBulkImporting(true);
       const parsed = JSON.parse(bulkJson);
-      await apiSocialProof(user, "POST", { action: "bulkImport", data: parsed });
+      await apiSocialProof(user, "POST", { action: "bulkImport", data: parsed, botConfigId: configId });
       toast.success(`Imported ${bulkPreview.companies} companies, ${bulkPreview.cities} cities, ${bulkPreview.roles} roles`);
       setBulkDialogOpen(false);
       setBulkJson("");

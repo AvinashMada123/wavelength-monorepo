@@ -216,7 +216,7 @@ class AudioChunk:
 
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, client_name: str = "fwai"):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, client_name: str = "fwai", max_call_duration: int = 480):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
@@ -261,9 +261,9 @@ class PlivoGeminiSession:
         # Flag to prevent double greeting
         self.greeting_audio_complete = False
 
-        # Call duration management (8 minute max)
+        # Call duration management (configurable, default 8 minutes)
         self.call_start_time = None
-        self.max_call_duration = 8 * 60  # 8 minutes in seconds
+        self.max_call_duration = max_call_duration
         self._timeout_task = None
         self._closing_call = False  # Flag to indicate we're closing the call
 
@@ -982,7 +982,7 @@ Rules:
                     return  # Call ended, stop monitoring
 
             if self.is_active and not self._closing_call:
-                logger.info(f"Call {self.call_uuid[:8]} reaching 8 min limit - triggering wrap-up")
+                logger.info(f"Call {self.call_uuid[:8]} reaching {self.max_call_duration}s limit - triggering wrap-up")
                 self._closing_call = True
                 await self._send_wrap_up_message()
 
@@ -2936,14 +2936,14 @@ def set_plivo_uuid(internal_uuid: str, plivo_uuid: str):
         logger.error(f"  _preloading_sessions keys: {list(_preloading_sessions.keys())}")
         logger.error(f"  _sessions keys: {list(_sessions.keys())}")
 
-async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, intelligence_brief: str = "", social_proof_summary: str = "") -> bool:
+async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, intelligence_brief: str = "", social_proof_summary: str = "", max_call_duration: int = 480) -> bool:
     """Preload a session while phone is ringing"""
     async with _sessions_lock:
         total = len(_sessions) + len(_preloading_sessions)
         if total >= MAX_CONCURRENT_SESSIONS:
             logger.warning(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached. Rejecting {call_uuid}")
             raise Exception(f"Max concurrent sessions ({MAX_CONCURRENT_SESSIONS}) reached")
-        session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url)
+        session = PlivoGeminiSession(call_uuid, caller_phone, prompt=prompt, context=context, webhook_url=webhook_url, max_call_duration=max_call_duration)
         if intelligence_brief:
             session.inject_intelligence(intelligence_brief)
         if social_proof_summary:

@@ -40,6 +40,7 @@ export interface BotConfig {
   socialProofEnabled?: boolean;
   preResearchEnabled?: boolean;
   memoryRecallEnabled?: boolean;
+  maxCallDuration?: number;
   voice?: string;
   createdAt: string;
   updatedAt: string;

@@ -70,6 +70,7 @@ export default function BotConfigEditorPage() {
   const [socialProofEnabled, setSocialProofEnabled] = useState(false);
   const [preResearchEnabled, setPreResearchEnabled] = useState(false);
   const [memoryRecallEnabled, setMemoryRecallEnabled] = useState(false);
+  const [maxCallDuration, setMaxCallDuration] = useState(480);
   const [voice, setVoice] = useState("");
   const hasLoadedRef = useRef(false);
 
@@ -83,6 +84,7 @@ export default function BotConfigEditorPage() {
     setSocialProofEnabled(found.socialProofEnabled || false);
     setPreResearchEnabled(found.preResearchEnabled || false);
     setMemoryRecallEnabled(found.memoryRecallEnabled || false);
+    setMaxCallDuration(found.maxCallDuration ?? 480);
     setVoice(found.voice || "");
     setLoading(false);
     hasLoadedRef.current = true;
@@ -132,6 +134,7 @@ export default function BotConfigEditorPage() {
           Authorization: `Bearer ${idToken}`,
           "Content-Type": "application/json",
         },
+        body: JSON.stringify({ botConfigId: configId }),
       });
       const data = await res.json();
       if (data.success) {
@@ -165,6 +168,7 @@ export default function BotConfigEditorPage() {
           socialProofEnabled,
           preResearchEnabled,
           memoryRecallEnabled,
+          maxCallDuration,
           voice,
         },
       });
@@ -273,6 +277,7 @@ export default function BotConfigEditorPage() {
         {activeTab === "persona" && user && (
           <PersonaTab
             orgId={orgId!}
+            configId={configId}
             user={user}
             enabled={personaEngineEnabled}
             onToggle={setPersonaEngineEnabled}
@@ -281,6 +286,7 @@ export default function BotConfigEditorPage() {
         {activeTab === "products" && user && (
           <ProductsTab
             orgId={orgId!}
+            configId={configId}
             user={user}
             enabled={productIntelligenceEnabled}
             onToggle={setProductIntelligenceEnabled}
@@ -289,6 +295,7 @@ export default function BotConfigEditorPage() {
         {activeTab === "social-proof" && user && (
           <SocialProofTab
             orgId={orgId!}
+            configId={configId}
             user={user}
             enabled={socialProofEnabled}
             onToggle={setSocialProofEnabled}
@@ -301,6 +308,8 @@ export default function BotConfigEditorPage() {
             onPreResearchToggle={setPreResearchEnabled}
             memoryRecallEnabled={memoryRecallEnabled}
             onMemoryRecallToggle={setMemoryRecallEnabled}
+            maxCallDuration={maxCallDuration}
+            onMaxCallDurationChange={setMaxCallDuration}
           />
         )}
       </motion.div>
@@ -532,12 +541,16 @@ function AdditionalOptionsTab({
   onPreResearchToggle,
   memoryRecallEnabled,
   onMemoryRecallToggle,
+  maxCallDuration,
+  onMaxCallDurationChange,
 }: {
   user: { getIdToken: () => Promise<string> };
   preResearchEnabled: boolean;
   onPreResearchToggle: (v: boolean) => void;
   memoryRecallEnabled: boolean;
   onMemoryRecallToggle: (v: boolean) => void;
+  maxCallDuration: number;
+  onMaxCallDurationChange: (v: number) => void;
 }) {
   const [mmConfig, setMmConfig] = useState<Record<string, unknown> | null>(null);
   const [mmSaving, setMmSaving] = useState(false);
@@ -617,6 +630,25 @@ function AdditionalOptionsTab({
             <Switch
               checked={memoryRecallEnabled}
               onCheckedChange={onMemoryRecallToggle}
+            />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label className="text-sm font-medium">Max Call Duration</Label>
+              <p className="text-sm text-muted-foreground">
+                Maximum duration (in minutes) before the bot wraps up the call
+              </p>
+            </div>
+            <Input
+              type="number"
+              min={1}
+              max={60}
+              className="w-20 text-center"
+              value={Math.round(maxCallDuration / 60)}
+              onChange={(e) => {
+                const mins = parseInt(e.target.value) || 1;
+                onMaxCallDurationChange(Math.max(1, Math.min(60, mins)) * 60);
+              }}
             />
           </div>
         </CardContent>

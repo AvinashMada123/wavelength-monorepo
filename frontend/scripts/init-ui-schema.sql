@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     persona_engine_enabled BOOLEAN DEFAULT false,
     product_intelligence_enabled BOOLEAN DEFAULT false,
     social_proof_enabled BOOLEAN DEFAULT false,
+    max_call_duration INTEGER DEFAULT 480,
     created_by TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -104,6 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_configs_active ON bot_configs(org_id, is_acti
 CREATE TABLE IF NOT EXISTS personas (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
+    bot_config_id TEXT,
     name TEXT,
     content TEXT,
     keywords JSONB DEFAULT '[]',
@@ -112,11 +114,13 @@ CREATE TABLE IF NOT EXISTS personas (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_personas_org ON personas(org_id);
+CREATE INDEX IF NOT EXISTS idx_personas_bot_config ON personas(bot_config_id);
 
 -- 7. situations
 CREATE TABLE IF NOT EXISTS situations (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
+    bot_config_id TEXT,
     name TEXT,
     content TEXT,
     keywords JSONB DEFAULT '[]',
@@ -125,11 +129,13 @@ CREATE TABLE IF NOT EXISTS situations (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_situations_org ON situations(org_id);
+CREATE INDEX IF NOT EXISTS idx_situations_bot_config ON situations(bot_config_id);
 
 -- 8. product_sections
 CREATE TABLE IF NOT EXISTS product_sections (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
+    bot_config_id TEXT,
     name TEXT,
     content TEXT,
     keywords JSONB DEFAULT '[]',
@@ -137,11 +143,13 @@ CREATE TABLE IF NOT EXISTS product_sections (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_product_sections_org ON product_sections(org_id);
+CREATE INDEX IF NOT EXISTS idx_product_sections_bot_config ON product_sections(bot_config_id);
 
 -- 9. social proof: companies
 CREATE TABLE IF NOT EXISTS ui_social_proof_companies (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
+    bot_config_id TEXT,
     company_name TEXT,
     enrollments_count INTEGER DEFAULT 0,
     notable_outcomes TEXT,
@@ -149,28 +157,33 @@ CREATE TABLE IF NOT EXISTS ui_social_proof_companies (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ui_sp_companies_org ON ui_social_proof_companies(org_id);
+CREATE INDEX IF NOT EXISTS idx_ui_sp_companies_bot_config ON ui_social_proof_companies(bot_config_id);
 
 -- 10. social proof: cities
 CREATE TABLE IF NOT EXISTS ui_social_proof_cities (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
+    bot_config_id TEXT,
     city_name TEXT,
     enrollments_count INTEGER DEFAULT 0,
     trending BOOLEAN DEFAULT false,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ui_sp_cities_org ON ui_social_proof_cities(org_id);
+CREATE INDEX IF NOT EXISTS idx_ui_sp_cities_bot_config ON ui_social_proof_cities(bot_config_id);
 
 -- 11. social proof: roles
 CREATE TABLE IF NOT EXISTS ui_social_proof_roles (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
+    bot_config_id TEXT,
     role_name TEXT,
     enrollments_count INTEGER DEFAULT 0,
     success_stories TEXT,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ui_sp_roles_org ON ui_social_proof_roles(org_id);
+CREATE INDEX IF NOT EXISTS idx_ui_sp_roles_bot_config ON ui_social_proof_roles(bot_config_id);
 
 -- 12. invites
 CREATE TABLE IF NOT EXISTS invites (

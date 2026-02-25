@@ -18,10 +18,14 @@ import { Switch } from "@/components/ui/switch";
 async function apiPersonas(
   user: { getIdToken: () => Promise<string> },
   method: "GET" | "POST",
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
+  configId?: string
 ) {
   const idToken = await user.getIdToken();
-  const res = await fetch("/api/data/personas", {
+  const url = method === "GET" && configId
+    ? `/api/data/personas?botConfigId=${configId}`
+    : "/api/data/personas";
+  const res = await fetch(url, {
     method,
     headers: {
       Authorization: `Bearer ${idToken}`,
@@ -35,12 +39,13 @@ async function apiPersonas(
 
 interface PersonaTabProps {
   orgId: string;
+  configId: string;
   user: { getIdToken: () => Promise<string> };
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
 }
 
-export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) {
+export function PersonaTab({ orgId, configId, user, enabled, onToggle }: PersonaTabProps) {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [situations, setSituations] = useState<Situation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,7 +54,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await apiPersonas(user, "GET");
+      const data = await apiPersonas(user, "GET", undefined, configId);
       setPersonas(data.personas || []);
       setSituations(data.situations || []);
     } catch {
@@ -57,7 +62,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, configId]);
 
   useEffect(() => {
     if (orgId) loadData();
@@ -69,7 +74,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       const existing = personas.find((p) => p.id === persona.id && p.updatedAt);
       await apiPersonas(user, "POST", existing
         ? { action: "updatePersona", personaId: persona.id, updates: { name: persona.name, content: persona.content, keywords: persona.keywords } }
-        : { action: "createPersona", persona }
+        : { action: "createPersona", persona, botConfigId: configId }
       );
       toast.success("Persona saved");
       loadData();
@@ -96,7 +101,7 @@ export function PersonaTab({ orgId, user, enabled, onToggle }: PersonaTabProps) 
       const existing = situations.find((s) => s.id === situation.id && s.updatedAt);
       await apiPersonas(user, "POST", existing
         ? { action: "updateSituation", situationId: situation.id, updates: { name: situation.name, content: situation.content, keywords: situation.keywords } }
-        : { action: "createSituation", situation }
+        : { action: "createSituation", situation, botConfigId: configId }
       );
       toast.success("Situation saved");
       loadData();
