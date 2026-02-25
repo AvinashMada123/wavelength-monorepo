@@ -158,7 +158,7 @@ export function LeadsTable() {
   }
 
   const sourceLabel = (source: string) => {
-    switch (source) {
+    switch (source.toLowerCase()) {
       case "csv":
         return "CSV";
       case "excel":
