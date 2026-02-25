@@ -682,10 +682,19 @@ def _extract_interest_areas(user_text: str, turn_exchanges: list) -> list:
 
 def _extract_key_facts(turn_exchanges: list, user_text: str) -> list:
     """Extract key facts from user's speech.
-    Stores meaningful statements — not questions, filler, or garbage."""
+    Stores meaningful self-disclosure statements — not reactions, opinions, or filler."""
     facts = []
     if not turn_exchanges:
         return facts
+
+    # Short reactive phrases that aren't real facts
+    reactive_patterns = {
+        "not interesting", "it's not interesting", "no thing is interesting",
+        "nothing is interesting", "i don't know", "i'm not sure",
+        "yeah share", "share me", "yeah sure", "not really",
+        "that's fine", "that's okay", "that's ok", "no thanks",
+        "sounds good", "go ahead", "please continue", "carry on",
+    }
 
     for exchange in turn_exchanges:
         user_said = exchange.get("user", "").strip()
@@ -696,8 +705,22 @@ def _extract_key_facts(turn_exchanges: list, user_text: str) -> list:
             continue
         # Clean up fragmented transcription for storage
         cleaned = _clean_for_storage(user_said)
-        if cleaned and len(cleaned) > 8:
-            facts.append(cleaned[:200])
+        if not cleaned or len(cleaned) < 15:
+            continue
+        # Must have at least 3 real words (not just "Yeah. Ok sure.")
+        words = re.findall(r'[a-z]+', cleaned.lower())
+        if len(words) < 4:
+            continue
+        # Reject short reactive/opinion phrases
+        lower = cleaned.lower().strip().rstrip(".")
+        if lower in reactive_patterns or any(p in lower for p in reactive_patterns):
+            continue
+        # Reject if mostly fragmented (too many single-letter words = garbled transcription)
+        word_list = cleaned.split()
+        single_chars = sum(1 for w in word_list if len(w) == 1 and w.isalpha())
+        if single_chars > len(word_list) * 0.3:
+            continue
+        facts.append(cleaned[:200])
 
     return facts[-8:]
 

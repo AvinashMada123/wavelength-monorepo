@@ -15,7 +15,7 @@ const styleColors: Record<string, string> = {
 export function LinguisticStyleTags({ style }: { style?: LinguisticStyle }) {
   if (!style) return <span className="text-muted-foreground text-xs">--</span>;
 
-  const entries = Object.entries(style).filter(([, v]) => v);
+  const entries = Object.entries(style).filter(([, v]) => typeof v === "string" && v.trim());
   if (entries.length === 0) return <span className="text-muted-foreground text-xs">--</span>;
 
   return (
