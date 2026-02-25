@@ -18,14 +18,25 @@ export function addCallUpdate(orgId: string, data: CallEndedData) {
     pendingUpdates.set(key, []);
   }
   const updates = pendingUpdates.get(key)!;
-  updates.push({
+  const entry: PendingUpdate = {
     callUuid: data.call_uuid,
     data,
     receivedAt: new Date().toISOString(),
-  });
-  console.log(
-    `[call-updates-store] Added update for call ${data.call_uuid} (org: ${key}). Pending for org: ${updates.length}`
-  );
+  };
+
+  // Deduplicate: if an update for the same UUID already exists, replace it
+  const existingIdx = updates.findIndex((u) => u.callUuid === data.call_uuid);
+  if (existingIdx >= 0) {
+    updates[existingIdx] = entry;
+    console.log(
+      `[call-updates-store] Replaced update for call ${data.call_uuid} (org: ${key})`
+    );
+  } else {
+    updates.push(entry);
+    console.log(
+      `[call-updates-store] Added update for call ${data.call_uuid} (org: ${key}). Pending for org: ${updates.length}`
+    );
+  }
 }
 
 export function getPendingUpdates(orgId: string): PendingUpdate[] {

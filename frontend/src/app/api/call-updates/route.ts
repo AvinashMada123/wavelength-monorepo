@@ -190,8 +190,15 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Deduplicate by callUuid — keep the last (most complete) entry per UUID
+  const dedupedMap = new Map<string, (typeof pendingUpdates)[number]>();
+  for (const u of pendingUpdates) {
+    dedupedMap.set(u.callUuid, u);
+  }
+  const dedupedUpdates = Array.from(dedupedMap.values());
+
   return NextResponse.json({
-    updates: pendingUpdates,
+    updates: dedupedUpdates,
     _debug: { fwaiUrl: FWAI_BACKEND_URL, uuids, errors },
   });
 }

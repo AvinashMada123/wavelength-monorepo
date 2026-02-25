@@ -22,17 +22,30 @@ export function useCalls() {
     [state.calls]
   );
 
+  // Use refs for values accessed inside the polling effect to avoid
+  // tearing down and re-creating the interval on every state change
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   const applyCallUpdate = useCallback(
     (data: CallEndedData) => {
-      const match = state.calls.find((c) => c.callUuid === data.call_uuid);
+      // Read from ref to get latest state without causing effect re-runs
+      const currentState = stateRef.current;
+      const match = currentState.calls.find((c) => c.callUuid === data.call_uuid);
       if (!match) return;
+
+      // Already notified for this UUID — skip entirely (prevents duplicate dispatches + toasts)
+      if (notifiedRef.current.has(data.call_uuid)) return;
 
       // Don't re-apply if call is already in a terminal state
       if (match.status === "completed" || match.status === "no-answer" || match.status === "failed") return;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const isNoAnswer = !!(data as any).no_answer || data.duration_seconds === 0 && data.call_summary === "Call was not answered";
+      const isNoAnswer = !!(data as any).no_answer || (data.duration_seconds === 0 && data.call_summary === "Call was not answered");
       const newStatus: CallStatus = isNoAnswer ? "no-answer" : "completed";
+
+      // Mark as notified BEFORE dispatching to prevent any race conditions
+      notifiedRef.current.add(data.call_uuid);
 
       dispatch({
         type: "UPDATE_CALL",
@@ -49,13 +62,9 @@ export function useCalls() {
         },
       });
 
-      if (state.activeCall?.callUuid === data.call_uuid) {
+      if (currentState.activeCall?.callUuid === data.call_uuid) {
         dispatch({ type: "CLEAR_ACTIVE_CALL" });
       }
-
-      // Only show toast once per call UUID (prevents duplicates on tab switch / re-poll)
-      if (notifiedRef.current.has(data.call_uuid)) return;
-      notifiedRef.current.add(data.call_uuid);
 
       if (isNoAnswer) {
         toast.info("Call not answered", {
@@ -68,8 +77,12 @@ export function useCalls() {
         });
       }
     },
-    [state.calls, state.activeCall, dispatch]
+    [dispatch]
   );
+
+  // Keep a stable ref for applyCallUpdate so the effect doesn't re-run
+  const applyCallUpdateRef = useRef(applyCallUpdate);
+  applyCallUpdateRef.current = applyCallUpdate;
 
   useEffect(() => {
     if (!hasActiveCalls) {
@@ -82,8 +95,9 @@ export function useCalls() {
 
     const poll = async () => {
       try {
-        // Collect UUIDs of active calls to check their status
-        const activeUuids = state.calls
+        // Read latest state from ref
+        const currentCalls = stateRef.current.calls;
+        const activeUuids = currentCalls
           .filter((c) => (c.status === "initiating" || c.status === "in-progress") && c.callUuid)
           .map((c) => c.callUuid);
         if (activeUuids.length === 0) return;
@@ -91,8 +105,15 @@ export function useCalls() {
         const res = await fetch(`/api/call-updates?uuids=${activeUuids.join(",")}`);
         if (!res.ok) return;
         const { updates } = await res.json();
+
+        // Deduplicate by call_uuid — keep last entry for each UUID
+        const dedupedUpdates = new Map<string, CallEndedData>();
         for (const update of updates) {
-          applyCallUpdate(update.data);
+          dedupedUpdates.set(update.data.call_uuid, update.data);
+        }
+
+        for (const data of dedupedUpdates.values()) {
+          applyCallUpdateRef.current(data);
         }
       } catch {
         // silently ignore polling errors
@@ -108,7 +129,7 @@ export function useCalls() {
         pollingRef.current = null;
       }
     };
-  }, [hasActiveCalls, applyCallUpdate]);
+  }, [hasActiveCalls]);
 
   const stats = useMemo(() => {
     const today = new Date().toDateString();
