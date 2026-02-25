@@ -234,6 +234,8 @@ class PlivoGeminiSession:
         self.plivo_auth_id = self.context.pop("plivo_auth_id", "")  # Per-org Plivo Auth ID
         self.plivo_auth_token = self.context.pop("plivo_auth_token", "")  # Per-org Plivo Auth Token
         self._social_proof_enabled = self.context.pop("_social_proof_enabled", False)  # Feature flag
+        self._ghl_workflows = self.context.pop("_ghl_workflows", [])  # Configurable GHL workflow triggers
+        self._triggered_workflows = set()  # Track which workflows have been triggered (prevent duplicates)
         self._whatsapp_sent = False  # Track if WhatsApp was already sent this call
         self.plivo_ws = None  # Will be set when WebSocket connects
         self.goog_live_ws = None
@@ -452,7 +454,27 @@ class PlivoGeminiSession:
         """Build tool declarations dynamically based on session capabilities."""
         # Only include get_social_proof tool if social proof is enabled
         tools = [t for t in TOOL_DECLARATIONS if t["name"] != "get_social_proof" or self._social_proof_enabled]
-        if self.ghl_api_key and self.ghl_location_id:
+
+        # Add configurable GHL workflow tools (during_call only — pre/post are handled server-side)
+        for wf in self._ghl_workflows:
+            if wf.get("timing") == "during_call" and wf.get("enabled") and wf.get("webhookUrl"):
+                tools.append({
+                    "name": f"ghl_workflow_{wf['id']}",
+                    "description": wf.get("description", f"Trigger the '{wf.get('name', 'workflow')}' workflow"),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "description": "Why you're triggering this workflow now"
+                            }
+                        },
+                        "required": ["reason"]
+                    }
+                })
+
+        # Legacy: keep send_whatsapp if GHL creds are set but no workflows configured
+        if self.ghl_api_key and self.ghl_location_id and not self._ghl_workflows:
             tools.append({
                 "name": "send_whatsapp",
                 "description": "Send a WhatsApp message to the caller via the configured workflow. Use this when your prompt instructs you to send a WhatsApp message. Can only be sent once per call.",
@@ -2030,7 +2052,54 @@ Rules:
                     pass
                 return
 
-            # Handle send_whatsapp tool - trigger GHL workflow
+            # Handle configurable GHL workflow tools
+            if tool_name.startswith("ghl_workflow_"):
+                wf_id = tool_name.replace("ghl_workflow_", "")
+                reason = tool_args.get("reason", "")
+                wf = next((w for w in self._ghl_workflows if w.get("id") == wf_id), None)
+                self.log.detail(f"GHL workflow '{wf.get('name', wf_id) if wf else wf_id}': {reason}")
+                self._save_transcript("TOOL", f"{tool_name}: {reason}")
+
+                if wf_id in self._triggered_workflows:
+                    msg = f"Workflow '{wf.get('name', wf_id) if wf else wf_id}' already triggered this call"
+                elif not wf or not wf.get("webhookUrl"):
+                    msg = "Workflow not found or missing webhook URL"
+                else:
+                    self._triggered_workflows.add(wf_id)
+                    from src.services.ghl_whatsapp import trigger_ghl_workflow
+                    try:
+                        wf_result = await trigger_ghl_workflow(
+                            phone=self.caller_phone,
+                            contact_name=self.context.get("customer_name", "Customer"),
+                            webhook_url=wf["webhookUrl"],
+                            email=self.context.get("email", ""),
+                            extra_context={"trigger_reason": reason, "workflow_name": wf.get("name", "")},
+                        )
+                        if wf_result.get("success"):
+                            msg = f"Workflow '{wf.get('name', wf_id)}' triggered successfully"
+                        else:
+                            msg = f"Workflow failed: {wf_result.get('error', 'unknown')}"
+                        self.log.detail(f"GHL workflow result: {wf_result}")
+                    except Exception as e:
+                        msg = f"Workflow trigger failed: {e}"
+                        self.log.warn(msg)
+
+                try:
+                    tool_response = {
+                        "tool_response": {
+                            "function_responses": [{
+                                "id": call_id,
+                                "name": tool_name,
+                                "response": {"success": wf_id in self._triggered_workflows, "message": msg}
+                            }]
+                        }
+                    }
+                    await self.goog_live_ws.send(json.dumps(tool_response))
+                except Exception:
+                    pass
+                return
+
+            # Handle send_whatsapp tool - trigger GHL workflow (legacy)
             if tool_name == "send_whatsapp":
                 reason = tool_args.get("reason", "")
                 self.log.detail(f"Send WhatsApp: {reason}")
@@ -2617,6 +2686,22 @@ Rules:
             self._session_task.cancel()
 
         self._save_transcript("SYSTEM", "Call ended")
+
+        # Trigger post-call GHL workflows
+        for wf in self._ghl_workflows:
+            if wf.get("timing") == "post_call" and wf.get("enabled") and wf.get("webhookUrl"):
+                try:
+                    from src.services.ghl_whatsapp import trigger_ghl_workflow
+                    result = await trigger_ghl_workflow(
+                        phone=self.caller_phone,
+                        contact_name=self.context.get("customer_name", "Customer"),
+                        webhook_url=wf["webhookUrl"],
+                        email=self.context.get("email", ""),
+                        extra_context={"trigger_reason": "post_call", "workflow_name": wf.get("name", "")},
+                    )
+                    self.log.detail(f"Post-call GHL workflow '{wf.get('name', wf['id'])}': {result}")
+                except Exception as e:
+                    logger.warning(f"Post-call GHL workflow '{wf.get('name', wf.get('id', '?'))}' failed: {e}")
 
         # Stop recording thread
         if self._recording_queue:

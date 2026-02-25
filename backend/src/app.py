@@ -921,6 +921,7 @@ class PlivoMakeCallRequest(BaseModel):
     plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
     maxCallDuration: Optional[int] = 480  # Max call duration in seconds (default 8 min)
+    ghlWorkflows: Optional[list] = []  # GHL workflow triggers [{id, name, description, webhookUrl, timing, enabled}]
 
 
 @app.post("/plivo/make-call")
@@ -985,6 +986,10 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             context["ghl_api_key"] = request.ghlApiKey
         if request.ghlLocationId:
             context["ghl_location_id"] = request.ghlLocationId
+
+        # Pass GHL workflows to session context
+        if request.ghlWorkflows:
+            context["_ghl_workflows"] = request.ghlWorkflows
 
         # Pass per-org Plivo credentials in context for hangup
         if request.plivoAuthId:
@@ -1059,6 +1064,20 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
                 logger.info(f"Social proof summary loaded ({len(social_proof_summary)} chars)")
         else:
             logger.info("Social proof DISABLED — skipping")
+
+        # Step 2.7: Trigger pre-call GHL workflows
+        for wf in (request.ghlWorkflows or []):
+            if wf.get("timing") == "pre_call" and wf.get("enabled") and wf.get("webhookUrl"):
+                try:
+                    from src.services.ghl_whatsapp import trigger_ghl_workflow
+                    result = await trigger_ghl_workflow(
+                        phone=request.phoneNumber,
+                        contact_name=request.contactName or "Customer",
+                        webhook_url=wf["webhookUrl"],
+                    )
+                    logger.info(f"Pre-call GHL workflow '{wf.get('name', wf['id'])}': {result}")
+                except Exception as e:
+                    logger.warning(f"Pre-call GHL workflow '{wf.get('name', wf['id'])}' failed: {e}")
 
         # Step 3: Preload Gemini session (intelligence + memory + social proof will be in system prompt)
         await preload_session(

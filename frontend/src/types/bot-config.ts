@@ -12,6 +12,15 @@ export interface BotObjection {
   keywords: string[];
 }
 
+export interface GhlWorkflow {
+  id: string;
+  name: string;
+  description: string;
+  webhookUrl: string;
+  timing: "pre_call" | "during_call" | "post_call";
+  enabled: boolean;
+}
+
 export interface BotContextVariables {
   agentName?: string;
   companyName?: string;
@@ -41,6 +50,7 @@ export interface BotConfig {
   preResearchEnabled?: boolean;
   memoryRecallEnabled?: boolean;
   maxCallDuration?: number;
+  ghlWorkflows?: GhlWorkflow[];
   voice?: string;
   createdAt: string;
   updatedAt: string;

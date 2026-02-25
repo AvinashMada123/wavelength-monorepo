@@ -101,8 +101,9 @@ export async function POST(request: NextRequest) {
       await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS bot_config_id TEXT`);
     }
 
-    // Add max_call_duration column to bot_configs
+    // Add max_call_duration and ghl_workflows columns to bot_configs
     await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS max_call_duration INTEGER DEFAULT 480`);
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS ghl_workflows JSONB DEFAULT '[]'`);
 
     // Migrate existing rows: assign to the org's active bot config
     for (const table of tablesNeedingBotConfigId) {

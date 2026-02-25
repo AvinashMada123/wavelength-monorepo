@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     product_intelligence_enabled BOOLEAN DEFAULT false,
     social_proof_enabled BOOLEAN DEFAULT false,
     max_call_duration INTEGER DEFAULT 480,
+    ghl_workflows JSONB DEFAULT '[]',
     created_by TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()

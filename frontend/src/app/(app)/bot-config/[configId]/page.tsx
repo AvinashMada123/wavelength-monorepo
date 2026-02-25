@@ -10,11 +10,14 @@ import {
   Info,
   Plus,
   X,
+  Trash2,
+  Workflow,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAuth } from "@/hooks/use-auth";
-import type { BotConfig, BotContextVariables } from "@/types/bot-config";
+import { generateId } from "@/lib/utils";
+import type { BotConfig, BotContextVariables, GhlWorkflow } from "@/types/bot-config";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +31,7 @@ import { PersonaTab } from "./persona-tab";
 import { ProductsTab } from "./products-tab";
 import { SocialProofTab } from "./social-proof-tab";
 
-type TabId = "prompt" | "context" | "persona" | "products" | "social-proof" | "options";
+type TabId = "prompt" | "context" | "persona" | "products" | "social-proof" | "ghl-workflows" | "options";
 
 async function apiBotConfigs(
   user: { getIdToken: () => Promise<string> },
@@ -71,6 +74,7 @@ export default function BotConfigEditorPage() {
   const [preResearchEnabled, setPreResearchEnabled] = useState(false);
   const [memoryRecallEnabled, setMemoryRecallEnabled] = useState(false);
   const [maxCallDuration, setMaxCallDuration] = useState(480);
+  const [ghlWorkflows, setGhlWorkflows] = useState<GhlWorkflow[]>([]);
   const [voice, setVoice] = useState("");
   const hasLoadedRef = useRef(false);
 
@@ -85,6 +89,7 @@ export default function BotConfigEditorPage() {
     setPreResearchEnabled(found.preResearchEnabled || false);
     setMemoryRecallEnabled(found.memoryRecallEnabled || false);
     setMaxCallDuration(found.maxCallDuration ?? 480);
+    setGhlWorkflows(found.ghlWorkflows || []);
     setVoice(found.voice || "");
     setLoading(false);
     hasLoadedRef.current = true;
@@ -169,6 +174,7 @@ export default function BotConfigEditorPage() {
           preResearchEnabled,
           memoryRecallEnabled,
           maxCallDuration,
+          ghlWorkflows,
           voice,
         },
       });
@@ -188,6 +194,7 @@ export default function BotConfigEditorPage() {
     { id: "persona", label: "Persona" },
     { id: "products", label: "Products" },
     { id: "social-proof", label: "Social Proof" },
+    { id: "ghl-workflows", label: "GHL Workflows" },
     { id: "options", label: "Additional Options" },
   ];
 
@@ -299,6 +306,12 @@ export default function BotConfigEditorPage() {
             user={user}
             enabled={socialProofEnabled}
             onToggle={setSocialProofEnabled}
+          />
+        )}
+        {activeTab === "ghl-workflows" && (
+          <GhlWorkflowsTab
+            workflows={ghlWorkflows}
+            onChange={setGhlWorkflows}
           />
         )}
         {activeTab === "options" && user && (
@@ -738,6 +751,156 @@ function AdditionalOptionsTab({
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+/* ========== GHL Workflows Tab ========== */
+
+const TIMING_OPTIONS: { value: GhlWorkflow["timing"]; label: string; description: string }[] = [
+  { value: "pre_call", label: "Pre-Call", description: "Triggers before the call connects" },
+  { value: "during_call", label: "During Call", description: "AI decides when to trigger based on conversation" },
+  { value: "post_call", label: "Post-Call", description: "Triggers automatically when the call ends" },
+];
+
+function GhlWorkflowsTab({
+  workflows,
+  onChange,
+}: {
+  workflows: GhlWorkflow[];
+  onChange: (v: GhlWorkflow[]) => void;
+}) {
+  function addWorkflow() {
+    onChange([
+      ...workflows,
+      {
+        id: `wf_${generateId().slice(0, 8)}`,
+        name: "",
+        description: "",
+        webhookUrl: "",
+        timing: "during_call",
+        enabled: true,
+      },
+    ]);
+  }
+
+  function updateWorkflow(id: string, updates: Partial<GhlWorkflow>) {
+    onChange(workflows.map((w) => (w.id === id ? { ...w, ...updates } : w)));
+  }
+
+  function removeWorkflow(id: string) {
+    onChange(workflows.filter((w) => w.id !== id));
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Workflow className="size-5" />
+                GHL Workflow Triggers
+              </CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Configure GoHighLevel workflows that the AI can trigger during calls.
+                Each workflow is a webhook URL that gets called with the contact&apos;s details.
+              </p>
+            </div>
+            <Button onClick={addWorkflow} size="sm">
+              <Plus className="size-4" />
+              Add Workflow
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {workflows.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Workflow className="size-10 mx-auto mb-3 opacity-40" />
+              <p className="text-sm">No workflows configured yet</p>
+              <p className="text-xs mt-1">Add a workflow to let the AI trigger GHL automations</p>
+            </div>
+          ) : (
+            workflows.map((wf) => (
+              <div key={wf.id} className="rounded-lg border p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Workflow Name</Label>
+                      <Input
+                        value={wf.name}
+                        onChange={(e) => updateWorkflow(wf.id, { name: e.target.value })}
+                        placeholder="e.g. Send Welcome WhatsApp"
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Webhook URL</Label>
+                      <Input
+                        value={wf.webhookUrl}
+                        onChange={(e) => updateWorkflow(wf.id, { webhookUrl: e.target.value })}
+                        placeholder="https://services.leadconnectorhq.com/hooks/..."
+                        className="h-8 text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-5">
+                    <Switch
+                      checked={wf.enabled}
+                      onCheckedChange={(v) => updateWorkflow(wf.id, { enabled: v })}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeWorkflow(wf.id)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    AI Trigger Description
+                    <span className="text-muted-foreground ml-1 font-normal">
+                      (tells the AI when to trigger this workflow)
+                    </span>
+                  </Label>
+                  <Textarea
+                    value={wf.description}
+                    onChange={(e) => updateWorkflow(wf.id, { description: e.target.value })}
+                    placeholder="e.g. Trigger when the customer confirms they want more information about the course. Send them a WhatsApp with details."
+                    rows={2}
+                    className="text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Trigger Timing</Label>
+                  <div className="flex gap-2">
+                    {TIMING_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => updateWorkflow(wf.id, { timing: opt.value })}
+                        className={`flex-1 rounded-md border px-3 py-2 text-left transition-colors ${
+                          wf.timing === opt.value
+                            ? "border-primary bg-primary/5 text-foreground"
+                            : "border-border text-muted-foreground hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="text-xs font-medium">{opt.label}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{opt.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

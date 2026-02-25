@@ -75,12 +75,13 @@ export async function POST(request: NextRequest) {
           preResearchEnabled: "pre_research_enabled",
           memoryRecallEnabled: "memory_recall_enabled",
           maxCallDuration: "max_call_duration",
+          ghlWorkflows: "ghl_workflows",
           voice: "voice",
         };
 
         const jsonCols = new Set([
           "questions", "objections", "objection_keywords",
-          "context_variables", "qualification_criteria",
+          "context_variables", "qualification_criteria", "ghl_workflows",
         ]);
 
         for (const [key, value] of Object.entries(updates || {})) {

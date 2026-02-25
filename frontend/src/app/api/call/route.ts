@@ -237,6 +237,7 @@ export async function POST(request: NextRequest) {
       ...(botNotes ? { botNotes } : {}),
       ...(payload.jobTitle ? { jobTitle: payload.jobTitle } : {}),
       maxCallDuration: configDoc?.max_call_duration ?? 480,
+      ghlWorkflows: configDoc?.ghl_workflows ?? [],
       ...(configDoc?.voice || payload.voice ? { voice: configDoc?.voice || payload.voice } : {}),
     };
 

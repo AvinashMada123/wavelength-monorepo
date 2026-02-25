@@ -11,7 +11,7 @@ from typing import Dict, Any
 GHL_API_BASE = "https://services.leadconnectorhq.com"
 
 
-async def trigger_ghl_workflow(phone: str, contact_name: str = "Customer", webhook_url: str = "", email: str = "") -> Dict[str, Any]:
+async def trigger_ghl_workflow(phone: str, contact_name: str = "Customer", webhook_url: str = "", email: str = "", extra_context: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Trigger a GoHighLevel workflow via inbound webhook.
     Passes phone, email and contact name so GHL can find contact and send WhatsApp.
@@ -21,6 +21,7 @@ async def trigger_ghl_workflow(phone: str, contact_name: str = "Customer", webho
         contact_name: Recipient name
         webhook_url: GHL inbound webhook URL (passed per-call from frontend)
         email: Recipient email (for GHL contact lookup fallback)
+        extra_context: Additional data to include in the webhook payload (e.g. trigger reason)
     """
     if not webhook_url:
         logger.warning("No GHL webhook URL provided - skipping workflow trigger")
@@ -36,6 +37,7 @@ async def trigger_ghl_workflow(phone: str, contact_name: str = "Customer", webho
         "contact_name": contact_name,
         "email": email,
         "source": "ai_voice_call",
+        **(extra_context or {}),
     }
 
     try:
