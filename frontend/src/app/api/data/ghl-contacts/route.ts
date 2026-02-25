@@ -23,6 +23,143 @@ interface GHLResponse {
   meta: { startAfterId?: string; total?: number };
 }
 
+interface GHLSearchResult {
+  contacts: GHLContact[];
+  total: number;
+  hasMore: boolean;
+}
+
+// Cache which search filter format works for this GHL account
+// (persists across requests within the same process)
+let _searchFormatIdx: number | null = null;
+
+/**
+ * Search GHL contacts by tags using POST /contacts/search.
+ * Tries multiple filter formats and caches the one that works.
+ * Returns null if the search endpoint is unavailable (caller should fallback).
+ */
+async function searchGHLContacts(
+  apiKey: string, locationId: string, tags: string[], page: number
+): Promise<GHLSearchResult | null> {
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    Version: GHL_API_VERSION,
+    "Content-Type": "application/json",
+  };
+
+  // Build filter entries for each tag
+  const buildBody = (formatIdx: number) => {
+    const tagFilters = tags.map((tag) => ({
+      field: "tags",
+      operator: formatIdx >= 2 ? "eq" : "contains",
+      value: tag,
+    }));
+
+    const base = { locationId, page, pageLimit: GHL_PAGE_LIMIT };
+
+    if (formatIdx === 0) {
+      // Format 1: nested group with OR logic
+      return { ...base, filters: [{ group: "OR", filters: tagFilters }] };
+    }
+    // Format 2 & 3: flat filters array (with contains or eq)
+    return { ...base, filters: tagFilters };
+  };
+
+  const url = `${GHL_API_BASE}/contacts/search`;
+  const formatsToTry = _searchFormatIdx !== null
+    ? [_searchFormatIdx]
+    : [0, 1, 2]; // try all formats
+
+  for (const idx of formatsToTry) {
+    const body = buildBody(idx);
+    console.log(`[GHL Search] Trying format ${idx} (page ${page}):`, JSON.stringify(body).slice(0, 200));
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 400 || res.status === 422) {
+        const errText = await res.text();
+        console.log(`[GHL Search] Format ${idx} rejected (${res.status}): ${errText.slice(0, 200)}`);
+        continue; // try next format
+      }
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(`[GHL Search] Endpoint error ${res.status}: ${errText.slice(0, 200)}`);
+        return null; // endpoint issue, fall back to GET
+      }
+
+      const data = await res.json();
+      const contacts: GHLContact[] = data.contacts || [];
+      const total = data.meta?.total ?? data.total ?? contacts.length;
+
+      // Cache the working format
+      if (_searchFormatIdx === null) {
+        _searchFormatIdx = idx;
+        console.log(`[GHL Search] Format ${idx} works! Caching for future requests.`);
+      }
+
+      const hasMore = contacts.length >= GHL_PAGE_LIMIT;
+      console.log(`[GHL Search] Got ${contacts.length} contacts (total: ${total}, hasMore: ${hasMore})`);
+      return { contacts, total, hasMore };
+    } catch (err) {
+      console.error(`[GHL Search] Format ${idx} network error:`, err);
+      return null; // network issue, fall back to GET
+    }
+  }
+
+  console.warn("[GHL Search] All formats rejected, falling back to GET + client-side filter");
+  return null; // all formats failed
+}
+
+/**
+ * Upsert a batch of GHL contacts into our leads table.
+ * Returns the number of contacts synced.
+ */
+async function upsertGHLContacts(
+  contacts: GHLContact[], orgId: string
+): Promise<number> {
+  if (contacts.length === 0) return 0;
+
+  const ghlIds = contacts.map((c) => c.id);
+  const placeholders = ghlIds.map((_, i) => `$${i + 2}`).join(", ");
+  const existingRows = await query<{ id: string; ghl_contact_id: string }>(
+    `SELECT id, ghl_contact_id FROM leads WHERE org_id = $1 AND ghl_contact_id IN (${placeholders})`,
+    [orgId, ...ghlIds]
+  );
+  const existingByGhlId = new Map<string, string>();
+  for (const row of existingRows) {
+    existingByGhlId.set(row.ghl_contact_id, row.id);
+  }
+
+  let synced = 0;
+  for (const contact of contacts) {
+    const existingDocId = existingByGhlId.get(contact.id);
+    const contactName = [contact.firstName, contact.lastName].filter(Boolean).join(" ") || "Unknown";
+
+    if (existingDocId) {
+      await query(
+        `UPDATE leads SET contact_name = $1, phone_number = $2, email = $3, company = $4, location = $5, tags = $6, updated_at = NOW()
+         WHERE id = $7 AND org_id = $8`,
+        [contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), existingDocId, orgId]
+      );
+    } else {
+      const id = crypto.randomUUID();
+      await query(
+        `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, status, call_count, source, ghl_contact_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', 0, 'ghl', $9, NOW(), NOW())`,
+        [id, orgId, contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), contact.id]
+      );
+    }
+    synced++;
+  }
+  return synced;
+}
+
 async function fetchGHLTags(apiKey: string, locationId: string, orgId: string): Promise<string[]> {
   const allTags = new Set<string>();
 
@@ -123,16 +260,74 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, tags });
     }
 
+    // Count contacts matching tags (quick preview before import)
+    if (body.action === "countByTags") {
+      const tags: string[] = body.tags || [];
+      if (tags.length === 0) {
+        return NextResponse.json({ success: true, total: 0 });
+      }
+
+      // Try search endpoint with pageLimit=1 to get just the total
+      const result = await searchGHLContacts(ghlApiKey, ghlLocationId, tags, 1);
+      if (result) {
+        return NextResponse.json({ success: true, total: result.total });
+      }
+
+      // Fallback: can't count efficiently without search endpoint
+      return NextResponse.json({ success: true, total: null, fallback: true });
+    }
+
     if (body.action !== "sync") {
       return NextResponse.json({ success: false, message: "Unknown action" }, { status: 400 });
     }
 
-    // Sync: fetch ONE page of 100 contacts
-    // Support both single tag (legacy) and multiple tags
+    // Sync contacts
     const filterTags: string[] = body.tags?.length ? body.tags : body.tag ? [body.tag] : [];
     const cursor: string | undefined = body.cursor || undefined;
 
-    console.log(`[GHL Sync] Fetching batch for org: ${orgId}${filterTags.length ? ` (tags: ${JSON.stringify(filterTags)})` : ""}${cursor ? ` (cursor: ${cursor})` : " (first batch)"}`);
+    // --- TAG-FILTERED SYNC: use search endpoint, auto-paginate all pages ---
+    if (filterTags.length > 0) {
+      console.log(`[GHL Sync] Tag-filtered sync for org: ${orgId}, tags: ${JSON.stringify(filterTags)}`);
+
+      // First try the search endpoint
+      const firstPage = await searchGHLContacts(ghlApiKey, ghlLocationId, filterTags, 1);
+
+      if (firstPage) {
+        // Search endpoint works — auto-paginate through all results
+        let totalSynced = await upsertGHLContacts(firstPage.contacts, orgId);
+        let currentPage = 1;
+        let hasMore = firstPage.hasMore;
+        const totalInGHL = firstPage.total;
+        const MAX_PAGES = 50; // safety limit: 50 * 100 = 5000 contacts max
+
+        while (hasMore && currentPage < MAX_PAGES) {
+          currentPage++;
+          const nextPageResult = await searchGHLContacts(ghlApiKey, ghlLocationId, filterTags, currentPage);
+          if (!nextPageResult || nextPageResult.contacts.length === 0) break;
+          totalSynced += await upsertGHLContacts(nextPageResult.contacts, orgId);
+          hasMore = nextPageResult.hasMore;
+        }
+
+        // Update last sync time
+        const nowIso = new Date().toISOString();
+        await query(
+          `UPDATE organizations SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{ghlLastSyncAt}', to_jsonb($1::text)), updated_at = NOW() WHERE id = $2`,
+          [nowIso, orgId]
+        );
+
+        console.log(`[GHL Sync] Tag search complete. Synced: ${totalSynced}/${totalInGHL} across ${currentPage} pages`);
+        return NextResponse.json({
+          success: true, synced: totalSynced, totalInGHL, hasMore: false,
+          searchMode: true, ghlLastSyncAt: nowIso,
+        });
+      }
+
+      // Search endpoint failed — fall through to GET + client-side filter
+      console.warn("[GHL Sync] Search endpoint unavailable, falling back to GET + client-side filter");
+    }
+
+    // --- UNFILTERED SYNC (or fallback): single page via GET /contacts/ ---
+    console.log(`[GHL Sync] Fetching batch for org: ${orgId}${filterTags.length ? ` (tags: ${JSON.stringify(filterTags)} — fallback mode)` : ""}${cursor ? ` (cursor: ${cursor})` : " (first batch)"}`);
 
     const params = new URLSearchParams({ locationId: ghlLocationId, limit: String(GHL_PAGE_LIMIT) });
     if (cursor) params.set("startAfterId", cursor);
@@ -150,51 +345,15 @@ export async function POST(request: NextRequest) {
     const ghlData: GHLResponse = await ghlRes.json();
     const totalInGHL = ghlData.meta?.total ?? 0;
 
-    // Filter contacts that have ANY of the selected tags
+    // Client-side tag filter (fallback path)
     const contacts = filterTags.length > 0
       ? ghlData.contacts.filter((c) => c.tags?.some((t) => filterTags.includes(t)))
       : ghlData.contacts;
 
     console.log(`[GHL Sync] Got ${ghlData.contacts.length} contacts from GHL, ${contacts.length} matched${filterTags.length ? ` tags ${JSON.stringify(filterTags)}` : ""} (total in GHL: ${totalInGHL})`);
 
-    // Load existing GHL leads for upsert
-    let synced = 0;
-
-    if (contacts.length > 0) {
-      // Get existing leads with these GHL IDs
-      const ghlIds = contacts.map((c) => c.id);
-      const placeholders = ghlIds.map((_, i) => `$${i + 2}`).join(", ");
-      const existingRows = await query<{ id: string; ghl_contact_id: string }>(
-        `SELECT id, ghl_contact_id FROM leads WHERE org_id = $1 AND ghl_contact_id IN (${placeholders})`,
-        [orgId, ...ghlIds]
-      );
-      const existingByGhlId = new Map<string, string>();
-      for (const row of existingRows) {
-        existingByGhlId.set(row.ghl_contact_id, row.id);
-      }
-
-      for (const contact of contacts) {
-        const existingDocId = existingByGhlId.get(contact.id);
-        const contactName = [contact.firstName, contact.lastName].filter(Boolean).join(" ") || "Unknown";
-
-        if (existingDocId) {
-          await query(
-            `UPDATE leads SET contact_name = $1, phone_number = $2, email = $3, company = $4, location = $5, tags = $6, updated_at = NOW()
-             WHERE id = $7 AND org_id = $8`,
-            [contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), existingDocId, orgId]
-          );
-        } else {
-          const id = crypto.randomUUID();
-          await query(
-            `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, status, call_count, source, ghl_contact_id, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', 0, 'ghl', $9, NOW(), NOW())`,
-            [id, orgId, contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), contact.id]
-          );
-        }
-        synced++;
-      }
-      console.log(`[GHL Sync] Saved ${synced} leads to PostgreSQL`);
-    }
+    const synced = await upsertGHLContacts(contacts, orgId);
+    console.log(`[GHL Sync] Saved ${synced} leads to PostgreSQL`);
 
     // Update last sync time
     const nowIso = new Date().toISOString();

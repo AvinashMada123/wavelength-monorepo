@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Upload, Plus, RefreshCw, Settings, ChevronRight, ChevronsUpDown, Check, X, Tag } from "lucide-react";
+import { Upload, Plus, RefreshCw, Settings, ChevronRight, ChevronsUpDown, Check, X, Tag, Download, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -39,6 +39,8 @@ export default function LeadsPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [totalSynced, setTotalSynced] = useState(0);
   const [totalInGHL, setTotalInGHL] = useState<number | null>(null);
+  const [tagCount, setTagCount] = useState<number | null>(null);
+  const [countingTags, setCountingTags] = useState(false);
 
   const ghlConfigured = !!(settings.ghlApiKey && settings.ghlLocationId);
   const ghlSyncEnabled = settings.ghlSyncEnabled ?? false;
@@ -47,12 +49,42 @@ export default function LeadsPage() {
     await updateSettings({ ghlSyncEnabled: checked });
   };
 
-  // Reset cursor when tags change
+  // Reset state and count contacts when tags change
   useEffect(() => {
     setNextCursor(null);
     setTotalSynced(0);
     setTotalInGHL(null);
-  }, [selectedGhlTags]);
+    setTagCount(null);
+
+    if (selectedGhlTags.length === 0 || !user || !ghlConfigured) return;
+
+    let cancelled = false;
+    const countContacts = async () => {
+      setCountingTags(true);
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/data/ghl-contacts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: "countByTags", tags: selectedGhlTags }),
+        });
+        const data = await res.json();
+        if (!cancelled && data.success) {
+          setTagCount(data.total);
+        }
+      } catch (err) {
+        console.error("Failed to count contacts by tag:", err);
+      } finally {
+        if (!cancelled) setCountingTags(false);
+      }
+    };
+
+    countContacts();
+    return () => { cancelled = true; };
+  }, [selectedGhlTags, user, ghlConfigured]);
 
   // Fetch CRM tags when sync is enabled and configured
   useEffect(() => {
@@ -125,7 +157,14 @@ export default function LeadsPage() {
   const handleSync = useCallback(async (cursor?: string | null) => {
     if (!user) return;
     setSyncing(true);
-    const toastId = toast.loading(cursor ? "Fetching next 100 contacts..." : "Fetching contacts from CRM...");
+    const isTagImport = selectedGhlTags.length > 0 && !cursor;
+    const toastId = toast.loading(
+      isTagImport
+        ? `Importing ${tagCount ?? ""} contacts...`
+        : cursor
+          ? "Fetching next 100 contacts..."
+          : "Fetching contacts from CRM..."
+    );
     try {
       const token = await user.getIdToken();
 
@@ -168,7 +207,10 @@ export default function LeadsPage() {
         );
       }
 
-      if (data.hasMore) {
+      if (data.searchMode) {
+        // Tag-filtered sync imported all pages at once
+        toast.success(`Imported ${data.synced} contacts. All done!`, { id: toastId });
+      } else if (data.hasMore) {
         toast.success(`Synced ${data.synced} contacts. More available — click "Fetch Next 100" to continue.`, { id: toastId });
       } else {
         toast.success(`Synced ${data.synced} contacts. All done!`, { id: toastId });
@@ -179,7 +221,7 @@ export default function LeadsPage() {
     } finally {
       setSyncing(false);
     }
-  }, [user, updateSettings, mergeGhlLeads, selectedGhlTags]);
+  }, [user, updateSettings, mergeGhlLeads, selectedGhlTags, tagCount]);
 
   const formatLastSync = (dateStr?: string) => {
     if (!dateStr) return null;
@@ -339,32 +381,80 @@ export default function LeadsPage() {
                     </PopoverContent>
                   </Popover>
 
-                  {!nextCursor ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleSync(null)}
-                      disabled={syncing}
-                    >
-                      <RefreshCw
-                        className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`}
-                      />
-                      {syncing ? "Syncing..." : "Fetch 100 Contacts"}
-                    </Button>
+                  {/* Sync buttons: different UX for tag mode vs unfiltered */}
+                  {selectedGhlTags.length > 0 ? (
+                    <>
+                      {/* Tag mode: show count + "Import N Contacts" */}
+                      {countingTags ? (
+                        <Button size="sm" variant="outline" disabled>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Counting...
+                        </Button>
+                      ) : tagCount !== null && tagCount > 0 ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSync(null)}
+                          disabled={syncing}
+                        >
+                          {syncing ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="mr-2 h-4 w-4" />
+                          )}
+                          {syncing ? "Importing..." : `Import ${tagCount} Contacts`}
+                        </Button>
+                      ) : tagCount === 0 ? (
+                        <span className="text-sm text-muted-foreground">
+                          No contacts found with selected tags
+                        </span>
+                      ) : (
+                        /* tagCount is null — search endpoint unavailable, fallback to old behavior */
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSync(null)}
+                          disabled={syncing}
+                        >
+                          <RefreshCw
+                            className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`}
+                          />
+                          {syncing ? "Syncing..." : "Fetch 100 Contacts"}
+                        </Button>
+                      )}
+                    </>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleSync(nextCursor)}
-                      disabled={syncing}
-                    >
-                      <ChevronRight
-                        className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`}
-                      />
-                      {syncing ? "Syncing..." : "Fetch Next 100"}
-                    </Button>
+                    <>
+                      {/* No tags: existing cursor-based pagination */}
+                      {!nextCursor ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSync(null)}
+                          disabled={syncing}
+                        >
+                          <RefreshCw
+                            className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`}
+                          />
+                          {syncing ? "Syncing..." : "Fetch 100 Contacts"}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSync(nextCursor)}
+                          disabled={syncing}
+                        >
+                          <ChevronRight
+                            className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`}
+                          />
+                          {syncing ? "Syncing..." : "Fetch Next 100"}
+                        </Button>
+                      )}
+                    </>
                   )}
 
+                  {/* Progress indicator */}
                   {totalSynced > 0 && totalInGHL && (
                     <div className="flex-1 min-w-[200px] space-y-1">
                       <div className="flex justify-between text-xs text-muted-foreground">
