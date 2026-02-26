@@ -7,6 +7,7 @@ export const DEFAULT_BOT_CONFIG: Omit<BotConfig, "id" | "createdAt" | "updatedAt
   personaEngineEnabled: false,
   productIntelligenceEnabled: false,
   socialProofEnabled: false,
+  socialProofMinTurn: 0,
   preResearchEnabled: false,
   memoryRecallEnabled: false,
   maxCallDuration: 480,

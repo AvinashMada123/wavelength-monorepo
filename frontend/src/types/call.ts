@@ -10,6 +10,8 @@ export interface CallRequest {
   location: string;
   jobTitle?: string;
   botConfigId?: string;
+  botConfigName?: string;
+  customVariableOverrides?: Record<string, string>;
 }
 
 export interface CallResponse {

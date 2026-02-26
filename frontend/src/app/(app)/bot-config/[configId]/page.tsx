@@ -75,6 +75,7 @@ export default function BotConfigEditorPage() {
   const [personaEngineEnabled, setPersonaEngineEnabled] = useState(false);
   const [productIntelligenceEnabled, setProductIntelligenceEnabled] = useState(false);
   const [socialProofEnabled, setSocialProofEnabled] = useState(false);
+  const [socialProofMinTurn, setSocialProofMinTurn] = useState(0);
   const [preResearchEnabled, setPreResearchEnabled] = useState(false);
   const [memoryRecallEnabled, setMemoryRecallEnabled] = useState(false);
   const [maxCallDuration, setMaxCallDuration] = useState(480);
@@ -91,6 +92,7 @@ export default function BotConfigEditorPage() {
     setPersonaEngineEnabled(found.personaEngineEnabled || false);
     setProductIntelligenceEnabled(found.productIntelligenceEnabled || false);
     setSocialProofEnabled(found.socialProofEnabled || false);
+    setSocialProofMinTurn(found.socialProofMinTurn ?? 0);
     setPreResearchEnabled(found.preResearchEnabled || false);
     setMemoryRecallEnabled(found.memoryRecallEnabled || false);
     setMaxCallDuration(found.maxCallDuration ?? 480);
@@ -174,6 +176,7 @@ export default function BotConfigEditorPage() {
         personaEngineEnabled,
         productIntelligenceEnabled,
         socialProofEnabled,
+        socialProofMinTurn,
         preResearchEnabled,
         memoryRecallEnabled,
         maxCallDuration,
@@ -352,6 +355,8 @@ export default function BotConfigEditorPage() {
             user={user}
             enabled={socialProofEnabled}
             onToggle={setSocialProofEnabled}
+            minTurn={socialProofMinTurn}
+            onMinTurnChange={setSocialProofMinTurn}
           />
         )}
         {activeTab === "ghl-workflows" && (
@@ -449,7 +454,7 @@ function ContextTab({
   voice: string;
   onVoiceChange: (v: string) => void;
 }) {
-  const fields: { key: Exclude<keyof BotContextVariables, "customVariables">; label: string; placeholder: string; variable: string }[] = [
+  const fields: { key: Exclude<keyof BotContextVariables, "customVariables" | "customVariableMappings">; label: string; placeholder: string; variable: string }[] = [
     { key: "agentName", label: "Agent Name", placeholder: "e.g. Priya", variable: "{agent_name}" },
     { key: "companyName", label: "Company Name", placeholder: "e.g. FutureWorks AI", variable: "{company_name}" },
     { key: "eventName", label: "Event Name", placeholder: "e.g. AI Masterclass", variable: "{event_name}" },
@@ -458,7 +463,16 @@ function ContextTab({
   ];
 
   const customVars = contextVariables.customVariables || {};
+  const customMappings = contextVariables.customVariableMappings || {};
   const customKeys = Object.keys(customVars);
+
+  const LEAD_FIELD_OPTIONS = [
+    { value: "", label: "Manual" },
+    { value: "contactName", label: "Contact Name" },
+    { value: "email", label: "Email" },
+    { value: "company", label: "Company" },
+    { value: "location", label: "Location" },
+  ];
 
   const addCustomVar = () => {
     const updated = { ...customVars };
@@ -473,11 +487,17 @@ function ContextTab({
     const cleaned = newKey.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
     if (!cleaned || cleaned === oldKey) return;
     if (customVars[cleaned] !== undefined) return; // duplicate key
-    const updated: Record<string, string> = {};
+    const updatedVars: Record<string, string> = {};
     for (const [k, v] of Object.entries(customVars)) {
-      updated[k === oldKey ? cleaned : k] = v;
+      updatedVars[k === oldKey ? cleaned : k] = v;
     }
-    onContextChange({ ...contextVariables, customVariables: updated });
+    // Also rename in mappings
+    const updatedMappings = { ...customMappings };
+    if (oldKey in updatedMappings) {
+      updatedMappings[cleaned] = updatedMappings[oldKey];
+      delete updatedMappings[oldKey];
+    }
+    onContextChange({ ...contextVariables, customVariables: updatedVars, customVariableMappings: updatedMappings });
   };
 
   const updateCustomValue = (key: string, value: string) => {
@@ -487,10 +507,18 @@ function ContextTab({
     });
   };
 
+  const updateCustomMapping = (key: string, leadField: string) => {
+    const updated = { ...customMappings, [key]: leadField };
+    if (!leadField) delete updated[key];
+    onContextChange({ ...contextVariables, customVariableMappings: updated });
+  };
+
   const removeCustomVar = (key: string) => {
-    const updated = { ...customVars };
-    delete updated[key];
-    onContextChange({ ...contextVariables, customVariables: updated });
+    const updatedVars = { ...customVars };
+    delete updatedVars[key];
+    const updatedMappings = { ...customMappings };
+    delete updatedMappings[key];
+    onContextChange({ ...contextVariables, customVariables: updatedVars, customVariableMappings: updatedMappings });
   };
 
   return (
@@ -531,6 +559,7 @@ function ContextTab({
                 <h4 className="text-sm font-medium">Custom Variables</h4>
                 <p className="text-xs text-muted-foreground">
                   Add your own variables to use as {"{variable_name}"} in prompts.
+                  Link to lead fields to auto-populate when making calls.
                 </p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={addCustomVar}>
@@ -539,27 +568,48 @@ function ContextTab({
               </Button>
             </div>
             {customKeys.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-3">
+                {/* Header row */}
+                <div className="grid grid-cols-[1fr_1fr_140px_28px] gap-2 text-xs text-muted-foreground font-medium px-0.5">
+                  <span>Variable Name</span>
+                  <span>Default Value</span>
+                  <span>Lead Field</span>
+                  <span />
+                </div>
                 {customKeys.map((key) => (
-                  <div key={key} className="space-y-1.5 relative group">
-                    <Label className="text-sm flex items-center gap-2">
-                      <span className="font-mono text-xs text-muted-foreground">{key}</span>
-                      <Badge variant="secondary" className="font-mono text-xs">
-                        {`{${key}}`}
-                      </Badge>
-                      <button
-                        type="button"
-                        onClick={() => removeCustomVar(key)}
-                        className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </Label>
+                  <div key={key} className="grid grid-cols-[1fr_1fr_140px_28px] gap-2 items-center group">
+                    <div className="space-y-0.5">
+                      <Input
+                        value={key}
+                        onChange={(e) => updateCustomKey(key, e.target.value)}
+                        onBlur={(e) => updateCustomKey(key, e.target.value)}
+                        className="h-8 text-sm font-mono"
+                        placeholder="variable_name"
+                      />
+                      <span className="text-[10px] text-muted-foreground font-mono pl-1">{`{${key}}`}</span>
+                    </div>
                     <Input
                       value={customVars[key]}
                       onChange={(e) => updateCustomValue(key, e.target.value)}
-                      placeholder={`Value for ${key}`}
+                      className="h-8 text-sm"
+                      placeholder="Default value"
                     />
+                    <select
+                      value={customMappings[key] || ""}
+                      onChange={(e) => updateCustomMapping(key, e.target.value)}
+                      className="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {LEAD_FIELD_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => removeCustomVar(key)}
+                      className="h-8 w-7 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>

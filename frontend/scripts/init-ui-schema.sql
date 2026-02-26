@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS ui_calls (
     completion_rate DOUBLE PRECISION,
     call_summary TEXT,
     qualification JSONB,
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    bot_config_id TEXT,
+    bot_config_name TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ui_calls_org ON ui_calls(org_id);
 CREATE INDEX IF NOT EXISTS idx_ui_calls_org_initiated ON ui_calls(org_id, initiated_at DESC);
@@ -93,6 +95,7 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     persona_engine_enabled BOOLEAN DEFAULT false,
     product_intelligence_enabled BOOLEAN DEFAULT false,
     social_proof_enabled BOOLEAN DEFAULT false,
+    social_proof_min_turn INTEGER DEFAULT 0,
     max_call_duration INTEGER DEFAULT 480,
     ghl_workflows JSONB DEFAULT '[]',
     micro_moments_config JSONB DEFAULT NULL,
@@ -104,6 +107,8 @@ CREATE INDEX IF NOT EXISTS idx_bot_configs_org ON bot_configs(org_id);
 CREATE INDEX IF NOT EXISTS idx_bot_configs_active ON bot_configs(org_id, is_active);
 -- Migration: add micro_moments_config column if missing
 ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS micro_moments_config JSONB DEFAULT NULL;
+-- Migration: add social_proof_min_turn column if missing (minimum turns before social proof tool fires)
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS social_proof_min_turn INTEGER DEFAULT 0;
 
 -- 6. personas
 CREATE TABLE IF NOT EXISTS personas (
@@ -220,3 +225,7 @@ CREATE TABLE IF NOT EXISTS usage (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (org_id, period)
 );
+
+-- Migrations: add bot config tracking to ui_calls
+ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS bot_config_id TEXT;
+ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS bot_config_name TEXT;

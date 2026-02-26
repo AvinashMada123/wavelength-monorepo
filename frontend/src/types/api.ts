@@ -11,6 +11,7 @@ export interface ApiCallPayload {
   jobTitle?: string;
   botConfigId?: string;
   leadId?: string;
+  customVariableOverrides?: Record<string, string>;
 }
 
 export interface ApiCallResponse {

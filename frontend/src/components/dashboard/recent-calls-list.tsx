@@ -14,7 +14,7 @@ import { CallStatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { useCalls } from "@/hooks/use-calls";
-import { formatPhoneNumber, timeAgo, cn } from "@/lib/utils";
+import { formatPhoneNumber, formatDuration, timeAgo, cn } from "@/lib/utils";
 import type { CallRecord } from "@/types/call";
 
 const interestColors: Record<string, string> = {
@@ -61,9 +61,16 @@ export function RecentCallsList() {
                   onClick={() => setSelectedCall(call)}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {call.request.contactName}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium">
+                        {call.request.contactName}
+                      </p>
+                      {(call.botConfigName || call.request.botConfigName) && (
+                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 font-normal shrink-0">
+                          {call.botConfigName || call.request.botConfigName}
+                        </Badge>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <p className="text-xs text-muted-foreground">
                         {formatPhoneNumber(call.request.phoneNumber)}
@@ -71,7 +78,7 @@ export function RecentCallsList() {
                       {call.durationSeconds && (
                         <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
                           <Clock className="h-3 w-3" />
-                          {call.durationSeconds}s
+                          {formatDuration(call.durationSeconds)}
                         </span>
                       )}
                     </div>

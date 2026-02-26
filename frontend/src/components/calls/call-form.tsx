@@ -21,6 +21,17 @@ import type { CallRequest } from "@/types/call";
 import type { Lead } from "@/types/lead";
 import type { BotConfig } from "@/types/bot-config";
 
+/** Resolve a lead field value from a Lead object by field name. */
+function getLeadFieldValue(lead: Lead, fieldName: string): string {
+  switch (fieldName) {
+    case "contactName": return lead.contactName || "";
+    case "email": return lead.email || "";
+    case "company": return lead.company || "";
+    case "location": return lead.location || "";
+    default: return "";
+  }
+}
+
 export function CallForm() {
   const { settings } = useSettings();
   const { initiateCall } = useCalls();
@@ -46,6 +57,7 @@ export function CallForm() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedConfig, setSelectedConfig] = useState<BotConfig | null>(null);
   const [showOverrides, setShowOverrides] = useState(false);
+  const [customVarValues, setCustomVarValues] = useState<Record<string, string>>({});
 
   // Read URL params (from leads table "Call" action)
   useEffect(() => {
@@ -88,6 +100,27 @@ export function CallForm() {
     }
   };
 
+  /** Populate custom variable values from lead field mappings */
+  const populateCustomVarsFromLead = (lead: Lead, config: BotConfig | null) => {
+    if (!config?.contextVariables?.customVariables) return;
+    const mappings = config.contextVariables.customVariableMappings || {};
+    const defaults = config.contextVariables.customVariables;
+
+    setCustomVarValues((prev) => {
+      const updated = { ...prev };
+      for (const key of Object.keys(defaults)) {
+        const mapping = mappings[key];
+        if (mapping) {
+          const leadValue = getLeadFieldValue(lead, mapping);
+          if (leadValue) {
+            updated[key] = leadValue;
+          }
+        }
+      }
+      return updated;
+    });
+  };
+
   const handleLeadSelect = (lead: Lead) => {
     setSelectedLeadId(lead.id);
     setForm((prev) => ({
@@ -96,6 +129,8 @@ export function CallForm() {
       contactName: lead.contactName,
     }));
     setErrors({});
+    // Auto-populate custom variables from lead field mappings
+    populateCustomVarsFromLead(lead, selectedConfig);
   };
 
   const handleClearLead = () => {
@@ -105,6 +140,10 @@ export function CallForm() {
       phoneNumber: "",
       contactName: "",
     }));
+    // Reset custom vars back to defaults from config
+    if (selectedConfig?.contextVariables?.customVariables) {
+      setCustomVarValues({ ...selectedConfig.contextVariables.customVariables });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -145,7 +184,13 @@ export function CallForm() {
         }
       }
 
-      await initiateCall(form, leadId);
+      // Include custom variable overrides if any
+      const hasCustomVars = Object.keys(customVarValues).length > 0;
+      const formWithOverrides = hasCustomVars
+        ? { ...form, customVariableOverrides: customVarValues }
+        : form;
+
+      await initiateCall(formWithOverrides, leadId);
       incrementCallCount(leadId);
 
       setForm((prev) => ({
@@ -164,6 +209,8 @@ export function CallForm() {
 
   const hasConfig = !!selectedConfig;
   const cv = selectedConfig?.contextVariables;
+  const customVarKeys = cv?.customVariables ? Object.keys(cv.customVariables) : [];
+  const hasCustomVars = customVarKeys.length > 0;
 
   return (
     <Card>
@@ -180,6 +227,7 @@ export function CallForm() {
               setForm((prev) => ({
                 ...prev,
                 botConfigId: value,
+                botConfigName: config?.name || "",
                 ...(config?.contextVariables?.agentName && { agentName: config.contextVariables.agentName }),
                 ...(config?.contextVariables?.companyName && { companyName: config.contextVariables.companyName }),
                 ...(config?.contextVariables?.eventName && { eventName: config.contextVariables.eventName }),
@@ -187,6 +235,26 @@ export function CallForm() {
                 ...(config?.contextVariables?.location && { location: config.contextVariables.location }),
                 ...(config?.voice && { voice: config.voice }),
               }));
+              // Initialize custom variable values from config defaults
+              if (config?.contextVariables?.customVariables) {
+                const defaults = { ...config.contextVariables.customVariables };
+                // If a lead is already selected, apply lead field mappings
+                if (selectedLeadId) {
+                  const lead = leads.find((l) => l.id === selectedLeadId);
+                  const mappings = config.contextVariables.customVariableMappings || {};
+                  if (lead) {
+                    for (const [key, mapping] of Object.entries(mappings)) {
+                      if (mapping) {
+                        const leadValue = getLeadFieldValue(lead, mapping);
+                        if (leadValue) defaults[key] = leadValue;
+                      }
+                    }
+                  }
+                }
+                setCustomVarValues(defaults);
+              } else {
+                setCustomVarValues({});
+              }
             }}
           />
 
@@ -288,6 +356,34 @@ export function CallForm() {
               onChange={(e) => updateField("jobTitle", e.target.value)}
             />
           </div>
+
+          {/* Custom variables from bot config */}
+          {hasConfig && hasCustomVars && (
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Custom Variables</Label>
+              <div className="grid grid-cols-2 gap-3">
+                {customVarKeys.map((key) => (
+                  <div key={key} className="space-y-1">
+                    <Label htmlFor={`cv-${key}`} className="text-xs">
+                      {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                      <Badge variant="secondary" className="ml-1.5 font-mono text-[10px] px-1 py-0">
+                        {`{${key}}`}
+                      </Badge>
+                    </Label>
+                    <Input
+                      id={`cv-${key}`}
+                      className="h-8 text-sm"
+                      value={customVarValues[key] || ""}
+                      onChange={(e) =>
+                        setCustomVarValues((prev) => ({ ...prev, [key]: e.target.value }))
+                      }
+                      placeholder={cv?.customVariables?.[key] || `Value for ${key}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Override fields — hidden when config is selected, unless user clicks "Override" */}
           {(!hasConfig || showOverrides) && (

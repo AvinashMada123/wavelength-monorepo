@@ -4,7 +4,7 @@ import { useMemo, useEffect, useRef, useCallback } from "react";
 import { useCallsContext } from "@/context/calls-context";
 import { useAuthContext } from "@/context/auth-context";
 import { triggerCall, hangupCall } from "@/lib/api";
-import { generateId } from "@/lib/utils";
+import { generateId, formatDuration } from "@/lib/utils";
 import type { CallRequest, CallRecord, CallStatus, CallResponse, CallEndedData } from "@/types/call";
 import { toast } from "sonner";
 
@@ -72,7 +72,7 @@ export function useCalls() {
         });
       } else {
         toast.success("Call completed", {
-          description: `${data.contact_name} — ${data.duration_seconds}s`,
+          description: `${data.contact_name} — ${formatDuration(data.duration_seconds)}`,
           duration: 3000,
         });
       }
@@ -142,12 +142,18 @@ export function useCalls() {
     );
     const finished = completed.length + failed.length;
 
+    const totalDurationSeconds = completed.reduce(
+      (sum, c) => sum + (c.durationSeconds || 0),
+      0
+    );
+
     return {
       totalCalls: state.calls.length,
       todayCalls: todayCalls.length,
       successfulCalls: completed.length,
       failedCalls: failed.length,
       successRate: finished > 0 ? Math.round((completed.length / finished) * 100) : 0,
+      totalDurationMinutes: Math.round(totalDurationSeconds / 60),
     };
   }, [state.calls]);
 
@@ -164,6 +170,8 @@ export function useCalls() {
       request,
       status: "initiating",
       initiatedAt: new Date().toISOString(),
+      botConfigId: request.botConfigId,
+      botConfigName: request.botConfigName,
     };
 
     console.log("[initiateCall] Dispatching ADD_CALL and SET_ACTIVE_CALL");

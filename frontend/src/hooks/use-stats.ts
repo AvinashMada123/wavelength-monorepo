@@ -6,7 +6,7 @@ import { useCalls } from "./use-calls";
 
 export function useStats() {
   const { leads, totalLeads, newLeads } = useLeads();
-  const { calls, totalCalls, todayCalls, successRate } = useCalls();
+  const { calls, totalCalls, todayCalls, successRate, totalDurationMinutes } = useCalls();
 
   const callsByDay = useMemo(() => {
     const days: { date: string; count: number }[] = [];
@@ -44,6 +44,7 @@ export function useStats() {
     totalCalls,
     todayCalls,
     successRate,
+    totalDurationMinutes,
     callsByDay,
     maxCallsInDay,
     qualificationBreakdown,

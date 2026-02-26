@@ -26,8 +26,7 @@ import type { CallRecord } from "@/types/call";
 import { MicroMomentTimeline } from "./micro-moment-timeline";
 import { CallStatusBadge } from "@/components/shared/status-badge";
 import { QualificationBadge } from "@/components/shared/qualification-badge";
-import { formatPhoneNumber, formatDate } from "@/lib/utils";
-import { cn } from "@/lib/utils";
+import { formatPhoneNumber, formatDate, formatDuration, cn } from "@/lib/utils";
 
 interface CallDetailModalProps {
   call: CallRecord | null;
@@ -87,8 +86,13 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <DialogTitle className="text-xl truncate">{call.request.contactName}</DialogTitle>
-              <DialogDescription className="text-sm text-muted-foreground mt-1">
+              <DialogDescription className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
                 {formatPhoneNumber(call.request.phoneNumber)}
+                {(call.botConfigName || call.request.botConfigName) && (
+                  <Badge variant="outline" className="text-[10px] font-normal">
+                    {call.botConfigName || call.request.botConfigName}
+                  </Badge>
+                )}
               </DialogDescription>
             </div>
             <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
@@ -110,7 +114,7 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
               className="space-y-3 mt-4"
             >
               <div className="grid grid-cols-2 gap-3">
-                <MetricCard icon={Clock} label="Duration" value={data.duration_seconds || 0} unit="s" />
+                <MetricCard icon={Clock} label="Duration" value={formatDuration(data.duration_seconds)} />
                 <MetricCard icon={MessageSquare} label="Turns" value={data.call_metrics?.turn_count || data.questions_completed || 0} />
               </div>
               {call.status === "completed" && call.callUuid && (
@@ -563,7 +567,7 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
                                     <td className="px-3 py-2.5 text-xs text-muted-foreground">{i + 1}</td>
                                     <td className="px-3 py-2.5 text-xs text-muted-foreground leading-relaxed">{pair.question_text}</td>
                                     <td className="px-3 py-2.5 text-xs leading-relaxed">{pair.user_said || <span className="text-muted-foreground italic">No response</span>}</td>
-                                    <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{pair.duration_seconds}s</td>
+                                    <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{formatDuration(pair.duration_seconds)}</td>
                                   </tr>
                                 ))}
                               </tbody>

@@ -28,6 +28,7 @@ export interface BotContextVariables {
   eventHost?: string;
   location?: string;
   customVariables?: Record<string, string>;
+  customVariableMappings?: Record<string, string>;
 }
 
 export interface MicroMomentsConfig {
@@ -55,6 +56,7 @@ export interface BotConfig {
   personaEngineEnabled?: boolean;
   productIntelligenceEnabled?: boolean;
   socialProofEnabled?: boolean;
+  socialProofMinTurn?: number;
   preResearchEnabled?: boolean;
   memoryRecallEnabled?: boolean;
   maxCallDuration?: number;

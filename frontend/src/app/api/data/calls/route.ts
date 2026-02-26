@@ -25,8 +25,8 @@ export async function POST(request: NextRequest) {
       const call = data.call;
       const id = call.id || crypto.randomUUID();
       await query(
-        `INSERT INTO ui_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO ui_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (id) DO UPDATE SET
            call_uuid = EXCLUDED.call_uuid,
            request = EXCLUDED.request,
@@ -42,6 +42,8 @@ export async function POST(request: NextRequest) {
           call.status || "initiating",
           call.initiatedAt || new Date().toISOString(),
           uid,
+          call.botConfigId || null,
+          call.botConfigName || null,
         ]
       );
       return NextResponse.json({ success: true });

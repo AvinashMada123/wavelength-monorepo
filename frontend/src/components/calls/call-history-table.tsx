@@ -20,7 +20,7 @@ import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { useCalls } from "@/hooks/use-calls";
 import { useCallsContext } from "@/context/calls-context";
 import { useAuthContext } from "@/context/auth-context";
-import { timeAgo, formatPhoneNumber, cn } from "@/lib/utils";
+import { timeAgo, formatPhoneNumber, formatDuration, cn } from "@/lib/utils";
 import type { CallRecord } from "@/types/call";
 
 const interestColors: Record<string, string> = {
@@ -83,6 +83,7 @@ export function CallHistoryTable() {
                 <TableRow>
                   <TableHead>Contact</TableHead>
                   <TableHead>Phone</TableHead>
+                  <TableHead>Config</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead>Interest</TableHead>
@@ -107,10 +108,19 @@ export function CallHistoryTable() {
                       {formatPhoneNumber(call.request.phoneNumber)}
                     </TableCell>
                     <TableCell>
+                      {(call.botConfigName || call.request.botConfigName) ? (
+                        <Badge variant="outline" className="text-[10px] font-normal">
+                          {call.botConfigName || call.request.botConfigName}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       <CallStatusBadge status={call.status} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {call.durationSeconds ? `${call.durationSeconds}s` : "—"}
+                      {call.durationSeconds ? formatDuration(call.durationSeconds) : "—"}
                     </TableCell>
                     <TableCell>
                       {call.interestLevel ? (

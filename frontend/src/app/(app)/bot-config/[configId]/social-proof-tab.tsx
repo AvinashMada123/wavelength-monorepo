@@ -51,9 +51,11 @@ interface SocialProofTabProps {
   user: { getIdToken: () => Promise<string> };
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
+  minTurn: number;
+  onMinTurnChange: (turn: number) => void;
 }
 
-export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: SocialProofTabProps) {
+export function SocialProofTab({ orgId, configId, user, enabled, onToggle, minTurn, onMinTurnChange }: SocialProofTabProps) {
   const [companies, setCompanies] = useState<SocialProofCompany[]>([]);
   const [cities, setCities] = useState<SocialProofCity[]>([]);
   const [roles, setRoles] = useState<SocialProofRole[]>([]);
@@ -275,16 +277,36 @@ export function SocialProofTab({ orgId, configId, user, enabled, onToggle }: Soc
 
   return (
     <div className="space-y-6">
-      {/* Toggle */}
+      {/* Toggle + Min Turn */}
       <Card>
-        <CardContent className="flex items-center justify-between pt-0">
-          <div>
-            <p className="font-medium">Social Proof Engine</p>
-            <p className="text-sm text-muted-foreground">
-              Enable social proof data during calls
-            </p>
+        <CardContent className="space-y-4 pt-0">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Social Proof Engine</p>
+              <p className="text-sm text-muted-foreground">
+                Enable social proof data during calls
+              </p>
+            </div>
+            <Switch checked={enabled} onCheckedChange={onToggle} />
           </div>
-          <Switch checked={enabled} onCheckedChange={onToggle} />
+          {enabled && (
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <Label className="text-xs text-muted-foreground">Minimum turns before triggering</Label>
+                <p className="text-xs text-muted-foreground/70 mt-0.5">
+                  Social proof data will only be available after this many conversation turns (0 = immediate)
+                </p>
+              </div>
+              <Input
+                type="number"
+                min={0}
+                max={30}
+                value={minTurn}
+                onChange={(e) => onMinTurnChange(Math.max(0, parseInt(e.target.value) || 0))}
+                className="h-8 w-20"
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 
