@@ -359,6 +359,7 @@ function ConfigCard({
         onOpenChange={setWebhookOpen}
         botConfigId={config.id}
         botConfigName={config.name}
+        contextVariables={config.contextVariables}
       />
     </motion.div>
   );
