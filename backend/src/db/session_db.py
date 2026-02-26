@@ -336,25 +336,35 @@ class SessionDB:
         ))
 
     def get_all_contact_memories(self, org_id: str = "", limit: int = 100) -> list:
-        """List all contact memories, filtered by org (includes legacy empty org_id)."""
+        """List all contact memories, filtered by org (includes legacy empty org_id).
+        Uses DISTINCT ON (phone) to deduplicate when both real and legacy rows exist,
+        preferring the real org_id row over the empty-string legacy row."""
         conn = self._get_read_conn()
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             if org_id:
-                # Match the provided org_id AND legacy empty-string records
+                # DISTINCT ON (phone) deduplicates when both org_id='real' and org_id='' exist.
+                # ORDER BY org_id DESC inside picks the real one (non-empty > empty string).
+                # Outer query re-sorts by updated_at for display and applies LIMIT.
                 cur.execute(
-                    "SELECT phone, org_id, name, persona, company, role, call_count, "
-                    "last_call_date, last_call_outcome, objections, interest_areas, "
-                    "key_facts, linguistic_style, updated_at "
-                    "FROM contact_memory WHERE org_id IN (%s, '') ORDER BY updated_at DESC LIMIT %s",
+                    "SELECT * FROM ("
+                    "  SELECT DISTINCT ON (phone) phone, org_id, name, persona, company, role, call_count, "
+                    "  last_call_date, last_call_outcome, objections, interest_areas, "
+                    "  key_facts, linguistic_style, updated_at "
+                    "  FROM contact_memory WHERE org_id IN (%s, '') "
+                    "  ORDER BY phone, org_id DESC"
+                    ") sub ORDER BY updated_at DESC LIMIT %s",
                     (org_id, limit)
                 )
             else:
                 cur.execute(
-                    "SELECT phone, org_id, name, persona, company, role, call_count, "
-                    "last_call_date, last_call_outcome, objections, interest_areas, "
-                    "key_facts, linguistic_style, updated_at "
-                    "FROM contact_memory ORDER BY updated_at DESC LIMIT %s", (limit,)
+                    "SELECT * FROM ("
+                    "  SELECT DISTINCT ON (phone) phone, org_id, name, persona, company, role, call_count, "
+                    "  last_call_date, last_call_outcome, objections, interest_areas, "
+                    "  key_facts, linguistic_style, updated_at "
+                    "  FROM contact_memory ORDER BY phone, org_id DESC"
+                    ") sub ORDER BY updated_at DESC LIMIT %s",
+                    (limit,)
                 )
             rows = cur.fetchall()
             cur.close()
