@@ -77,11 +77,13 @@ export async function POST(request: NextRequest) {
           maxCallDuration: "max_call_duration",
           ghlWorkflows: "ghl_workflows",
           voice: "voice",
+          microMomentsConfig: "micro_moments_config",
         };
 
         const jsonCols = new Set([
           "questions", "objections", "objection_keywords",
           "context_variables", "qualification_criteria", "ghl_workflows",
+          "micro_moments_config",
         ]);
 
         for (const [key, value] of Object.entries(updates || {})) {

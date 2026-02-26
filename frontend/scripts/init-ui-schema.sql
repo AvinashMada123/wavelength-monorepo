@@ -95,12 +95,15 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     social_proof_enabled BOOLEAN DEFAULT false,
     max_call_duration INTEGER DEFAULT 480,
     ghl_workflows JSONB DEFAULT '[]',
+    micro_moments_config JSONB DEFAULT NULL,
     created_by TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_bot_configs_org ON bot_configs(org_id);
 CREATE INDEX IF NOT EXISTS idx_bot_configs_active ON bot_configs(org_id, is_active);
+-- Migration: add micro_moments_config column if missing
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS micro_moments_config JSONB DEFAULT NULL;
 
 -- 6. personas
 CREATE TABLE IF NOT EXISTS personas (

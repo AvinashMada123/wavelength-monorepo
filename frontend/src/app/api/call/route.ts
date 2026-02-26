@@ -241,6 +241,9 @@ export async function POST(request: NextRequest) {
       ...(configDoc?.voice || payload.voice ? { voice: configDoc?.voice || payload.voice } : {}),
     };
 
+    if (configDoc?.micro_moments_config) {
+      callServerPayload.microMomentsConfig = configDoc.micro_moments_config;
+    }
     if (ghlWhatsappWebhookUrl) callServerPayload.ghlWhatsappWebhookUrl = ghlWhatsappWebhookUrl;
     if (ghlApiKey) callServerPayload.ghlApiKey = ghlApiKey;
     if (ghlLocationId) callServerPayload.ghlLocationId = ghlLocationId;

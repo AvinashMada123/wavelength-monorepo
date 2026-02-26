@@ -415,10 +415,16 @@ class PlivoGeminiSession:
 
         # Initialize Micro-Moment Detector (runs on ALL calls, independent of persona engine)
         from src.core.config import config as app_config
-        if app_config.enable_micro_moments:
+        mm_config = self.context.pop("_micro_moments_config", None)
+        mm_enabled = mm_config.get("enabled", True) if mm_config else True
+        if app_config.enable_micro_moments and mm_enabled:
             from src.micro_moment_detector import MicroMomentDetector
-            self._micro_moment_detector = MicroMomentDetector()
-            self.log.detail("Micro-moment detector: ON")
+            self._micro_moment_detector = MicroMomentDetector(config_override=mm_config)
+            disabled = mm_config.get("disabled_moments", []) if mm_config else []
+            self.log.detail(f"Micro-moment detector: ON" + (f" (disabled: {disabled})" if disabled else ""))
+        elif mm_config and not mm_enabled:
+            self.log.detail("Micro-moment detector: OFF (disabled in bot config)")
+        self._mm_config_override = mm_config  # Keep reference for session split restoration
 
     def inject_intelligence(self, brief: str):
         """Store pre-call intelligence brief. Must be called BEFORE preload starts

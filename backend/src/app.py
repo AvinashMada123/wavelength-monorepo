@@ -923,6 +923,7 @@ class PlivoMakeCallRequest(BaseModel):
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
     maxCallDuration: Optional[int] = 480  # Max call duration in seconds (default 8 min)
     ghlWorkflows: Optional[list] = []  # GHL workflow triggers [{id, name, description, tag, timing, enabled}]
+    microMomentsConfig: Optional[dict] = None  # Per-bot micro-moments config override
 
 
 @app.post("/plivo/make-call")
@@ -979,6 +980,8 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             context["_custom_persona_keywords"] = request.personaKeywords
         if request.situationKeywords:
             context["_custom_situation_keywords"] = request.situationKeywords
+        if request.microMomentsConfig:
+            context["_micro_moments_config"] = request.microMomentsConfig
 
         # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
         if request.ghlWhatsappWebhookUrl:

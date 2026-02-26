@@ -30,6 +30,14 @@ export interface BotContextVariables {
   customVariables?: Record<string, string>;
 }
 
+export interface MicroMomentsConfig {
+  enabled: boolean;
+  min_turns_for_detection?: number;
+  strategy_cooldown_turns?: number;
+  disabled_moments?: string[];
+  hints?: Record<string, string>;
+}
+
 export interface BotConfig {
   id: string;
   name: string;
@@ -52,6 +60,7 @@ export interface BotConfig {
   maxCallDuration?: number;
   ghlWorkflows?: GhlWorkflow[];
   voice?: string;
+  microMomentsConfig?: MicroMomentsConfig | null;
   createdAt: string;
   updatedAt: string;
   createdBy: string;

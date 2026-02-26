@@ -20,7 +20,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { generateId } from "@/lib/utils";
 import { downloadJson } from "@/lib/bot-config-io";
-import type { BotConfig, BotContextVariables, GhlWorkflow } from "@/types/bot-config";
+import type { BotConfig, BotContextVariables, GhlWorkflow, MicroMomentsConfig } from "@/types/bot-config";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -80,6 +80,7 @@ export default function BotConfigEditorPage() {
   const [maxCallDuration, setMaxCallDuration] = useState(480);
   const [ghlWorkflows, setGhlWorkflows] = useState<GhlWorkflow[]>([]);
   const [voice, setVoice] = useState("");
+  const [microMomentsConfig, setMicroMomentsConfig] = useState<MicroMomentsConfig | null>(null);
   const hasLoadedRef = useRef(false);
 
   const populateConfig = useCallback((found: BotConfig) => {
@@ -95,6 +96,7 @@ export default function BotConfigEditorPage() {
     setMaxCallDuration(found.maxCallDuration ?? 480);
     setGhlWorkflows(found.ghlWorkflows || []);
     setVoice(found.voice || "");
+    setMicroMomentsConfig(found.microMomentsConfig || null);
     setLoading(false);
     hasLoadedRef.current = true;
   }, []);
@@ -177,6 +179,7 @@ export default function BotConfigEditorPage() {
         maxCallDuration,
         ghlWorkflows,
         voice,
+        microMomentsConfig,
       },
     });
     refreshProfile();
@@ -368,6 +371,8 @@ export default function BotConfigEditorPage() {
             onMemoryRecallToggle={setMemoryRecallEnabled}
             maxCallDuration={maxCallDuration}
             onMaxCallDurationChange={setMaxCallDuration}
+            microMomentsConfig={microMomentsConfig}
+            onMicroMomentsConfigChange={setMicroMomentsConfig}
           />
         )}
       </motion.div>
@@ -601,6 +606,8 @@ function AdditionalOptionsTab({
   onMemoryRecallToggle,
   maxCallDuration,
   onMaxCallDurationChange,
+  microMomentsConfig,
+  onMicroMomentsConfigChange,
 }: {
   user: { getIdToken: () => Promise<string> };
   preResearchEnabled: boolean;
@@ -609,54 +616,51 @@ function AdditionalOptionsTab({
   onMemoryRecallToggle: (v: boolean) => void;
   maxCallDuration: number;
   onMaxCallDurationChange: (v: number) => void;
+  microMomentsConfig: MicroMomentsConfig | null;
+  onMicroMomentsConfigChange: (v: MicroMomentsConfig | null) => void;
 }) {
-  const [mmConfig, setMmConfig] = useState<Record<string, unknown> | null>(null);
-  const [mmSaving, setMmSaving] = useState(false);
-  const [mmJustSaved, setMmJustSaved] = useState(false);
+  const ALL_MOMENTS = ["buying_signal", "resistance", "price_shock", "interest_spike", "last_chance"] as const;
+  const MOMENT_LABELS: Record<string, string> = {
+    buying_signal: "Buying Signal",
+    resistance: "Resistance",
+    price_shock: "Price Shock",
+    interest_spike: "Interest Spike",
+    last_chance: "Last Chance",
+  };
+  const MOMENT_DESCRIPTIONS: Record<string, string> = {
+    buying_signal: "Detects when customer shifts from 'why' to 'how' questions — triggers closing mode",
+    resistance: "Detects declining engagement over multiple turns — triggers rapport rebuilding",
+    price_shock: "Detects hesitation right after price is mentioned — triggers value reframing",
+    interest_spike: "Detects sudden jump in engagement — triggers momentum riding",
+    last_chance: "Detects 'I'll think about it' signals — triggers last-chance value bomb",
+  };
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const idToken = await user.getIdToken();
-        const res = await fetch("/api/data/keyword-config", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ action: "getMicroMomentsConfig" }),
-        });
-        if (res.ok) {
-          setMmConfig(await res.json());
-        }
-      } catch {
-        // Non-critical
-      }
-    })();
-  }, [user]);
+  const mmEnabled = microMomentsConfig?.enabled ?? true;
+  const disabledMoments = new Set(microMomentsConfig?.disabled_moments ?? []);
 
-  async function handleSaveMmConfig() {
-    if (!mmConfig) return;
-    try {
-      setMmSaving(true);
-      const idToken = await user.getIdToken();
-      const res = await fetch("/api/data/keyword-config", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ action: "updateMicroMomentsConfig", config: mmConfig }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      toast.success("Micro-moments config saved");
-      setMmJustSaved(true);
-      setTimeout(() => setMmJustSaved(false), 2000);
-    } catch {
-      toast.error("Failed to save micro-moments config");
-    } finally {
-      setMmSaving(false);
+  function updateMmConfig(updates: Partial<MicroMomentsConfig>) {
+    const current: MicroMomentsConfig = microMomentsConfig ?? { enabled: true };
+    onMicroMomentsConfigChange({ ...current, ...updates });
+  }
+
+  function toggleMoment(moment: string) {
+    const current = new Set(microMomentsConfig?.disabled_moments ?? []);
+    if (current.has(moment)) {
+      current.delete(moment);
+    } else {
+      current.add(moment);
     }
+    updateMmConfig({ disabled_moments: Array.from(current) });
+  }
+
+  function updateHint(moment: string, hint: string) {
+    const currentHints = { ...(microMomentsConfig?.hints ?? {}) };
+    if (hint.trim()) {
+      currentHints[moment] = hint;
+    } else {
+      delete currentHints[moment];
+    }
+    updateMmConfig({ hints: currentHints });
   }
 
   return (
@@ -715,96 +719,89 @@ function AdditionalOptionsTab({
         </CardContent>
       </Card>
 
-      {/* Micro-Moments Config */}
-      {mmConfig && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Micro-Moment Detection Config</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Configure thresholds and hints for real-time micro-moment detection during calls.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-3">
+      {/* Per-Bot Micro-Moments Config */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Micro-Moment Detection</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Real-time behavioral detection during calls. Enable/disable individual moments and customize hints.
+              </p>
+            </div>
+            <Switch
+              checked={mmEnabled}
+              onCheckedChange={(v) => updateMmConfig({ enabled: v })}
+            />
+          </div>
+        </CardHeader>
+        {mmEnabled && (
+          <CardContent className="space-y-5">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">Cooldown Turns</Label>
+                <Label className="text-xs">Min Turns Before Detection</Label>
                 <Input
                   type="number"
+                  min={1}
+                  max={20}
                   className="h-8 text-sm"
-                  value={(mmConfig.cooldown_turns as number) ?? 3}
+                  value={microMomentsConfig?.min_turns_for_detection ?? 3}
                   onChange={(e) =>
-                    setMmConfig((c) => c ? { ...c, cooldown_turns: parseInt(e.target.value) || 0 } : c)
+                    updateMmConfig({ min_turns_for_detection: Math.max(1, parseInt(e.target.value) || 3) })
                   }
                 />
+                <p className="text-[10px] text-muted-foreground">No moments detected before this many turns</p>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Lock Turns</Label>
+                <Label className="text-xs">Cooldown Between Detections</Label>
                 <Input
                   type="number"
+                  min={1}
+                  max={10}
                   className="h-8 text-sm"
-                  value={(mmConfig.lock_turns as number) ?? 3}
+                  value={microMomentsConfig?.strategy_cooldown_turns ?? 2}
                   onChange={(e) =>
-                    setMmConfig((c) => c ? { ...c, lock_turns: parseInt(e.target.value) || 0 } : c)
+                    updateMmConfig({ strategy_cooldown_turns: Math.max(1, parseInt(e.target.value) || 2) })
                   }
                 />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Min Turns for Detection</Label>
-                <Input
-                  type="number"
-                  className="h-8 text-sm"
-                  value={(mmConfig.min_turns_for_detection as number) ?? 3}
-                  onChange={(e) =>
-                    setMmConfig((c) => c ? { ...c, min_turns_for_detection: parseInt(e.target.value) || 0 } : c)
-                  }
-                />
+                <p className="text-[10px] text-muted-foreground">Min turns between same moment type</p>
               </div>
             </div>
 
-            {mmConfig.moments && typeof mmConfig.moments === "object" ? (
-              <div className="space-y-3">
-                <Label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">
-                  Moment Hints
-                </Label>
-                {Object.entries(mmConfig.moments as Record<string, { hint?: string }>).map(
-                  ([momentName, momentData]) => (
-                    <div key={momentName} className="rounded-lg border p-3 space-y-2">
-                      <Label className="text-xs font-medium">
-                        {momentName.replace(/_/g, " ")}
-                      </Label>
-                      <Textarea
-                        value={momentData.hint || ""}
-                        onChange={(e) =>
-                          setMmConfig((c) => {
-                            if (!c) return c;
-                            const moments = { ...(c.moments as Record<string, unknown>) };
-                            moments[momentName] = { ...(moments[momentName] as Record<string, unknown>), hint: e.target.value };
-                            return { ...c, moments };
-                          })
-                        }
-                        rows={2}
-                        className="text-sm"
-                        placeholder="System hint when this moment is detected..."
+            <div className="space-y-3">
+              <Label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+                Moment Types
+              </Label>
+              {ALL_MOMENTS.map((moment) => {
+                const isEnabled = !disabledMoments.has(moment);
+                return (
+                  <div key={moment} className={`rounded-lg border p-3 space-y-2 ${!isEnabled ? "opacity-50" : ""}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label className="text-xs font-medium">{MOMENT_LABELS[moment]}</Label>
+                        <p className="text-[10px] text-muted-foreground">{MOMENT_DESCRIPTIONS[moment]}</p>
+                      </div>
+                      <Switch
+                        checked={isEnabled}
+                        onCheckedChange={() => toggleMoment(moment)}
                       />
                     </div>
-                  )
-                )}
-              </div>
-            ) : null}
-
-            <Button size="sm" onClick={handleSaveMmConfig} disabled={mmSaving || mmJustSaved}>
-              {mmSaving ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : mmJustSaved ? (
-                <Check className="size-3.5" />
-              ) : (
-                <Save className="size-3.5" />
-              )}
-              {mmSaving ? "Saving..." : mmJustSaved ? "Saved" : "Save Micro-Moments Config"}
-            </Button>
+                    {isEnabled && (
+                      <Textarea
+                        value={microMomentsConfig?.hints?.[moment] ?? ""}
+                        onChange={(e) => updateHint(moment, e.target.value)}
+                        rows={2}
+                        className="text-sm"
+                        placeholder="Custom hint override (leave empty to use default)..."
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </CardContent>
-        </Card>
-      )}
+        )}
+      </Card>
     </div>
   );
 }

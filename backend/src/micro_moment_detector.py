@@ -181,18 +181,24 @@ class MicroMomentDetector:
     5. last_chance    — "I'll think about it" / winding down signals
     """
 
-    def __init__(self, state: Optional[MicroMomentState] = None):
+    def __init__(self, state: Optional[MicroMomentState] = None, config_override: Optional[dict] = None):
         self._state = state or MicroMomentState()
+        self._config_override = config_override  # Per-bot config from DB (takes priority)
+        self._disabled_moments: set = set(config_override.get("disabled_moments", [])) if config_override else set()
         self._cfg = _load_config()
 
-    # --- Config helpers (with defaults) ---
+    # --- Config helpers (per-bot override → global file → hardcoded default) ---
 
     @property
     def _min_turns(self) -> int:
+        if self._config_override and "min_turns_for_detection" in self._config_override:
+            return int(self._config_override["min_turns_for_detection"])
         return self._cfg.get("min_turns_for_detection", 3)
 
     @property
     def _cooldown(self) -> int:
+        if self._config_override and "strategy_cooldown_turns" in self._config_override:
+            return int(self._config_override["strategy_cooldown_turns"])
         return self._cfg.get("strategy_cooldown_turns", 2)
 
     @property
@@ -263,10 +269,10 @@ class MicroMomentDetector:
         return list(self._state.moments_log)
 
     @classmethod
-    def from_state(cls, state_dict: dict) -> MicroMomentDetector:
+    def from_state(cls, state_dict: dict, config_override: Optional[dict] = None) -> MicroMomentDetector:
         """Restore from serialized state."""
         state = MicroMomentState(**state_dict)
-        return cls(state=state)
+        return cls(state=state, config_override=config_override)
 
     # =====================================================================
     # Metrics computation (pure local, ~0.1ms)
@@ -449,13 +455,21 @@ class MicroMomentDetector:
     # =====================================================================
 
     def _generate_hint(self, moment: str, metrics: TurnMetrics) -> Optional[str]:
+        # Skip disabled moments (per-bot config)
+        if moment in self._disabled_moments:
+            return None
+
         # Don't re-trigger same moment within cooldown
         if (moment == self._state.last_moment_detected
                 and metrics.turn_number - self._state.last_moment_turn < self._cooldown):
             return None
 
-        hints = self._cfg.get("hints", _DEFAULT_HINTS)
-        hint = hints.get(moment)
+        # Per-bot hint override → global file hints → hardcoded defaults
+        override_hints = self._config_override.get("hints", {}) if self._config_override else {}
+        hint = override_hints.get(moment)
+        if not hint:
+            hints = self._cfg.get("hints", _DEFAULT_HINTS)
+            hint = hints.get(moment)
         if not hint:
             hint = _DEFAULT_HINTS.get(moment)
         if not hint:
