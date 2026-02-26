@@ -6,7 +6,7 @@ GoHighLevel (GHL) Integration
 
 import httpx
 from loguru import logger
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 GHL_API_BASE = "https://services.leadconnectorhq.com"
 
@@ -54,7 +54,7 @@ async def trigger_ghl_workflow(phone: str, contact_name: str = "Customer", webho
         return {"success": False, "error": str(e)}
 
 
-async def _find_ghl_contact(phone: str, email: str, api_key: str, location_id: str) -> str | None:
+async def _find_ghl_contact(phone: str, email: str, api_key: str, location_id: str, client: Optional[httpx.AsyncClient] = None) -> str | None:
     """
     Search for a GHL contact by phone number, falling back to email.
     Returns contact ID or None.
@@ -68,9 +68,9 @@ async def _find_ghl_contact(phone: str, email: str, api_key: str, location_id: s
         "Version": "2021-07-28",
     }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async def _search(c: httpx.AsyncClient):
         # Search by phone first
-        resp = await client.get(
+        resp = await c.get(
             f"{GHL_API_BASE}/contacts/",
             headers=headers,
             params={"locationId": location_id, "query": clean_phone},
@@ -84,7 +84,7 @@ async def _find_ghl_contact(phone: str, email: str, api_key: str, location_id: s
 
         # Fallback: search by email
         if email:
-            resp = await client.get(
+            resp = await c.get(
                 f"{GHL_API_BASE}/contacts/",
                 headers=headers,
                 params={"locationId": location_id, "query": email},
@@ -96,8 +96,14 @@ async def _find_ghl_contact(phone: str, email: str, api_key: str, location_id: s
                     logger.info(f"GHL contact found by email {email}: {contact_id}")
                     return contact_id
 
-    logger.warning(f"GHL contact not found for phone={clean_phone} email={email}")
-    return None
+        logger.warning(f"GHL contact not found for phone={clean_phone} email={email}")
+        return None
+
+    if client:
+        return await _search(client)
+    else:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            return await _search(c)
 
 
 async def tag_ghl_contact(
@@ -109,6 +115,7 @@ async def tag_ghl_contact(
 ) -> Dict[str, Any]:
     """
     Look up a GHL contact by phone/email and add a tag.
+    Uses a single HTTP client for all requests (find + tag).
 
     Args:
         phone: Contact phone number
@@ -121,18 +128,18 @@ async def tag_ghl_contact(
         return {"success": False, "error": "GHL API key or location ID not configured"}
 
     try:
-        contact_id = await _find_ghl_contact(phone, email, api_key, location_id)
-        if not contact_id:
-            return {"success": False, "error": "Contact not found in GHL"}
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            contact_id = await _find_ghl_contact(phone, email, api_key, location_id, client)
+            if not contact_id:
+                return {"success": False, "error": "Contact not found in GHL"}
 
-        # Add tag to contact (POST adds without overwriting existing tags)
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Version": "2021-07-28",
-            "Content-Type": "application/json",
-        }
+            # Add tag to contact (POST adds without overwriting existing tags)
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Version": "2021-07-28",
+                "Content-Type": "application/json",
+            }
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{GHL_API_BASE}/contacts/{contact_id}/tags",
                 headers=headers,

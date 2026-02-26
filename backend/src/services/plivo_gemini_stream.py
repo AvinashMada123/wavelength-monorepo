@@ -990,7 +990,11 @@ Rules:
         if self.preloaded_audio:
             asyncio.create_task(self._send_preloaded_audio())
         else:
-            self.log.warn("No preloaded audio - greeting will lag")
+            self.log.warn("No preloaded audio - re-triggering greeting")
+            # Re-trigger greeting so Gemini generates it in real-time
+            self.greeting_sent = False
+            self._greeting_trigger_time = time.time()
+            asyncio.create_task(self._send_initial_greeting())
         # Start call duration timer
         self._timeout_task = asyncio.create_task(self._monitor_call_duration())
         # Start silence monitor (3 second SLA)
@@ -1000,8 +1004,8 @@ Rules:
 
     async def _send_preloaded_audio(self):
         """Send preloaded audio directly to plivo_send_queue"""
-        # Small delay so the caller has a moment to finish saying "hello" before AI speaks
-        await asyncio.sleep(0.5)
+        # Minimal delay for Plivo WebSocket buffer to stabilize
+        await asyncio.sleep(0.05)
         count = len(self.preloaded_audio)
         for audio in self.preloaded_audio:
             chunk = AudioChunk(audio_b64=audio, turn_id=0, sample_rate=24000)
@@ -1216,6 +1220,26 @@ Rules:
             logger.debug(f"[{self.call_uuid[:8]}] Sent nudge to AI")
         except Exception as e:
             logger.error(f"Error sending silence nudge: {e}")
+
+    async def _send_greeting_nudge(self):
+        """Send a greeting-specific nudge during preload when Gemini returns empty turns"""
+        if not self.goog_live_ws or self._closing_call:
+            return
+
+        try:
+            msg = {
+                "client_content": {
+                    "turns": [{
+                        "role": "user",
+                        "parts": [{"text": "[Start speaking now. Say your greeting out loud.]"}]
+                    }],
+                    "turn_complete": True
+                }
+            }
+            await self.goog_live_ws.send(json.dumps(msg))
+            logger.debug(f"[{self.call_uuid[:8]}] Sent greeting nudge to AI")
+        except Exception as e:
+            logger.error(f"Error sending greeting nudge: {e}")
 
     async def _post_swap_reengagement(self, swap_time: float):
         """Detect dead air after session split and proactively re-engage.
@@ -2338,45 +2362,31 @@ Rules:
                     pass
                 return
 
-            # Handle configurable GHL workflow tools (tag-based)
+            # Handle configurable GHL workflow tools (tag-based) — fire-and-forget
             if tool_name.startswith("ghl_workflow_"):
                 wf_id = tool_name.replace("ghl_workflow_", "")
                 reason = tool_args.get("reason", "")
                 wf = next((w for w in self._ghl_workflows if w.get("id") == wf_id), None)
-                self.log.detail(f"GHL workflow '{wf.get('name', wf_id) if wf else wf_id}': {reason}")
+                wf_name = wf.get("name", wf_id) if wf else wf_id
+                self.log.detail(f"GHL workflow '{wf_name}': {reason}")
                 self._save_transcript("TOOL", f"{tool_name}: {reason}")
 
                 if wf_id in self._triggered_workflows:
-                    msg = f"Workflow '{wf.get('name', wf_id) if wf else wf_id}' already triggered this call"
+                    msg = f"Workflow '{wf_name}' already triggered this call"
                 elif not wf or not wf.get("tag"):
                     msg = "Workflow not found or missing tag"
                 elif not self.ghl_api_key or not self.ghl_location_id:
                     msg = "GHL API key or Location ID not configured in org settings"
                 else:
+                    # Mark as triggered and send immediate response to unblock Gemini
                     self._triggered_workflows.add(wf_id)
-                    from src.services.ghl_whatsapp import tag_ghl_contact
-                    try:
-                        wf_result = await tag_ghl_contact(
-                            phone=self.caller_phone,
-                            email=self.context.get("email", ""),
-                            api_key=self.ghl_api_key,
-                            location_id=self.ghl_location_id,
-                            tag=wf["tag"],
-                        )
-                        if wf_result.get("success"):
-                            msg = f"Tag '{wf['tag']}' added to contact — workflow '{wf.get('name', wf_id)}' triggered"
-                            # Track milestone for session split context
-                            wf_name = wf.get("name", wf_id)
-                            milestone = f"Workflow '{wf_name}' triggered (turn {self._turn_count})"
-                            if milestone not in self._conversation_milestones:
-                                self._conversation_milestones.append(milestone)
-                        else:
-                            msg = f"Workflow failed: {wf_result.get('error', 'unknown')}"
-                        self.log.detail(f"GHL tag result: {wf_result}")
-                    except Exception as e:
-                        msg = f"Workflow trigger failed: {e}"
-                        self.log.warn(msg)
+                    msg = f"Workflow '{wf_name}' triggered"
+                    # Execute GHL HTTP calls in background (fire-and-forget)
+                    asyncio.create_task(self._bg_ghl_tag(
+                        tag=wf["tag"], wf_name=wf_name, wf_id=wf_id,
+                    ))
 
+                # Send immediate response to Gemini — don't wait for HTTP
                 try:
                     tool_response = {
                         "tool_response": {
@@ -2392,7 +2402,7 @@ Rules:
                     pass
                 return
 
-            # Handle send_whatsapp tool - trigger GHL workflow (legacy)
+            # Handle send_whatsapp tool - trigger GHL workflow (legacy) — fire-and-forget
             if tool_name == "send_whatsapp":
                 reason = tool_args.get("reason", "")
                 self.log.detail(f"Send WhatsApp: {reason}")
@@ -2409,24 +2419,13 @@ Rules:
                     milestone = f"WhatsApp/details sent to customer (turn {self._turn_count})"
                     if milestone not in self._conversation_milestones:
                         self._conversation_milestones.append(milestone)
-                    from src.services.ghl_whatsapp import tag_ghl_contact
-                    try:
-                        tag_result = await tag_ghl_contact(
-                            phone=self.caller_phone,
-                            email=self.context.get("email", ""),
-                            api_key=self.ghl_api_key,
-                            location_id=self.ghl_location_id,
-                            tag="ai-onboardcall-goldmember",
-                        )
-                        if tag_result.get("success"):
-                            msg = "WhatsApp triggered via GHL contact tag"
-                        else:
-                            msg = f"GHL tagging failed: {tag_result.get('error', 'unknown')}"
-                        self.log.detail(f"GHL tag result: {tag_result}")
-                    except Exception as e:
-                        msg = f"GHL tagging failed: {e}"
-                        self.log.warn(msg)
+                    msg = "WhatsApp triggered via GHL contact tag"
+                    # Execute GHL HTTP calls in background (fire-and-forget)
+                    asyncio.create_task(self._bg_ghl_tag(
+                        tag="ai-onboardcall-goldmember", wf_name="send_whatsapp",
+                    ))
 
+                # Send immediate response to Gemini — don't wait for HTTP
                 try:
                     tool_response = {
                         "tool_response": {
@@ -2476,6 +2475,27 @@ Rules:
                 logger.debug(f"Sent tool response for {tool_name}")
             except Exception as e:
                 logger.error(f"Error sending tool response: {e} - continuing conversation")
+
+    async def _bg_ghl_tag(self, tag: str, wf_name: str, wf_id: str = ""):
+        """Execute GHL tagging in background — fire-and-forget, never blocks audio."""
+        try:
+            from src.services.ghl_whatsapp import tag_ghl_contact
+            result = await tag_ghl_contact(
+                phone=self.caller_phone,
+                email=self.context.get("email", ""),
+                api_key=self.ghl_api_key,
+                location_id=self.ghl_location_id,
+                tag=tag,
+            )
+            if result.get("success"):
+                self.log.detail(f"GHL bg tag '{tag}' OK")
+                milestone = f"Workflow '{wf_name}' triggered (turn {self._turn_count})"
+                if milestone not in self._conversation_milestones:
+                    self._conversation_milestones.append(milestone)
+            else:
+                self.log.warn(f"GHL bg tag '{tag}' failed: {result.get('error', 'unknown')}")
+        except Exception as e:
+            self.log.warn(f"GHL bg tag '{tag}' error: {e}")
 
     async def _fallback_hangup(self, timeout: float):
         """Fallback hangup if user doesn't respond after agent says goodbye"""
@@ -2740,8 +2760,13 @@ Rules:
                     if is_empty_turn and self.greeting_audio_complete and not self._closing_call and not post_split_cooldown:
                         self._empty_turn_nudge_count += 1
                         if self._empty_turn_nudge_count <= 3:
-                            self.log.warn(f"Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
-                            asyncio.create_task(self._send_silence_nudge())
+                            # During preload (no caller yet), use greeting-specific nudge
+                            if not self.plivo_ws:
+                                self.log.warn(f"Empty turn, nudging AI with greeting prompt ({self._empty_turn_nudge_count}/3)")
+                                asyncio.create_task(self._send_greeting_nudge())
+                            else:
+                                self.log.warn(f"Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
+                                asyncio.create_task(self._send_silence_nudge())
                     else:
                         self._empty_turn_nudge_count = 0
 
