@@ -113,10 +113,22 @@ export function WebhookInfoDialog({
   -d '${payloadJson}'`;
 
   const copyToClipboard = () => {
-    navigator.clipboard.writeText(curlExample);
-    setCopied(true);
-    toast.success("Copied to clipboard");
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      // Fallback for non-HTTPS contexts where navigator.clipboard is unavailable
+      const textarea = document.createElement("textarea");
+      textarea.value = curlExample;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopied(true);
+      toast.success("Copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Failed to copy");
+    }
   };
 
   return (
