@@ -1,3 +1,10 @@
+export interface GHLCustomFieldDef {
+  id: string;
+  name: string;
+  fieldKey: string;
+  dataType: string;
+}
+
 export interface AppSettings {
   defaults: {
     clientName: string;
@@ -24,4 +31,5 @@ export interface AppSettings {
   };
   ghlSyncEnabled?: boolean;
   ghlLastSyncAt?: string;
+  ghlCustomFields?: GHLCustomFieldDef[];
 }

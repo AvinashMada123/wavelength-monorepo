@@ -27,9 +27,11 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { MemoryDetailDialog } from "@/components/memory/memory-detail-dialog";
 import type { ContactMemory } from "@/types/memory";
 import { useLeads } from "@/hooks/use-leads";
+import { useSettings } from "@/hooks/use-settings";
 import { useAuthContext } from "@/context/auth-context";
 import { formatPhoneNumber } from "@/lib/utils";
 import { toast } from "sonner";
+import type { GHLCustomFieldDef } from "@/types/settings";
 
 export function LeadsTable() {
   const {
@@ -42,6 +44,8 @@ export function LeadsTable() {
     updateLead,
   } = useLeads();
   const { user } = useAuthContext();
+  const { settings } = useSettings();
+  const customFieldDefs: GHLCustomFieldDef[] = settings.ghlCustomFields || [];
   const [notesOpenId, setNotesOpenId] = useState<string | null>(null);
   const [notesText, setNotesText] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
@@ -328,6 +332,25 @@ export function LeadsTable() {
                       rows={3}
                       className="text-sm"
                     />
+                    {/* Custom Fields from GHL */}
+                    {lead.customFields && customFieldDefs.length > 0 && Object.keys(lead.customFields).length > 0 && (
+                      <div className="pt-2 border-t">
+                        <span className="text-xs font-medium text-muted-foreground">Custom Fields</span>
+                        <div className="flex flex-wrap gap-2 mt-1.5">
+                          {customFieldDefs.map((def) => {
+                            const value = lead.customFields?.[def.id];
+                            if (value == null || value === "") return null;
+                            const displayValue = Array.isArray(value) ? value.join(", ") : String(value);
+                            return (
+                              <div key={def.id} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs">
+                                <span className="text-muted-foreground">{def.name}:</span>
+                                <span className="font-medium">{displayValue}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </td>
               </tr>

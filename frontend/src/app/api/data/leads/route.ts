@@ -95,13 +95,14 @@ export async function POST(request: NextRequest) {
         qualificationConfidence: "qualification_confidence",
         lastQualifiedAt: "last_qualified_at",
         botNotes: "bot_notes",
+        customFields: "custom_fields",
       };
 
       for (const [key, value] of Object.entries(data.updates || {})) {
         const col = fieldMap[key];
         if (col) {
           sets.push(`${col} = $${idx++}`);
-          vals.push(col === "tags" ? JSON.stringify(value) : value);
+          vals.push(col === "tags" || col === "custom_fields" ? JSON.stringify(value) : value);
         }
       }
       sets.push(`updated_at = $${idx++}`);

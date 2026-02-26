@@ -96,6 +96,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   ghlSyncEnabled: false,
   ghlLastSyncAt: "",
+  ghlCustomFields: [],
 };
 
 export const MAPPABLE_FIELDS = [

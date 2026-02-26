@@ -83,6 +83,7 @@ export async function POST(request: NextRequest) {
         qualification_confidence INTEGER,
         last_qualified_at TIMESTAMP WITH TIME ZONE,
         bot_notes TEXT,
+        custom_fields JSONB DEFAULT '{}',
         created_by TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -91,6 +92,9 @@ export async function POST(request: NextRequest) {
 
     // Add bot_notes column if it does not exist
     await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS bot_notes TEXT`);
+
+    // Add custom_fields JSONB column for GHL custom field values
+    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`);
 
     // Add bot_config_id to data tables so each bot config has independent data
     const tablesNeedingBotConfigId = [

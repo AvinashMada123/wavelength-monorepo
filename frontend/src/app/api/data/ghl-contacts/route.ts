@@ -16,6 +16,14 @@ interface GHLContact {
   tags?: string[];
   companyName?: string;
   city?: string;
+  customFields?: Array<{ id: string; value: unknown }>;
+}
+
+interface GHLCustomFieldDef {
+  id: string;
+  name: string;
+  fieldKey: string;
+  dataType: string;
 }
 
 interface GHLResponse {
@@ -121,7 +129,7 @@ async function searchGHLContacts(
  * Returns the number of contacts synced.
  */
 async function upsertGHLContacts(
-  contacts: GHLContact[], orgId: string
+  contacts: GHLContact[], orgId: string, selectedFieldIds?: string[]
 ): Promise<number> {
   if (contacts.length === 0) return 0;
 
@@ -141,18 +149,29 @@ async function upsertGHLContacts(
     const existingDocId = existingByGhlId.get(contact.id);
     const contactName = [contact.firstName, contact.lastName].filter(Boolean).join(" ") || "Unknown";
 
+    // Extract selected custom field values
+    const customFieldValues: Record<string, unknown> = {};
+    if (selectedFieldIds?.length && contact.customFields) {
+      for (const cf of contact.customFields) {
+        if (selectedFieldIds.includes(cf.id) && cf.value != null && cf.value !== "") {
+          customFieldValues[cf.id] = cf.value;
+        }
+      }
+    }
+    const customFieldsJson = JSON.stringify(customFieldValues);
+
     if (existingDocId) {
       await query(
-        `UPDATE leads SET contact_name = $1, phone_number = $2, email = $3, company = $4, location = $5, tags = $6, updated_at = NOW()
-         WHERE id = $7 AND org_id = $8`,
-        [contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), existingDocId, orgId]
+        `UPDATE leads SET contact_name = $1, phone_number = $2, email = $3, company = $4, location = $5, tags = $6, custom_fields = $7, updated_at = NOW()
+         WHERE id = $8 AND org_id = $9`,
+        [contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), customFieldsJson, existingDocId, orgId]
       );
     } else {
       const id = crypto.randomUUID();
       await query(
-        `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, status, call_count, source, ghl_contact_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', 0, 'ghl', $9, NOW(), NOW())`,
-        [id, orgId, contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), contact.id]
+        `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, custom_fields, status, call_count, source, ghl_contact_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new', 0, 'ghl', $10, NOW(), NOW())`,
+        [id, orgId, contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), customFieldsJson, contact.id]
       );
     }
     synced++;
@@ -260,6 +279,58 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, tags });
     }
 
+    if (body.action === "fetchCustomFields") {
+      try {
+        const res = await fetch(
+          `${GHL_API_BASE}/locations/${ghlLocationId}/customFields`,
+          {
+            headers: {
+              Authorization: `Bearer ${ghlApiKey}`,
+              Version: GHL_API_VERSION,
+            },
+          }
+        );
+        if (!res.ok) {
+          const errText = await res.text();
+          console.error(`[GHL CustomFields] API error ${res.status}: ${errText.slice(0, 200)}`);
+          return NextResponse.json(
+            { success: false, message: `GHL API error: ${res.status}` },
+            { status: 502 }
+          );
+        }
+        const data = await res.json();
+        const fields: GHLCustomFieldDef[] = (data.customFields || []).map(
+          (f: { id: string; name: string; fieldKey: string; dataType: string }) => ({
+            id: f.id,
+            name: f.name,
+            fieldKey: f.fieldKey || "",
+            dataType: f.dataType || "TEXT",
+          })
+        );
+        console.log(`[GHL CustomFields] Found ${fields.length} custom fields`);
+        return NextResponse.json({ success: true, customFields: fields });
+      } catch (err) {
+        console.error("[GHL CustomFields] Error:", err);
+        return NextResponse.json(
+          { success: false, message: "Failed to fetch custom fields from GHL" },
+          { status: 502 }
+        );
+      }
+    }
+
+    if (body.action === "saveCustomFieldSelection") {
+      const selectedFields: GHLCustomFieldDef[] = body.fields || [];
+      await query(
+        `UPDATE organizations SET settings = jsonb_set(
+          COALESCE(settings, '{}'::jsonb),
+          '{ghlCustomFields}',
+          $1::jsonb
+        ), updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify(selectedFields), orgId]
+      );
+      return NextResponse.json({ success: true });
+    }
+
     // Count contacts matching tags (quick preview before import)
     if (body.action === "countByTags") {
       const tags: string[] = body.tags || [];
@@ -285,6 +356,10 @@ export async function POST(request: NextRequest) {
     const filterTags: string[] = body.tags?.length ? body.tags : body.tag ? [body.tag] : [];
     const cursor: string | undefined = body.cursor || undefined;
 
+    // Read selected custom field IDs from org settings
+    const ghlCustomFields: GHLCustomFieldDef[] = (settings as Record<string, unknown>).ghlCustomFields as GHLCustomFieldDef[] || [];
+    const selectedFieldIds = ghlCustomFields.map((f) => f.id);
+
     // --- TAG-FILTERED SYNC: use search endpoint, auto-paginate all pages ---
     if (filterTags.length > 0) {
       console.log(`[GHL Sync] Tag-filtered sync for org: ${orgId}, tags: ${JSON.stringify(filterTags)}`);
@@ -294,7 +369,7 @@ export async function POST(request: NextRequest) {
 
       if (firstPage) {
         // Search endpoint works — auto-paginate through all results
-        let totalSynced = await upsertGHLContacts(firstPage.contacts, orgId);
+        let totalSynced = await upsertGHLContacts(firstPage.contacts, orgId, selectedFieldIds);
         let currentPage = 1;
         let hasMore = firstPage.hasMore;
         const totalInGHL = firstPage.total;
@@ -304,7 +379,7 @@ export async function POST(request: NextRequest) {
           currentPage++;
           const nextPageResult = await searchGHLContacts(ghlApiKey, ghlLocationId, filterTags, currentPage);
           if (!nextPageResult || nextPageResult.contacts.length === 0) break;
-          totalSynced += await upsertGHLContacts(nextPageResult.contacts, orgId);
+          totalSynced += await upsertGHLContacts(nextPageResult.contacts, orgId, selectedFieldIds);
           hasMore = nextPageResult.hasMore;
         }
 
@@ -352,7 +427,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[GHL Sync] Got ${ghlData.contacts.length} contacts from GHL, ${contacts.length} matched${filterTags.length ? ` tags ${JSON.stringify(filterTags)}` : ""} (total in GHL: ${totalInGHL})`);
 
-    const synced = await upsertGHLContacts(contacts, orgId);
+    const synced = await upsertGHLContacts(contacts, orgId, selectedFieldIds);
     console.log(`[GHL Sync] Saved ${synced} leads to PostgreSQL`);
 
     // Update last sync time

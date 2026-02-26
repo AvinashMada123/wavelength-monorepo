@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { Upload, Plus, RefreshCw, Settings, ChevronRight, ChevronsUpDown, Check, X, Tag, Download, Loader2 } from "lucide-react";
+import { Upload, Plus, RefreshCw, Settings, ChevronRight, ChevronsUpDown, Check, X, Tag, Download, Loader2, ListFilter, Save } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -23,6 +23,7 @@ import { useLeads } from "@/hooks/use-leads";
 import { useSettings } from "@/hooks/use-settings";
 import { useAuthContext } from "@/context/auth-context";
 import { toast } from "sonner";
+import type { GHLCustomFieldDef } from "@/types/settings";
 
 export default function LeadsPage() {
   const { totalLeads, mergeGhlLeads } = useLeads();
@@ -41,6 +42,14 @@ export default function LeadsPage() {
   const [totalInGHL, setTotalInGHL] = useState<number | null>(null);
   const [tagCount, setTagCount] = useState<number | null>(null);
   const [countingTags, setCountingTags] = useState(false);
+  const [customFieldDefs, setCustomFieldDefs] = useState<GHLCustomFieldDef[]>([]);
+  const [selectedCustomFieldIds, setSelectedCustomFieldIds] = useState<string[]>(
+    () => (settings.ghlCustomFields || []).map((f) => f.id)
+  );
+  const [loadingCustomFields, setLoadingCustomFields] = useState(false);
+  const [customFieldPopoverOpen, setCustomFieldPopoverOpen] = useState(false);
+  const [customFieldSearch, setCustomFieldSearch] = useState("");
+  const [savingCustomFields, setSavingCustomFields] = useState(false);
 
   const ghlConfigured = !!(settings.ghlApiKey && settings.ghlLocationId);
   const ghlSyncEnabled = settings.ghlSyncEnabled ?? false;
@@ -117,6 +126,85 @@ export default function LeadsPage() {
     fetchTags();
     return () => { cancelled = true; };
   }, [ghlSyncEnabled, ghlConfigured, user]);
+
+  // Fetch custom field definitions when sync is enabled
+  useEffect(() => {
+    if (!ghlSyncEnabled || !ghlConfigured || !user) return;
+
+    let cancelled = false;
+    const fetchCustomFields = async () => {
+      setLoadingCustomFields(true);
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/data/ghl-contacts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: "fetchCustomFields" }),
+        });
+        const data = await res.json();
+        if (!cancelled && data.customFields) {
+          setCustomFieldDefs(data.customFields);
+        }
+      } catch (err) {
+        console.error("Failed to fetch custom fields:", err);
+      } finally {
+        if (!cancelled) setLoadingCustomFields(false);
+      }
+    };
+
+    fetchCustomFields();
+    return () => { cancelled = true; };
+  }, [ghlSyncEnabled, ghlConfigured, user]);
+
+  // Sync selectedCustomFieldIds when settings load
+  useEffect(() => {
+    const saved = (settings.ghlCustomFields || []).map((f) => f.id);
+    setSelectedCustomFieldIds(saved);
+  }, [settings.ghlCustomFields]);
+
+  const filteredCustomFields = useMemo(() => {
+    if (!customFieldSearch.trim()) return customFieldDefs;
+    const q = customFieldSearch.toLowerCase();
+    return customFieldDefs.filter((f) => f.name.toLowerCase().includes(q));
+  }, [customFieldDefs, customFieldSearch]);
+
+  function toggleCustomField(fieldId: string) {
+    setSelectedCustomFieldIds((prev) =>
+      prev.includes(fieldId) ? prev.filter((id) => id !== fieldId) : [...prev, fieldId]
+    );
+  }
+
+  const saveCustomFieldSelection = useCallback(async () => {
+    if (!user) return;
+    setSavingCustomFields(true);
+    try {
+      const token = await user.getIdToken();
+      const selectedDefs = customFieldDefs.filter((f) => selectedCustomFieldIds.includes(f.id));
+      const res = await fetch("/api/data/ghl-contacts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: "saveCustomFieldSelection", fields: selectedDefs }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        updateSettings({ ghlCustomFields: selectedDefs });
+        toast.success(`${selectedDefs.length} custom field${selectedDefs.length !== 1 ? "s" : ""} saved`);
+        setCustomFieldPopoverOpen(false);
+      } else {
+        toast.error("Failed to save custom field selection");
+      }
+    } catch {
+      toast.error("Failed to save custom field selection");
+    } finally {
+      setSavingCustomFields(false);
+    }
+  }, [user, customFieldDefs, selectedCustomFieldIds, updateSettings]);
 
   const filteredTags = useMemo(() => {
     if (!tagSearch.trim()) return ghlTags;
@@ -378,6 +466,87 @@ export default function LeadsPage() {
                           </Button>
                         </div>
                       )}
+                    </PopoverContent>
+                  </Popover>
+
+                  {/* Custom Fields selector */}
+                  <Popover open={customFieldPopoverOpen} onOpenChange={setCustomFieldPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 min-w-[160px] justify-between"
+                        disabled={syncing || loadingCustomFields}
+                      >
+                        <span className="flex items-center gap-1.5 truncate">
+                          <ListFilter className="size-3.5 shrink-0" />
+                          {loadingCustomFields
+                            ? "Loading..."
+                            : selectedCustomFieldIds.length === 0
+                              ? "Custom Fields"
+                              : `${selectedCustomFieldIds.length} field${selectedCustomFieldIds.length !== 1 ? "s" : ""} selected`}
+                        </span>
+                        <ChevronsUpDown className="ml-2 size-3.5 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-0" align="start">
+                      <div className="p-2 border-b">
+                        <Input
+                          placeholder="Search custom fields..."
+                          value={customFieldSearch}
+                          onChange={(e) => setCustomFieldSearch(e.target.value)}
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div className="max-h-[280px] overflow-y-auto p-1">
+                        {loadingCustomFields && (
+                          <div className="flex items-center justify-center py-4">
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            <span className="text-sm text-muted-foreground">Loading fields...</span>
+                          </div>
+                        )}
+                        {!loadingCustomFields && filteredCustomFields.length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-3">
+                            {customFieldDefs.length === 0
+                              ? "No custom fields found in your CRM"
+                              : "No matching fields"}
+                          </p>
+                        )}
+                        {filteredCustomFields.map((field) => {
+                          const isSelected = selectedCustomFieldIds.includes(field.id);
+                          return (
+                            <button
+                              key={field.id}
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent cursor-pointer"
+                              onClick={() => toggleCustomField(field.id)}
+                            >
+                              <div className={`flex size-4 items-center justify-center rounded border ${isSelected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/30"}`}>
+                                {isSelected && <Check className="size-3" />}
+                              </div>
+                              <span className="truncate flex-1 text-left">{field.name}</span>
+                              <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">
+                                {field.dataType}
+                              </Badge>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="border-t p-2">
+                        <Button
+                          size="sm"
+                          className="w-full h-7 text-xs"
+                          onClick={saveCustomFieldSelection}
+                          disabled={savingCustomFields}
+                        >
+                          {savingCustomFields ? (
+                            <Loader2 className="size-3 mr-1 animate-spin" />
+                          ) : (
+                            <Save className="size-3 mr-1" />
+                          )}
+                          Save Selection
+                        </Button>
+                      </div>
                     </PopoverContent>
                   </Popover>
 

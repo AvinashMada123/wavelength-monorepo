@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS leads (
     last_call_date TEXT,
     source TEXT DEFAULT 'manual',
     ghl_contact_id TEXT,
+    custom_fields JSONB DEFAULT '{}',
     qualification_level TEXT,
     qualification_confidence DOUBLE PRECISION,
     last_qualified_at TEXT,

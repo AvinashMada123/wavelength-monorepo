@@ -19,6 +19,7 @@ export interface Lead {
   qualificationConfidence?: number;
   lastQualifiedAt?: string;
   botNotes?: string;
+  customFields?: Record<string, unknown>;
 }
 
 export type LeadStatus =
