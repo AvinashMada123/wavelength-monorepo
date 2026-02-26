@@ -95,6 +95,8 @@ export interface CallRecord {
   callSummary?: string;
   botConfigId?: string;
   botConfigName?: string;
+  leadTags?: string[];
+  leadCustomFields?: Record<string, unknown>;
 }
 
 export type CallStatus =

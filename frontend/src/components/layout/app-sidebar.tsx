@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Users,
   Phone,
+  ClipboardList,
   Settings,
   Radio,
   Bot,
@@ -31,6 +32,7 @@ const clientNavItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/call-center", label: "Call Center", icon: Phone },
+  { href: "/call-logs", label: "Call Logs", icon: ClipboardList },
   { href: "/memory", label: "Memory", icon: Brain },
   {
     href: "/bot-config",
