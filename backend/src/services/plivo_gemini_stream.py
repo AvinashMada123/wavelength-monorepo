@@ -343,6 +343,7 @@ class PlivoGeminiSession:
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
         self._turn_exchanges = []   # Complete turn texts for clean summaries
         self._key_facts = []        # Cumulative key facts that survive all session splits
+        self._conversation_milestones = []  # Tracks conversation stage for session splits
 
         # Hot-swap session management
         self._standby_ws = None
@@ -1395,13 +1396,24 @@ Rules:
         last_user = self._last_user_text[:150] if self._last_user_text else ""
         agent_ref = (self._last_agent_text or self._last_agent_question or "")[:150]
 
+        # Build progress hint for the nudge
+        progress_hint = ""
+        if self._conversation_milestones:
+            progress_hint = f' Already done: {"; ".join(self._conversation_milestones[-3:])}.'
+
         if agent_ref and last_user:
             trigger = (
-                f'[Session resumed. Last customer message: "{last_user}". '
-                f'Do NOT respond to this. Wait for customer to speak next.]'
+                f'[Session resumed.{progress_hint} '
+                f'Last customer said: "{last_user}". '
+                f'Do NOT respond to this context message. Do NOT re-pitch or repeat anything already covered. '
+                f'Wait for customer to speak next, then continue the conversation FORWARD.]'
             )
         elif agent_ref:
-            trigger = '[Session resumed. Wait for customer to speak. Do NOT say anything until customer speaks.]'
+            trigger = (
+                f'[Session resumed.{progress_hint} '
+                f'Wait for customer to speak. Do NOT say anything until customer speaks. '
+                f'Do NOT re-pitch or repeat anything already covered.]'
+            )
         else:
             trigger = "[Session resumed. Wait silently for customer to speak.]"
 
@@ -1490,10 +1502,18 @@ Rules:
 
     def _build_compact_summary(self) -> str:
         """Build compact conversation summary for session split.
-        Includes KEY FACTS (cumulative, never lost) + recent turn history."""
-        if not self._turn_exchanges and not self._key_facts:
+        Includes PROGRESS (what's been accomplished) + KEY FACTS + recent turn history."""
+        if not self._turn_exchanges and not self._key_facts and not self._conversation_milestones:
             return ""
         lines = []
+
+        # CONVERSATION PROGRESS — critical for preventing repetition after splits
+        # This tells the AI exactly where the conversation is, so it doesn't restart the pitch
+        if self._conversation_milestones:
+            lines.append("CONVERSATION PROGRESS (already accomplished — do NOT repeat these):")
+            for milestone in self._conversation_milestones:
+                lines.append(f"  ✓ {milestone}")
+            lines.append("")
 
         # KEY FACTS section — cumulative, survives all session splits
         if self._key_facts:
@@ -1518,7 +1538,11 @@ Rules:
                     lines.append(f"T{turn_num}: Customer: {user}")
 
         lines.append("")
-        lines.append("ALL ABOVE IS DONE. Continue from where you left off. Do NOT re-ask anything above. Do NOT acknowledge this context.")
+        lines.append(
+            "ALL ABOVE IS DONE. Continue FORWARD from where you left off. "
+            "Do NOT re-pitch, re-explain, or revisit ANY topic from the progress list above. "
+            "Do NOT acknowledge this context. Respond naturally to what the customer says next."
+        )
         return "\n".join(lines)
 
     async def _run_google_live_session(self):
@@ -1771,16 +1795,22 @@ Rules:
             summary = self._build_compact_summary()
             if summary:
                 full_prompt += f"\n\n[CONVERSATION SO FAR — you are mid-call, do NOT greet again:]\n{summary}"
-                # Anti-repetition — compact, includes both sides
+                # Anti-repetition — compact, includes both sides + milestones
                 agent_ref = self._last_agent_text or self._last_agent_question
                 if agent_ref:
                     last_user = self._last_user_text or "(customer is about to respond)"
+                    milestone_hint = ""
+                    if self._conversation_milestones:
+                        milestone_hint = (
+                            f' ALREADY ACCOMPLISHED: {"; ".join(self._conversation_milestones)}. '
+                            'These topics are DONE — never revisit them.'
+                        )
                     full_prompt += (
                         f'\n\n[ANTI-REPETITION — Last exchange: You said: "{agent_ref[:400]}" '
-                        f'Customer replied: "{last_user[:400]}". '
+                        f'Customer replied: "{last_user[:400]}".{milestone_hint} '
                         'Pick up EXACTLY from here. Respond directly to what the customer '
-                        'just said and move the conversation FORWARD to a new topic. '
-                        'Do NOT rephrase or revisit anything from the conversation above. '
+                        'just said and move the conversation FORWARD to a NEW topic. '
+                        'Do NOT rephrase, re-pitch, or revisit anything from the conversation above. '
                         'Do NOT ask a question similar to anything already asked above.]'
                     )
                 # Extra guard for post-greeting reconnects: the AI already greeted,
@@ -2104,6 +2134,11 @@ Rules:
                         )
                         if wf_result.get("success"):
                             msg = f"Tag '{wf['tag']}' added to contact — workflow '{wf.get('name', wf_id)}' triggered"
+                            # Track milestone for session split context
+                            wf_name = wf.get("name", wf_id)
+                            milestone = f"Workflow '{wf_name}' triggered (turn {self._turn_count})"
+                            if milestone not in self._conversation_milestones:
+                                self._conversation_milestones.append(milestone)
                         else:
                             msg = f"Workflow failed: {wf_result.get('error', 'unknown')}"
                         self.log.detail(f"GHL tag result: {wf_result}")
@@ -2140,6 +2175,9 @@ Rules:
                     self.log.warn(msg)
                 else:
                     self._whatsapp_sent = True
+                    milestone = f"WhatsApp/details sent to customer (turn {self._turn_count})"
+                    if milestone not in self._conversation_milestones:
+                        self._conversation_milestones.append(milestone)
                     from src.services.ghl_whatsapp import tag_ghl_contact
                     try:
                         tag_result = await tag_ghl_contact(
@@ -2367,6 +2405,44 @@ Rules:
                             agent_lower = full_agent.lower()
                             if "gold membership" in agent_lower and not any("Product mentioned" in f for f in self._key_facts):
                                 self._key_facts.append("Product mentioned: Gold Membership pitched to customer")
+
+                        # Auto-detect conversation milestones for session split context
+                        if full_agent and full_user:
+                            agent_lower = (full_agent or "").lower()
+                            user_lower = (full_user or "").lower()
+                            # Detect when agent pitches/presents the offer
+                            pitch_signals = ["program", "membership", "course", "mentorship", "offer",
+                                             "designed for", "specifically for", "here's what you get"]
+                            if any(s in agent_lower for s in pitch_signals):
+                                m = "Product/program pitched to customer"
+                                if m not in self._conversation_milestones:
+                                    self._conversation_milestones.append(m)
+                            # Detect when customer shows agreement/interest to proceed
+                            agreement_signals = ["sounds good", "that's great", "interested", "tell me more",
+                                                 "send me", "share me", "go ahead", "sign me up", "i'm in",
+                                                 "let's do it", "of course", "definitely"]
+                            if any(s in user_lower for s in agreement_signals):
+                                m = f"Customer showed interest/agreed (turn {self._turn_count})"
+                                # Keep only the latest agreement milestone
+                                self._conversation_milestones = [
+                                    x for x in self._conversation_milestones
+                                    if not x.startswith("Customer showed interest")
+                                ]
+                                self._conversation_milestones.append(m)
+                            # Detect when pricing/payment is discussed
+                            price_signals = ["price", "cost", "payment", "rupees", "₹", "invest",
+                                             "fee", "discount", "emi"]
+                            if any(s in agent_lower for s in price_signals):
+                                m = "Pricing/payment discussed"
+                                if m not in self._conversation_milestones:
+                                    self._conversation_milestones.append(m)
+                            # Detect when scheduling/next steps discussed
+                            schedule_signals = ["schedule", "book", "calendar", "appointment", "demo",
+                                                "next step", "follow up", "call back"]
+                            if any(s in agent_lower for s in schedule_signals):
+                                m = "Next steps/scheduling discussed"
+                                if m not in self._conversation_milestones:
+                                    self._conversation_milestones.append(m)
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
