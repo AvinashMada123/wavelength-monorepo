@@ -234,6 +234,7 @@ class PlivoGeminiSession:
         self.plivo_auth_id = self.context.pop("plivo_auth_id", "")  # Per-org Plivo Auth ID
         self.plivo_auth_token = self.context.pop("plivo_auth_token", "")  # Per-org Plivo Auth Token
         self._social_proof_enabled = self.context.pop("_social_proof_enabled", False)  # Feature flag
+        self._social_proof_min_turn = self.context.pop("_social_proof_min_turn", 0)  # Min turns before social proof fires
         self._ghl_workflows = self.context.pop("_ghl_workflows", [])  # Configurable GHL workflow triggers
         self._triggered_workflows = set()  # Track which workflows have been triggered (prevent duplicates)
         self._whatsapp_sent = False  # Track if WhatsApp was already sent this call
@@ -248,6 +249,7 @@ class PlivoGeminiSession:
         self.inbuffer = bytearray(b"")
         self.greeting_sent = False
         self.setup_complete = False
+        self._resolved_voice = None  # Cached voice — set once, reused on all session splits
         self.preloaded_audio = []  # Store audio generated during preload
         self._preload_complete = asyncio.Event()
         self._silence_keepalive_task = None  # Sends silence to Gemini between greeting and call answer
@@ -279,7 +281,8 @@ class PlivoGeminiSession:
 
         # Silence monitoring - 5 second SLA (gives customer time to think after AI asks a question)
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 3.0  # Safety net: nudge AI if no response 3s after user speaks
+        self._silence_sla_seconds = 5.0  # Safety net: nudge AI if no response 5s after user speaks
+        self._last_split_time = 0  # Track when last session split completed (for nudge cooldown)
         self._last_ai_audio_time = None  # Track when AI last sent audio
         self._last_agent_turn_end_time = None  # Track when AI finished speaking (for nudge guard)
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
@@ -335,15 +338,18 @@ class PlivoGeminiSession:
         # Full transcript collection (in-memory backup for webhook)
         self._full_transcript = []  # List of {"role": "USER/AGENT", "text": "...", "timestamp": "..."}
 
-        # Session split - reset audio KV cache every N turns to keep latency low
-        self._turns_since_reconnect = 0
-        self._session_split_interval = 5  # Split every 5 turns (balance latency vs context retention)
+        # Session split - time-based (flush KV cache regularly + stay under Gemini's 10-min limit)
+        self._session_split_after_seconds = 4 * 60  # Split at 4 minutes
+        self._split_pending = False      # Defer swap to next user silence gap
+        self._split_pending_since = None # When split was first requested (safety timeout)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
         self._turn_exchanges = []   # Complete turn texts for clean summaries
         self._key_facts = []        # Cumulative key facts that survive all session splits
         self._conversation_milestones = []  # Tracks conversation stage for session splits
+        self._questions_asked = []            # Agent questions asked (anti-repetition across splits)
+        self._objection_techniques_used = []  # Objection techniques used (anti-repetition across splits)
 
         # Hot-swap session management
         self._standby_ws = None
@@ -352,6 +358,13 @@ class PlivoGeminiSession:
         self._prewarm_task = None
         self._swap_in_progress = False
         self._active_receive_task = None
+        self._mute_audio = False         # Suppress audio output during swap (Fix 1)
+        self._post_swap_hold_until = 0   # Hold user audio briefly after swap (Fix 3)
+        self._post_swap_reengagement_task = None  # Dead air detector after session splits
+        self._prebuilt_setup_msg = None  # Pre-built setup JSON for hot-swap (avoids rebuild at swap time)
+
+        # Greeting playback tracking (for watchdog timer)
+        self._preloaded_chunk_count = 0    # Number of preloaded greeting chunks (for watchdog timeout calc)
 
         # Timing instrumentation
         self._preload_start_time = None    # When preload() started
@@ -390,7 +403,17 @@ class PlivoGeminiSession:
         self._agent_turn_complete_time = None   # Set at turnComplete
         self._user_response_start_time = None   # Set at first user transcript of next turn
         # Product Intelligence state
-        self._active_product_sections = ["overview"]
+        self._use_product_intelligence = bool(self.context.get("_product_intelligence_enabled"))
+        self._db_product_sections = self.context.pop("_db_product_sections", None)  # {name: content} from DB
+        self._db_product_keywords = self.context.pop("_db_product_keywords", None)
+        # Start with NO product sections — progressively reveal based on conversation
+        if self._use_product_intelligence and self._db_product_sections:
+            self._active_product_sections = []  # Start empty, reveal via keyword matching
+            self.log.detail(f"Product intelligence: DB sections available {list(self._db_product_sections.keys())}")
+        elif self._use_product_intelligence:
+            self._active_product_sections = ["overview"]
+        else:
+            self._active_product_sections = []
         self._previous_product_sections = []
         # Linguistic Mirror state
         self._linguistic_style = {}
@@ -571,6 +594,7 @@ class PlivoGeminiSession:
                     )
                     if detected:
                         self._detected_persona = detected
+                        self._prebuilt_setup_msg = None  # Invalidate — persona changed
                         self.log.detail(f"Persona detected: {detected}")
 
                 # Situation detection (re-evaluated every turn)
@@ -582,21 +606,42 @@ class PlivoGeminiSession:
                 if self._active_situations:
                     self.log.detail(f"Situations active: {self._active_situations}")
                 new_situations = set(self._active_situations) - set(self._previous_situations)
-                if new_situations and self.goog_live_ws:
-                    hint = get_situation_hint(list(new_situations)[0], self._custom_situation_keywords)
-                    if hint:
-                        asyncio.create_task(self._inject_situation_hint(hint))
-                        self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
+                if new_situations:
+                    self._prebuilt_setup_msg = None  # Invalidate — situations changed
+                    if self.goog_live_ws:
+                        hint = get_situation_hint(list(new_situations)[0], self._custom_situation_keywords)
+                        if hint:
+                            asyncio.create_task(self._inject_situation_hint(hint))
+                            self.log.detail(f"Injected situation hint: {list(new_situations)[0]}")
                 self._previous_situations = list(self._active_situations)
 
-            # Product section detection
-            from src.product_intelligence import detect_product_sections
-            self._active_product_sections = await loop.run_in_executor(
-                None, detect_product_sections, full_user, self._active_situations
-            )
-            if self._active_product_sections != self._previous_product_sections:
-                self.log.detail(f"Product sections: {self._active_product_sections}")
-            self._previous_product_sections = list(self._active_product_sections)
+            # Product section detection (only when product intelligence is enabled)
+            if self._use_product_intelligence:
+                if self._db_product_sections and self._db_product_keywords:
+                    # DB keyword matching — progressively reveal sections (cap at 2)
+                    from src.persona_engine import _normalize_transcription
+                    text_lower = _normalize_transcription(full_user).lower()
+                    active = []
+                    for section_name, kw_list in self._db_product_keywords.items():
+                        if section_name not in self._db_product_sections:
+                            continue
+                        keywords = kw_list if isinstance(kw_list, list) else kw_list.get("keywords", []) if isinstance(kw_list, dict) else []
+                        for kw in keywords:
+                            if isinstance(kw, str) and kw.lower() in text_lower:
+                                active.append(section_name)
+                                break
+                    self._active_product_sections = active[:2]
+                elif self._db_product_sections:
+                    pass  # No keywords — stay empty until keywords provided
+                else:
+                    from src.product_intelligence import detect_product_sections
+                    self._active_product_sections = await loop.run_in_executor(
+                        None, detect_product_sections, full_user, self._active_situations
+                    )
+                if self._active_product_sections != self._previous_product_sections:
+                    self._prebuilt_setup_msg = None  # Invalidate — product sections changed
+                    self.log.detail(f"Product sections: {self._active_product_sections}")
+                self._previous_product_sections = list(self._active_product_sections)
 
             # Linguistic Mirror
             if accumulated_text:
@@ -605,6 +650,7 @@ class PlivoGeminiSession:
                 if new_style and style_changed(self._linguistic_style, new_style):
                     self._previous_linguistic_style = dict(self._linguistic_style)
                     self._linguistic_style = new_style
+                    self._prebuilt_setup_msg = None  # Invalidate — linguistic style changed
                     self.log.detail(f"Linguistic style: {new_style}")
 
             # Micro-Moment Detection
@@ -933,6 +979,7 @@ Rules:
         # and fires a false "unresponsive" alarm while greeting is still playing.
         self._last_agent_turn_end_time = time.time()
         preload_count = len(self.preloaded_audio)
+        self._preloaded_chunk_count = preload_count  # Save for watchdog timeout calc
         self.log.phase("CALL ANSWERED")
         if self._preload_start_time:
             wait_ms = (time.time() - self._preload_start_time) * 1000
@@ -1067,6 +1114,10 @@ Rules:
 
                 silence_duration = time.time() - self._last_user_speech_time
 
+                # Cooldown: skip nudge if a session split just completed (avoids triple-nudge storm)
+                if self._last_split_time and (time.time() - self._last_split_time) < 5.0:
+                    continue
+
                 # If silence exceeds SLA, nudge the AI to respond
                 if silence_duration >= self._silence_sla_seconds:
                     self.log.warn(f"{silence_duration:.1f}s silence - nudging AI")
@@ -1116,11 +1167,16 @@ Rules:
                     if user_audio_flowing and self._last_agent_turn_end_time:
                         time_since_agent = time.time() - self._last_agent_turn_end_time
 
-                        # Post-greeting: user needs time to hear the greeting (~5s) and respond.
-                        # Only fire ONCE (turn_count <= 1), then let general watchdog handle it.
-                        if self._turn_count <= 1 and time_since_agent > 15.0 and not getattr(self, '_post_greeting_watchdog_fired', False):
+                        # Post-greeting: user needs time to HEAR the greeting + respond.
+                        # Greeting playback takes ~40ms per chunk. Add that to the base 15s timeout
+                        # so the user gets a full 15s AFTER the greeting finishes playing.
+                        # Cap playback estimate at 15s to avoid disabling the watchdog entirely.
+                        greeting_playback_s = min(self._preloaded_chunk_count * 0.04, 15.0)
+                        post_greeting_timeout = greeting_playback_s + 15.0
+                        if self._turn_count <= 1 and time_since_agent > post_greeting_timeout and not getattr(self, '_post_greeting_watchdog_fired', False):
                             self._post_greeting_watchdog_fired = True
-                            self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s after greeting — forcing reconnect")
+                            self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s after greeting "
+                                          f"(timeout={post_greeting_timeout:.0f}s, playback={greeting_playback_s:.1f}s) — forcing reconnect")
                             self._save_transcript("SYSTEM", "Watchdog: AI unresponsive post-greeting, forcing reconnect")
                             asyncio.create_task(self._emergency_session_split())
                             await asyncio.sleep(10.0)  # Cooldown after reconnect
@@ -1161,6 +1217,32 @@ Rules:
         except Exception as e:
             logger.error(f"Error sending silence nudge: {e}")
 
+    async def _post_swap_reengagement(self, swap_time: float):
+        """Detect dead air after session split and proactively re-engage.
+        If neither user nor bot speaks within 5s of a swap, nudge the bot
+        so it breaks the silence instead of waiting forever."""
+        try:
+            await asyncio.sleep(5.0)
+            if self._closing_call or not self.goog_live_ws:
+                return
+            # If a turn completed or user spoke since swap, someone is talking — no need
+            if self._last_agent_turn_end_time and self._last_agent_turn_end_time > swap_time:
+                return
+            if self._last_user_speech_time and self._last_user_speech_time > swap_time:
+                return
+            self.log.warn("Post-swap dead air (5s) — nudging AI to re-engage")
+            msg = {
+                "client_content": {
+                    "turns": [{"role": "user", "parts": [{"text": "[The customer is waiting. Say something brief to check if they are still there.]"}]}],
+                    "turn_complete": True
+                }
+            }
+            await self.goog_live_ws.send(json.dumps(msg))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Post-swap reengagement error: {e}")
+
     async def _plivo_sender_worker(self):
         """Worker: Reads from plivo_send_queue, sends to Plivo WebSocket"""
         logger.debug(f"[{self.call_uuid[:8]}] Plivo sender worker started")
@@ -1199,7 +1281,8 @@ Rules:
         logger.debug(f"[{self.call_uuid[:8]}] Plivo sender worker stopped")
 
     async def _send_reconnection_filler(self):
-        """Handle silence during reconnection - clear audio and prepare for resume"""
+        """Handle silence during reconnection - clear stale audio and send silence frames
+        to keep the audio stream alive (prevents 'dead line' feeling for the user)."""
         if not self.plivo_ws or self._closing_call:
             return
         try:
@@ -1209,6 +1292,18 @@ Rules:
             await self.plivo_ws.send_text(json.dumps({
                 "event": "clearAudio",
                 "stream_id": self.stream_id
+            }))
+
+            # Send silence frames to keep audio stream alive (200ms at 16kHz, 16-bit mono)
+            silence = b'\x00' * 6400
+            silence_b64 = base64.b64encode(silence).decode()
+            await self.plivo_ws.send_text(json.dumps({
+                "event": "playAudio",
+                "media": {
+                    "contentType": "audio/x-l16",
+                    "sampleRate": 16000,
+                    "payload": silence_b64
+                }
             }))
 
         except Exception as e:
@@ -1278,8 +1373,8 @@ Rules:
                 raise  # Re-raise so _run_google_live_session can reconnect
 
     async def _prewarm_standby_connection(self):
-        """Pre-warm standby: connect WebSocket only (setup deferred to swap time for fresh context).
-        This saves ~100-400ms connection time at swap, while ensuring system_instruction is always current."""
+        """Pre-warm standby: connect WebSocket AND pre-build setup message.
+        WS connection saves ~100-400ms, pre-built setup saves ~2-5s at swap time."""
         if self._standby_ws or self._swap_in_progress:
             return
         try:
@@ -1303,10 +1398,18 @@ Rules:
 
             ws = await websockets.connect(url, **ws_kwargs)
             connect_ms = (time.time() - t0) * 1000
-            self.log.detail(f"Standby WS connected ({connect_ms:.0f}ms), setup deferred to swap")
+            self.log.detail(f"Standby WS connected ({connect_ms:.0f}ms)")
 
-            # Do NOT send setup here — deferred to swap time so context is always fresh
             self._standby_ws = ws
+
+            # Pre-build the setup message now (no time pressure) so hot-swap just sends it
+            try:
+                self._prebuilt_setup_msg = self._build_setup_message()
+                prompt_len = len(self._prebuilt_setup_msg["setup"]["system_instruction"]["parts"][0]["text"])
+                self.log.detail(f"Standby setup pre-built ({prompt_len:,} chars)")
+            except Exception as e:
+                self.log.warn(f"Pre-build setup failed: {e}, will build at swap time")
+                self._prebuilt_setup_msg = None
         except Exception as e:
             self.log.error(f"Standby connection failed: {e}")
             self._standby_ws = None
@@ -1320,6 +1423,7 @@ Rules:
             return
 
         self._swap_in_progress = True
+        self._last_split_time = time.time()  # Set early to block nudges during swap
         swap_start = time.time()
         ws = self._standby_ws
         try:
@@ -1361,37 +1465,66 @@ Rules:
             # Send anti-repetition reinforcement via client_content
             await self._send_context_to_ws(ws)
 
-            # Step 4: Atomic swap
+            # Step 4: Atomic swap — cancel old BEFORE starting new to prevent duplicate audio
             old_ws = self.goog_live_ws
             old_receive_task = self._active_receive_task
 
-            self.goog_live_ws = ws
-            self._standby_ws = None
+            # 1. Mute audio output to prevent any in-flight audio during swap
+            self._mute_audio = True
 
+            # 2. Cancel old receive task FIRST (stop old session from generating audio)
             if old_receive_task:
                 old_receive_task.cancel()
             if self._standby_task:
                 self._standby_task.cancel()
                 self._standby_task = None
 
+            # 3. Drain any in-flight audio from old session
+            while not self._plivo_send_queue.empty():
+                try:
+                    self._plivo_send_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+            # 4. Swap to new session
+            self.goog_live_ws = ws
+            self._standby_ws = None
+
+            # 5. Start new receive loop (only now, after old is cancelled)
             self._active_receive_task = asyncio.create_task(
                 self._ws_receive_loop(self.goog_live_ws, is_standby=False)
             )
+
+            # 6. Unmute and set post-swap hold (200ms before forwarding user audio)
+            self._mute_audio = False
+            self._post_swap_hold_until = time.time() + 0.2
+
+            # 7. Close old WS in background
             asyncio.create_task(self._close_ws_quietly(old_ws))
 
-            self._turns_since_reconnect = 0
+            self._google_session_start = time.time()
             self._standby_ready = asyncio.Event()
             self._prewarm_task = None
             self._is_reconnecting = False
+            self._split_pending = False
+            self._split_pending_since = None
 
-            swap_ms = (time.time() - swap_start) * 1000
-            self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count}) ✓ working well")
-            self.log.detail("Setup + context sent at swap time (fresh)")
-            self.log.detail("Atomic swap complete")
-            self.log.detail_last(f"Old session closed | Swap: {swap_ms:.0f}ms")
+            session_age = (time.time() - swap_start)
+            swap_ms = session_age * 1000
+            self.log.phase(f"SESSION SPLIT (hot-swap at turn #{self._turn_count}) ✓")
+            self.log.detail("Cancel old → drain queue → swap → start new (ordered)")
+            self.log.detail_last(f"Swap: {swap_ms:.0f}ms")
             self._save_transcript("SYSTEM", f"Hot-swap session split at turn #{self._turn_count} ({swap_ms:.0f}ms)")
+
+            # Launch dead air detector — will nudge bot if nobody speaks for 5s
+            if self._post_swap_reengagement_task:
+                self._post_swap_reengagement_task.cancel()
+            self._post_swap_reengagement_task = asyncio.create_task(
+                self._post_swap_reengagement(time.time())
+            )
         finally:
             self._swap_in_progress = False
+            self._last_split_time = time.time()
 
     async def _send_context_to_ws(self, ws):
         """Send minimal anti-repetition nudge via client_content.
@@ -1407,21 +1540,36 @@ Rules:
         if self._conversation_milestones:
             progress_hint = f' Already done: {"; ".join(self._conversation_milestones[-3:])}.'
 
+        # Detect if agent's last message was an unanswered question
+        agent_ended_with_question = agent_ref and agent_ref.rstrip().endswith("?")
+
         if agent_ref and last_user:
+            # Normal case: turn completed, user already responded
             trigger = (
-                f'[Session resumed.{progress_hint} '
+                f'[Session resumed — there may have been a brief audio gap.{progress_hint} '
                 f'Last customer said: "{last_user}". '
                 f'Do NOT respond to this context message. Do NOT re-pitch or repeat anything already covered. '
-                f'Wait for customer to speak next, then continue the conversation FORWARD.]'
+                f'Wait for customer to speak next. If they say "hello" or "are you there", '
+                f'briefly confirm "Yes, I am here" then continue the conversation FORWARD.]'
+            )
+        elif agent_ref and agent_ended_with_question:
+            # Agent asked a question but user hasn't responded yet — don't wait silently
+            trigger = (
+                f'[Session resumed — there may have been a brief audio gap.{progress_hint} '
+                f'You just asked a question but the customer may not have heard it due to the audio gap. '
+                f'Wait a moment, then if the customer hasn\'t spoken, briefly say '
+                f'"Are you still there?" or "Hello?" Do NOT repeat the original question verbatim. '
+                f'Do NOT re-pitch or repeat anything already covered.]'
             )
         elif agent_ref:
             trigger = (
-                f'[Session resumed.{progress_hint} '
-                f'Wait for customer to speak. Do NOT say anything until customer speaks. '
+                f'[Session resumed — there may have been a brief audio gap.{progress_hint} '
+                f'Wait for customer to speak. If they say "hello" or "are you there", '
+                f'briefly confirm "Yes, I am here" then continue FORWARD. '
                 f'Do NOT re-pitch or repeat anything already covered.]'
             )
         else:
-            trigger = "[Session resumed. Wait silently for customer to speak.]"
+            trigger = "[Session resumed. Wait silently for customer to speak. If they say hello, confirm you are here.]"
 
         # turn_complete: False — Gemini will NOT generate a response to this.
         # It will only respond when actual user audio triggers speech detection.
@@ -1441,8 +1589,9 @@ Rules:
         if not self.goog_live_ws or self._closing_call or self._is_reconnecting:
             return
         self._is_reconnecting = True
-        self._turns_since_reconnect = 0
         self._standby_ready = asyncio.Event()
+        self._split_pending = False
+        self._split_pending_since = None
         self.log.phase(f"SESSION SPLIT (fallback at turn #{self._turn_count})")
         self._save_transcript("SYSTEM", f"Fallback session split at turn #{self._turn_count}")
 
@@ -1457,11 +1606,16 @@ Rules:
         self.goog_live_ws = None
         await self._close_ws_quietly(ws)
 
+        # Restart main session loop if it already exited (Fix 4: prevent permanent silence)
+        if self.is_active and not self._closing_call:
+            self._session_task = asyncio.create_task(self._run_google_live_session())
+
     async def _emergency_session_split(self):
         """Emergency split when GoAway fires with no standby: connect + setup + swap in one shot."""
         if self._swap_in_progress or self._closing_call:
             return
         self._swap_in_progress = True
+        self._last_split_time = time.time()  # Set early to block nudges during swap
         self.log.phase("SESSION SPLIT (emergency — GoAway)")
         try:
             # Null out goog_live_ws immediately to stop audio send errors
@@ -1494,22 +1648,38 @@ Rules:
             )
             asyncio.create_task(self._close_ws_quietly(old_ws))
 
-            self._turns_since_reconnect = 0
+            self._google_session_start = time.time()
             self._is_reconnecting = False
+            self._split_pending = False
+            self._split_pending_since = None
+            # NOTE: No _post_swap_hold_until here — emergency splits are already disruptive,
+            # adding a hold causes audio loss when the main loop also reconnects.
             swap_ms = (time.time() - t0) * 1000
             self.log.detail(f"Emergency swap complete ({swap_ms:.0f}ms)")
             self._save_transcript("SYSTEM", f"Emergency session split ({swap_ms:.0f}ms)")
+
+            # Launch dead air detector — will nudge bot if nobody speaks for 5s
+            if self._post_swap_reengagement_task:
+                self._post_swap_reengagement_task.cancel()
+            self._post_swap_reengagement_task = asyncio.create_task(
+                self._post_swap_reengagement(time.time())
+            )
         except Exception as e:
             self.log.error(f"Emergency split failed: {e}")
-            # Let main loop reconnect
             self._is_reconnecting = True
+            # Restart main session loop to trigger reconnection (Fix 4: prevent permanent silence)
+            if self._active_receive_task:
+                self._active_receive_task.cancel()
+            if self.is_active and not self._closing_call:
+                self._session_task = asyncio.create_task(self._run_google_live_session())
         finally:
             self._swap_in_progress = False
+            self._last_split_time = time.time()
 
     def _build_compact_summary(self) -> str:
         """Build compact conversation summary for session split.
         Includes PROGRESS (what's been accomplished) + KEY FACTS + recent turn history."""
-        if not self._turn_exchanges and not self._key_facts and not self._conversation_milestones:
+        if not self._turn_exchanges and not self._key_facts and not self._conversation_milestones and not self._questions_asked:
             return ""
         lines = []
 
@@ -1519,6 +1689,20 @@ Rules:
             lines.append("CONVERSATION PROGRESS (already accomplished — do NOT repeat these):")
             for milestone in self._conversation_milestones:
                 lines.append(f"  ✓ {milestone}")
+            lines.append("")
+
+        # QUESTIONS ALREADY ASKED — prevents cross-session repetition
+        if self._questions_asked:
+            lines.append("QUESTIONS ALREADY ASKED (do NOT ask these again, even rephrased):")
+            for q in self._questions_asked:
+                lines.append(f"  ✗ {q}")
+            lines.append("")
+
+        # OBJECTION TECHNIQUES ALREADY TRIED — forces different approaches
+        if self._objection_techniques_used:
+            lines.append("OBJECTION TECHNIQUES ALREADY TRIED (use a DIFFERENT approach next time):")
+            for t in self._objection_techniques_used:
+                lines.append(f"  ✗ {t}")
             lines.append("")
 
         # KEY FACTS section — cumulative, survives all session splits
@@ -1575,9 +1759,22 @@ Rules:
                 await self._active_receive_task
                 self._active_receive_task = None
 
-                # If WS was replaced by hot-swap, exit this loop
+                # If WS was replaced by hot-swap or emergency split, exit this loop
                 if self.goog_live_ws is not None and self.goog_live_ws is not ws:
                     return
+
+                # If an emergency split is in progress, it's handling reconnection —
+                # do NOT start a competing reconnect (causes duplicate sessions).
+                if self._swap_in_progress:
+                    self.log.detail("Receive loop ended — emergency split in progress, waiting")
+                    # Wait for emergency split to finish, then check if it succeeded
+                    for _ in range(50):  # Up to 5 seconds
+                        await asyncio.sleep(0.1)
+                        if not self._swap_in_progress:
+                            break
+                    if self.goog_live_ws is not None and self.goog_live_ws is not ws:
+                        return  # Emergency split succeeded, new session is active
+                    # Emergency split failed, fall through to reconnect
 
                 # Receive loop ended normally (WS closed cleanly, e.g. async for swallowed close).
                 # If the call is still active, this is unexpected — reconnect.
@@ -1624,8 +1821,9 @@ Rules:
 
         return wav_buffer.getvalue()
 
-    async def _send_session_setup_on_ws(self, ws, is_standby=False):
-        """Send setup message on a specific WS. Includes anti-repetition markers on reconnect/standby."""
+    def _build_setup_message(self) -> dict:
+        """Build the complete setup message dict (prompt + config).
+        Expensive but safe to run ahead of time during prewarm."""
         # On session splits (not first connection), strip greeting instructions from memory
         # to prevent the AI from re-greeting mid-call
         if not self._is_first_connection and self.context.get("_memory_context"):
@@ -1699,19 +1897,18 @@ Rules:
 
         # Product knowledge sections (loaded for both persona engine and direct prompt mode)
         if self._active_product_sections:
-            from src.product_intelligence import load_product_sections
-            product_content = load_product_sections(self._active_product_sections)
+            if self._db_product_sections:
+                # Use per-bot-config DB sections (not global file-based ones)
+                parts = [self._db_product_sections[k] for k in self._active_product_sections if k in self._db_product_sections]
+                product_content = "\n\n".join(parts) if parts else ""
+            else:
+                from src.product_intelligence import load_product_sections
+                product_content = load_product_sections(self._active_product_sections)
             if product_content:
                 full_prompt += "\n\n" + product_content
 
-        # Add natural speech variation and voice consistency guidance
-        full_prompt += (
-            "\n\n[SPEECH STYLE: Vary your pace, pitch, and energy naturally throughout the conversation. "
-            "Speak faster when excited, slower when empathetic. Use pauses for emphasis. "
-            "Match the customer's energy level. "
-            "IMPORTANT: Maintain a consistent speaking voice — same warmth, same tone, same accent, same tempo baseline throughout the entire call. "
-            "Never suddenly change your speaking style, speed, or personality mid-conversation.]"
-        )
+        # Speech style guidance removed — Gemini native audio handles this naturally,
+        # and per-bot-config prompts can include tone instructions if needed.
 
         # Inject pre-call intelligence into system prompt (not as user message)
         if self._intelligence_brief:
@@ -1728,12 +1925,20 @@ Rules:
 
         # Pre-call social proof summary (generic aggregate stats)
         if self._social_proof_summary:
-            full_prompt += (
-                "\n\n[SOCIAL PROOF STATS - enrollment data you can reference naturally. "
-                "When the prospect mentions their company, city, or role, call get_social_proof "
-                "to get specific numbers. For now, here are aggregate stats:]\n"
-                f"{self._social_proof_summary}"
-            )
+            if self._social_proof_min_turn and self._social_proof_min_turn > 0:
+                full_prompt += (
+                    f"\n\n[SOCIAL PROOF STATS - enrollment data you can reference ONLY after turn {self._social_proof_min_turn}. "
+                    f"Do NOT call get_social_proof or reference enrollment numbers until you have completed at least {self._social_proof_min_turn} turns of discovery. "
+                    "Focus on understanding the prospect first. Here are aggregate stats for later use:]\n"
+                    f"{self._social_proof_summary}"
+                )
+            else:
+                full_prompt += (
+                    "\n\n[SOCIAL PROOF STATS - enrollment data you can reference naturally. "
+                    "When the prospect mentions their company, city, or role, call get_social_proof "
+                    "to get specific numbers. For now, here are aggregate stats:]\n"
+                    f"{self._social_proof_summary}"
+                )
 
         # Cross-call memory: injected inside compose_prompt() for persona engine,
         # but must be appended manually in direct prompt mode
@@ -1760,39 +1965,14 @@ Rules:
         _now = _dt.now()
         full_prompt += f"\n\n[CURRENT DATE/TIME: {_now.strftime('%A, %B %d, %Y at %I:%M %p')}]"
 
-        # Universal call behavior rules (applied to ALL prompts)
+        # Minimal universal rules — safety net for prompts that lack their own.
+        # Kept short (~250 chars) to minimize latency impact.
         full_prompt += (
-            "\n\n[CALL BEHAVIOR RULES — ALWAYS FOLLOW]"
-            "\n1. RESPONSE LENGTH (CRITICAL): Maximum 1-2 short sentences, then STOP. "
-            "This applies to EVERYTHING including pitches and product descriptions. "
-            "NEVER give a long pitch. Break it into small pieces across multiple turns."
-            "\n2. WAIT FOR RESPONSE: After saying ANYTHING, STOP and WAIT for the customer. "
-            "NEVER continue talking after asking a question. NEVER answer your own questions. "
-            "NEVER say 'I was just saying...' — if the customer asks 'can you hear me', "
-            "just say 'Yes!' and ask a NEW question. Move forward, don't repeat."
-            "\n3. PERSEVERANCE (CRITICAL FOR SALES): NEVER give up after one pushback. "
-            "When customer says 'not interested', 'not convinced', 'I don't know', 'I'll think about it' — "
-            "this is NORMAL in sales. You MUST try at least 2-3 different angles before ending: "
-            "(a) First pushback: Acknowledge, then reframe using THEIR specific pain point from earlier. "
-            "(b) Second pushback: Try a different angle — share a quick relatable story, or flip the frame. "
-            "(c) Third pushback or explicit 'stop'/'no thanks'/'end the call': NOW end warmly. "
-            "Key: Each reframe must use a DIFFERENT angle. Never repeat the same pitch twice."
-            "\n4. ONE QUESTION AT A TIME: Ask one short question, then stop. Do not stack multiple questions."
-            "\n5. SESSION CONTINUITY: If you receive context about what was discussed earlier, "
-            "do NOT acknowledge it. NEVER say 'Understood', 'Got it, so we were discussing...', "
-            "'I see what we were talking about', or paraphrase the context. "
-            "Just WAIT SILENTLY for the customer to speak, then respond naturally to what THEY say. "
-            "Pick up the conversation as if there was no interruption."
-            "\n6. NO ASSUMPTIONS (CRITICAL): NEVER assume or guess the customer's business type, "
-            "industry, job title, or personal details. Only reference what THEY explicitly told you. "
-            "If you are unsure about something, ASK them — do NOT fill in gaps with guesses. "
-            "NEVER say things like 'So you run a restaurant' or 'As a business owner' unless "
-            "the customer specifically said that."
-            "\n7. FORWARD MOMENTUM: When the customer answers a question, acknowledge briefly "
-            "and move to a NEW topic. Do NOT rephrase what they said, do NOT ask follow-up "
-            "questions on the same topic unless absolutely necessary. Keep the conversation "
-            "moving forward. If you catch yourself about to ask something similar to what "
-            "you already asked — STOP and move to the next stage instead."
+            "\n\n[CORE RULES] "
+            "1) Max 1-2 sentences, then STOP and WAIT for the customer to respond. "
+            "NEVER answer your own questions. NEVER continue talking after asking a question. "
+            "2) If you receive context about a previous conversation, do NOT acknowledge it. "
+            "Just wait for the customer to speak, then respond naturally."
         )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition
@@ -1818,6 +1998,20 @@ Rules:
                         'just said and move the conversation FORWARD to a NEW topic. '
                         'Do NOT rephrase, re-pitch, or revisit anything from the conversation above. '
                         'Do NOT ask a question similar to anything already asked above.]'
+                    )
+                # Explicit questions blacklist for the new session
+                if self._questions_asked:
+                    questions_list = "; ".join(f'"{q[:80]}"' for q in self._questions_asked[-6:])
+                    full_prompt += (
+                        f'\n\n[QUESTIONS ALREADY ASKED — DO NOT ask these or anything similar: {questions_list}. '
+                        'Ask something COMPLETELY NEW.]'
+                    )
+                # Explicit techniques blacklist for the new session
+                if self._objection_techniques_used:
+                    techniques_list = "; ".join(self._objection_techniques_used)
+                    full_prompt += (
+                        f'\n\n[OBJECTION TECHNIQUES ALREADY TRIED: {techniques_list}. '
+                        'You MUST use a DIFFERENT technique next time.]'
                     )
                 # Extra guard for post-greeting reconnects: the AI already greeted,
                 # so NEVER repeat the greeting even if the summary includes it
@@ -1854,8 +2048,10 @@ Rules:
         # etc. work inside persona content, situation content, and product sections too
         full_prompt = render_prompt(full_prompt, self.context)
 
-        # Use explicit voice from UI/API if provided, otherwise auto-detect from prompt
-        voice_name = self.context.get("_voice") or detect_voice_from_prompt(self.prompt)
+        # Use cached voice (set once on first connection, reused on all splits)
+        if self._resolved_voice is None:
+            self._resolved_voice = self.context.get("_voice") or detect_voice_from_prompt(self.prompt)
+        voice_name = self._resolved_voice
 
         if config.use_vertex_ai:
             model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"
@@ -1896,6 +2092,20 @@ Rules:
                 ]
             }
         }
+        return msg
+
+    async def _send_session_setup_on_ws(self, ws, is_standby=False):
+        """Send setup message on a specific WS. Uses pre-built message if available (hot-swap path)."""
+        # Use pre-built message if available (hot-swap path), otherwise build now (first connection / fallback)
+        if self._prebuilt_setup_msg and not self._is_first_connection:
+            msg = self._prebuilt_setup_msg
+            self._prebuilt_setup_msg = None  # Consume it (one-time use)
+            self.log.detail("Using pre-built setup message")
+        else:
+            msg = self._build_setup_message()
+
+        full_prompt = msg["setup"]["system_instruction"]["parts"][0]["text"]
+        voice_name = msg["setup"]["generation_config"]["speech_config"]["voice_config"]["prebuilt_voice_config"]["voice_name"]
         self.log.detail(f"System instruction: {len(full_prompt):,} chars")
         await ws.send(json.dumps(msg))
         label = "standby" if is_standby else ("first" if self._is_first_connection else "reconnect")
@@ -1913,17 +2123,24 @@ Rules:
             customer_name = self.context.get("customer_name", "")
             has_memory = bool(self.context.get("_memory_context"))
             if has_memory and customer_name:
-                # Repeat caller: use the memory-based greeting and ask a follow-up
+                # Repeat caller: short greeting referencing last time, then ask ONE question
                 trigger_text = (
                     f"[Start the conversation now. This is a REPEAT CALLER. "
-                    f"Use the GREETING from the PREVIOUS INTERACTION instructions. "
-                    f"Reference what you know about {customer_name} from last time. "
-                    f"After greeting, immediately ask a follow-up question to keep the conversation going.]"
+                    f"Say ONE short sentence greeting {customer_name} — mention your name and reference last time. "
+                    f"Then ask ONE short follow-up question. Keep the ENTIRE greeting under 15 words total. "
+                    f"OVERRIDE: Ignore any longer greeting scripted in your instructions. Be brief.]"
                 )
             elif customer_name:
-                trigger_text = f"[Start the conversation now. Greet {customer_name} naturally using your opening line from the instructions.]"
+                trigger_text = (
+                    f"[Start the conversation now. OVERRIDE any greeting script in your instructions. "
+                    f"Say ONLY this: 'Hey {customer_name}, {{agent_name}} from {{company_name}}. Is this a bad time?' "
+                    f"Nothing else. Do NOT add context about any event or masterclass. STOP after asking 'Is this a bad time?']"
+                )
             else:
-                trigger_text = "[Start the conversation now. Greet the customer naturally using your opening line from the instructions.]"
+                trigger_text = (
+                    "[Start the conversation now. OVERRIDE any greeting script in your instructions. "
+                    "Say ONLY: your name, company, then 'Is this a bad time?' Nothing else. STOP after the question.]"
+                )
 
         msg = {
             "client_content": {
@@ -2063,6 +2280,7 @@ Rules:
                         detected = detect_persona(detection_text, self._custom_persona_keywords)
                         if detected:
                             self._detected_persona = detected
+                            self._prebuilt_setup_msg = None  # Invalidate — persona changed
                             self.log.detail(f"Persona detected from tool call: {detected}")
                 except Exception as e:
                     logger.error(f"save_user_info error: {e}")
@@ -2085,17 +2303,24 @@ Rules:
 
             # Handle get_social_proof tool — returns enrollment stats for conversation
             if tool_name == "get_social_proof":
-                try:
-                    from src.social_proof import get_social_proof as _get_social_proof
-                    sp_result = _get_social_proof(
-                        company=tool_args.get("company"),
-                        city=tool_args.get("city"),
-                        role=tool_args.get("role"),
-                    )
-                    self.log.detail(f"Social proof: company={tool_args.get('company')}, city={tool_args.get('city')}, role={tool_args.get('role')}")
-                except Exception as e:
-                    logger.error(f"get_social_proof error: {e}")
-                    sp_result = {"general_phrase": "We have thousands of enrollees across India.", "instruction": "Use this general stat naturally."}
+                # Gate: if min turn threshold not reached, tell AI to continue discovery instead
+                if self._social_proof_min_turn and self._turn_count < self._social_proof_min_turn:
+                    self.log.detail(f"Social proof BLOCKED at turn {self._turn_count} (min {self._social_proof_min_turn}) — telling AI to continue discovery")
+                    sp_result = {
+                        "instruction": "Social proof data is not available yet. Continue with discovery questions — build more rapport before referencing stats. Do NOT mention enrollment numbers or company stats yet."
+                    }
+                else:
+                    try:
+                        from src.social_proof import get_social_proof as _get_social_proof
+                        sp_result = _get_social_proof(
+                            company=tool_args.get("company"),
+                            city=tool_args.get("city"),
+                            role=tool_args.get("role"),
+                        )
+                        self.log.detail(f"Social proof: company={tool_args.get('company')}, city={tool_args.get('city')}, role={tool_args.get('role')}")
+                    except Exception as e:
+                        logger.error(f"get_social_proof error: {e}")
+                        sp_result = {"general_phrase": "We have thousands of enrollees across India.", "instruction": "Use this general stat naturally."}
 
                 # Send tool response back to Gemini
                 try:
@@ -2351,7 +2576,11 @@ Rules:
 
                 # Check if turn is complete (greeting done)
                 if sc.get("turnComplete"):
-                    self._preload_complete.set()
+                    # Only mark preload complete if greeting audio was actually generated.
+                    # Empty turnComplete (0 chunks) = Gemini returned no audio; the nudge
+                    # handler will retry, and the NEXT turnComplete with audio will fire this.
+                    if self.preloaded_audio or self.plivo_ws or self._preload_complete.is_set():
+                        self._preload_complete.set()
                     self.greeting_audio_complete = True
                     self._turn_count += 1
                     self._current_turn_id += 1
@@ -2372,6 +2601,14 @@ Rules:
                             self._last_agent_text = full_agent
                             if "?" in full_agent:
                                 self._last_agent_question = full_agent
+                                # Track question sentences for anti-repetition across splits
+                                q_sentences = [s.strip() for s in full_agent.replace("!", ".").replace("?", "?.").split(".") if "?" in s]
+                                for q in q_sentences[-2:]:
+                                    q = q.strip()
+                                    if len(q) > 10 and q not in self._questions_asked:
+                                        self._questions_asked.append(q)
+                                if len(self._questions_asked) > 12:
+                                    self._questions_asked = self._questions_asked[-12:]
                             self._current_turn_agent_text = []
                         if self._current_turn_user_text:
                             full_user = " ".join(self._current_turn_user_text)
@@ -2411,6 +2648,18 @@ Rules:
                             agent_lower = full_agent.lower()
                             if "gold membership" in agent_lower and not any("Product mentioned" in f for f in self._key_facts):
                                 self._key_facts.append("Product mentioned: Gold Membership pitched to customer")
+
+                            # Track objection-handling techniques for anti-repetition across splits
+                            technique_patterns = [
+                                (["costing you", "cost of", "what if nothing changes", "where does that leave"], "Cost-of-inaction / future projection"),
+                                (["the money or", "specifically what's holding"], "Isolate-the-objection (money vs value)"),
+                                (["what changes", "different three months", "different six months"], "Future-state challenge"),
+                                (["emi", "installment", "per month"], "EMI/payment plan offered"),
+                            ]
+                            for keywords, technique_name in technique_patterns:
+                                if any(kw in agent_lower for kw in keywords):
+                                    if technique_name not in self._objection_techniques_used:
+                                        self._objection_techniques_used.append(technique_name)
 
                         # Auto-detect conversation milestones for session split context
                         if full_agent and full_user:
@@ -2465,10 +2714,11 @@ Rules:
                         self._user_response_start_time = None
 
                         extra = ""
-                        if self._turns_since_reconnect == self._session_split_interval - 1:
-                            extra = "prewarm standby"
-                        elif self._turns_since_reconnect >= self._session_split_interval:
+                        if self._split_pending:
                             extra = "split pending"
+                        elif (self._google_session_start
+                              and (time.time() - self._google_session_start) >= (self._session_split_after_seconds - 60)):
+                            extra = "prewarm standby"
                         self.log.turn(self._turn_count, extra)
                         if full_agent:
                             self.log.agent(full_agent)
@@ -2484,8 +2734,10 @@ Rules:
                         self._turn_start_time = None
 
                     # Detect empty turn (AI didn't generate audio) - nudge to respond
+                    # Skip nudge during post-split cooldown to avoid triple-nudge storm
                     is_empty_turn = self._current_turn_audio_chunks == 0
-                    if is_empty_turn and self.greeting_audio_complete and not self._closing_call:
+                    post_split_cooldown = self._last_split_time and (time.time() - self._last_split_time) < 5.0
+                    if is_empty_turn and self.greeting_audio_complete and not self._closing_call and not post_split_cooldown:
                         self._empty_turn_nudge_count += 1
                         if self._empty_turn_nudge_count <= 3:
                             self.log.warn(f"Empty turn, nudging AI ({self._empty_turn_nudge_count}/3)")
@@ -2493,13 +2745,11 @@ Rules:
                     else:
                         self._empty_turn_nudge_count = 0
 
-                    # Hot-swap session split - count non-empty turns
-                    if not is_empty_turn:
-                        self._turns_since_reconnect += 1
+                    # Time-based session split — check session age
+                    session_age = (time.time() - self._google_session_start) if self._google_session_start else 0
 
-                    # Pre-warm standby at turn N-1 (skip if call is ending)
-                    prewarm_turn = self._session_split_interval - 1
-                    if (self._turns_since_reconnect == prewarm_turn
+                    # Pre-warm standby 1 minute before split threshold
+                    if (session_age >= (self._session_split_after_seconds - 60)
                             and not self._standby_ws
                             and not self._prewarm_task
                             and not self._closing_call
@@ -2507,14 +2757,17 @@ Rules:
                             and self.greeting_audio_complete):
                         self._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
 
-                    # Hot-swap at turn N (skip if call is ending)
-                    if (self._turns_since_reconnect >= self._session_split_interval
+                    # Set split pending at threshold (defer to silence gap)
+                    if (session_age >= self._session_split_after_seconds
                             and not is_empty_turn
                             and not self._closing_call
                             and not self._goodbye_pending
                             and not self.agent_said_goodbye
-                            and self.greeting_audio_complete):
-                        asyncio.create_task(self._hot_swap_session())
+                            and self.greeting_audio_complete
+                            and not self._split_pending):
+                        self._split_pending = True
+                        self._split_pending_since = time.time()
+                        self.log.detail(f"Split pending (session age: {session_age:.0f}s)")
 
                     # Reset turn audio counter
                     self._current_turn_audio_chunks = 0
@@ -2633,6 +2886,9 @@ Rules:
                             # During preload (no plivo_ws yet), always store audio
                             if not self.plivo_ws:
                                 self.preloaded_audio.append(audio)
+                            elif self._mute_audio:
+                                # Swap in progress — suppress audio to prevent duplicates
+                                pass
                             elif self.plivo_ws:
                                 # Send directly to plivo_send_queue
                                 chunk = AudioChunk(
@@ -2697,10 +2953,25 @@ Rules:
                     if len(self._reconnect_audio_buffer) == 1:
                         logger.warning("Google WS disconnected - buffering audio for reconnection")
                 return
+
+            # Post-swap hold: buffer audio briefly after swap so Gemini processes context first
+            now = time.time()
+            if now < self._post_swap_hold_until:
+                if len(self._reconnect_audio_buffer) < self._max_reconnect_buffer:
+                    self._reconnect_audio_buffer.append(audio_b64)
+                return
+            elif self._post_swap_hold_until > 0 and self._reconnect_audio_buffer:
+                # Hold expired — flush buffered audio. Copy + clear first to avoid
+                # re-append feedback loop if handle_plivo_audio re-buffers.
+                self._post_swap_hold_until = 0
+                to_flush = list(self._reconnect_audio_buffer)
+                self._reconnect_audio_buffer = []
+                for buffered in to_flush:
+                    await self.handle_plivo_audio(buffered)
+
             chunk = base64.b64decode(audio_b64)
 
             # Detect when user starts speaking (after agent finished)
-            now = time.time()
             if self._last_user_audio_time is None or (now - self._last_user_audio_time) > 1.0:
                 # Gap > 1 second means new user speech segment
                 if self._agent_speaking or not self._user_speaking:
@@ -2708,6 +2979,23 @@ Rules:
                     self._agent_speaking = False
                     self._user_speech_start_time = now
                     logger.debug(f"[{self.call_uuid[:8]}] User speaking")
+
+                # Silence gap detected — trigger deferred split if pending
+                if self._split_pending and not self._swap_in_progress:
+                    self._split_pending = False
+                    self._split_pending_since = None
+                    self.log.detail("Silence gap detected — triggering deferred split")
+                    asyncio.create_task(self._hot_swap_session())
+            elif self._split_pending and self._split_pending_since:
+                # Safety timeout: force split after 20s even without silence gap.
+                # 10s was too aggressive — after a long model response, user needs time
+                # to process before speaking, and background phone noise prevents gap detection.
+                if (now - self._split_pending_since) > 20.0 and not self._swap_in_progress:
+                    self._split_pending = False
+                    self._split_pending_since = None
+                    self.log.warn("Split pending >20s without silence gap — forcing split")
+                    asyncio.create_task(self._hot_swap_session())
+
             self._last_user_audio_time = now
 
             # Record user audio (16kHz)
@@ -2762,7 +3050,8 @@ Rules:
         # Cancel all tasks
         for task in [self._timeout_task, self._silence_monitor_task,
                      self._sender_worker_task, self._standby_task,
-                     self._prewarm_task, self._active_receive_task]:
+                     self._prewarm_task, self._active_receive_task,
+                     self._post_swap_reengagement_task]:
             if task:
                 task.cancel()
 

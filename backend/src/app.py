@@ -910,8 +910,11 @@ class PlivoMakeCallRequest(BaseModel):
     preResearchEnabled: Optional[bool] = False  # Gather intelligence about contact before call
     memoryRecallEnabled: Optional[bool] = False  # Load cross-call memory for returning callers
     socialProofEnabled: Optional[bool] = False  # Include social proof stats in conversation
+    socialProofMinTurn: Optional[int] = 0  # Minimum turns before social proof tool fires (0 = immediate)
     personaEngineEnabled: Optional[bool] = False  # Enable persona detection and adaptation
     productIntelligenceEnabled: Optional[bool] = False  # Enable product section targeting
+    productSections: Optional[list] = None  # DB product sections [{name, content, keywords}, ...]
+    productKeywords: Optional[dict] = None  # DB product keywords {section_name: [keywords]}
     botNotes: Optional[str] = None  # Previous conversation notes for memory recall
     ghlWhatsappWebhookUrl: Optional[str] = None  # GHL workflow webhook URL to trigger WhatsApp on call start
     ghlApiKey: Optional[str] = None  # GHL API key for contact lookup and tagging
@@ -952,7 +955,7 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         context.setdefault("customer_name", request.contactName)
 
         # Load default prompt if none provided — enable persona engine for FWAI
-        if not request.prompt:
+        if request.prompt is None:
             default_prompt_file = PROMPTS_DIR / "fwai_prompt.txt"
             if default_prompt_file.exists():
                 request.prompt = default_prompt_file.read_text(encoding="utf-8")
@@ -971,9 +974,24 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
 
         # Pass feature flags through context so session can use them
         context["_social_proof_enabled"] = bool(request.socialProofEnabled)
+        context["_social_proof_min_turn"] = int(request.socialProofMinTurn or 0)
         if request.personaEngineEnabled:
             context["_persona_engine"] = True
-        logger.info(f"Feature flags: preResearch={request.preResearchEnabled}, memoryRecall={request.memoryRecallEnabled}, socialProof={request.socialProofEnabled}, persona={request.personaEngineEnabled}")
+        if request.productIntelligenceEnabled:
+            context["_product_intelligence_enabled"] = True
+            # Pass DB product sections (overrides file-based global sections)
+            if request.productSections:
+                db_sections = {}
+                for s in request.productSections:
+                    name = s.get("name") if isinstance(s, dict) else getattr(s, "name", None)
+                    content = s.get("content") if isinstance(s, dict) else getattr(s, "content", None)
+                    if name and content:
+                        db_sections[name] = content
+                context["_db_product_sections"] = db_sections
+                logger.info(f"DB product sections: {list(db_sections.keys())}")
+            if request.productKeywords:
+                context["_db_product_keywords"] = request.productKeywords
+        logger.info(f"Feature flags: preResearch={request.preResearchEnabled}, memoryRecall={request.memoryRecallEnabled}, socialProof={request.socialProofEnabled}, persona={request.personaEngineEnabled}, productIntelligence={request.productIntelligenceEnabled}")
 
         # Pass custom persona/situation keyword configs from DB through context
         if request.personaKeywords:

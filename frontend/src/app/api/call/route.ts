@@ -22,7 +22,7 @@ function transformBotConfig(config: any) {
   }
 
   return {
-    prompt: config.prompt,
+    prompt: config.prompt ?? "",
     questions,
     objections,
     objectionKeywords: config.objection_keywords || config.objectionKeywords || {},
@@ -188,6 +188,15 @@ export async function POST(request: NextRequest) {
         }
       }
     }
+    // Merge per-call custom variable overrides (highest priority — from call form)
+    const cvOverrides = payload.customVariableOverrides as Record<string, string> | undefined;
+    if (cvOverrides && typeof cvOverrides === "object") {
+      for (const [key, value] of Object.entries(cvOverrides)) {
+        if (key && value) {
+          context[key] = value;
+        }
+      }
+    }
 
     const host = request.headers.get("host") || "localhost:3000";
     const forwardedProto = request.headers.get("x-forwarded-proto");
@@ -232,6 +241,7 @@ export async function POST(request: NextRequest) {
       preResearchEnabled: configDoc?.pre_research_enabled ?? false,
       memoryRecallEnabled: configDoc?.memory_recall_enabled ?? false,
       socialProofEnabled: configDoc?.social_proof_enabled ?? false,
+      socialProofMinTurn: configDoc?.social_proof_min_turn ?? 0,
       personaEngineEnabled: configDoc?.persona_engine_enabled ?? false,
       productIntelligenceEnabled: configDoc?.product_intelligence_enabled ?? false,
       ...(botNotes ? { botNotes } : {}),
