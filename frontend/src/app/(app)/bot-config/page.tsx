@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Plus, Pencil, Trash2, Zap, Bot, Loader2, Upload, Download, Brain, ShoppingBag, Users, Clock, Mic } from "lucide-react";
+import { Plus, Pencil, Trash2, Zap, Bot, Loader2, Upload, Download, Brain, ShoppingBag, Users, Clock, Mic, Webhook } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAuth } from "@/hooks/use-auth";
@@ -12,6 +12,7 @@ import { RoleGuard } from "@/components/auth/role-guard";
 import { DEFAULT_BOT_CONFIG } from "@/lib/default-bot-config";
 import { buildTemplate, validateImportedConfig, downloadJson } from "@/lib/bot-config-io";
 import type { BotConfig } from "@/types/bot-config";
+import { WebhookInfoDialog } from "@/components/bot-configs/webhook-info-dialog";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -252,6 +253,8 @@ function ConfigCard({
   onToggleActive: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const [webhookOpen, setWebhookOpen] = useState(false);
+
   const features = [
     config.personaEngineEnabled && { icon: Brain, label: "Personas" },
     config.productIntelligenceEnabled && { icon: ShoppingBag, label: "Products" },
@@ -333,6 +336,15 @@ function ConfigCard({
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setWebhookOpen(true)}
+              title="API Trigger"
+            >
+              <Webhook className="size-3.5" />
+              API
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               className="text-destructive hover:text-destructive"
               onClick={() => onDelete(config.id)}
             >
@@ -341,6 +353,13 @@ function ConfigCard({
           </div>
         </CardContent>
       </Card>
+
+      <WebhookInfoDialog
+        open={webhookOpen}
+        onOpenChange={setWebhookOpen}
+        botConfigId={config.id}
+        botConfigName={config.name}
+      />
     </motion.div>
   );
 }
