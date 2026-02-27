@@ -802,7 +802,8 @@ class PlivoGeminiSession:
             pass  # Drop frame if queue is full (shouldn't happen)
 
     def _resample_24k_to_16k(self, audio_bytes: bytes) -> bytes:
-        """Resample 24kHz audio to 16kHz using numpy (fast linear interpolation)."""
+        """Resample 24kHz audio to 16kHz using numpy (fast linear interpolation).
+        Used in the LIVE audio path — kept simple for low latency."""
         samples_24k = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
         n_in = len(samples_24k)
         n_out = int(n_in * 2 / 3)
@@ -812,61 +813,110 @@ class PlivoGeminiSession:
         samples_16k = np.interp(x_new, np.arange(n_in, dtype=np.float32), samples_24k)
         return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
 
+    @staticmethod
+    def _resample_24k_to_16k_hq(audio_bytes: bytes) -> bytes:
+        """High-quality 24k→16k resampling with proper anti-aliasing.
+        Used ONLY in post-call recording path — never in live audio."""
+        samples_24k = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+        if len(samples_24k) == 0:
+            return b''
+        try:
+            from scipy.signal import resample_poly
+            # Downsample by factor 2/3: up=2, down=3
+            samples_16k = resample_poly(samples_24k, up=2, down=3)
+        except ImportError:
+            # Fallback to numpy linear interpolation
+            n_in = len(samples_24k)
+            n_out = int(n_in * 2 / 3)
+            if n_out == 0:
+                return b''
+            x_new = np.linspace(0, n_in - 1, n_out, dtype=np.float32)
+            samples_16k = np.interp(x_new, np.arange(n_in, dtype=np.float32), samples_24k)
+        return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
+
     def _save_recording(self):
-        """Save mixed MP3 file for Gemini transcription (10x smaller than WAV)"""
+        """Save stereo MP3: AI on left channel, USER on right channel.
+        Gaps capped at 1.5s to prevent silence inflation from reconnections."""
         logger.info(f"Saving recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
         if not self.recording_enabled or not self.audio_chunks:
             logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
             return None
         try:
             SAMPLE_RATE = 16000
-            BYTES_PER_SAMPLE = 2  # 16-bit audio
+            BYTES_PER_SAMPLE = 2  # 16-bit PCM
+            MAX_GAP = 1.5  # Cap silence to 1.5s (natural pause)
 
-            # Sort chunks by timestamp
+            # Sort all chunks by timestamp
             sorted_chunks = sorted(self.audio_chunks, key=lambda x: x[3])
             call_start = sorted_chunks[0][3]
 
-            # Build mixed audio with proper timeline
-            mixed_audio = bytearray()
-            current_time = call_start
-
-            for chunk in sorted_chunks:
-                role, audio_bytes, sample_rate, timestamp = chunk
+            # Separate AI and USER chunks, resample AI 24k→16k with HQ filter
+            ai_chunks = []
+            user_chunks = []
+            for role, audio_bytes, sample_rate, timestamp in sorted_chunks:
                 if sample_rate == 24000:
-                    audio_bytes = self._resample_24k_to_16k(audio_bytes)
+                    audio_bytes = self._resample_24k_to_16k_hq(audio_bytes)
+                if role == "AI":
+                    ai_chunks.append((audio_bytes, timestamp))
+                else:
+                    user_chunks.append((audio_bytes, timestamp))
 
-                # Insert silence for gaps
-                gap = timestamp - current_time
-                if gap > 0.02:  # Gap > 20ms
-                    silence_samples = int(gap * SAMPLE_RATE)
-                    mixed_audio.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
-                    current_time = timestamp
+            def build_mono_track(chunks):
+                """Build a mono track from timestamped chunks with capped gaps."""
+                track = bytearray()
+                current_time = call_start
+                for audio_bytes, timestamp in chunks:
+                    gap = timestamp - current_time
+                    if gap > 0.02:  # Gap > 20ms
+                        capped_gap = min(gap, MAX_GAP)
+                        silence_samples = int(capped_gap * SAMPLE_RATE)
+                        track.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
+                        current_time = timestamp - gap + capped_gap  # Advance by capped amount
+                    track.extend(audio_bytes)
+                    current_time = timestamp + len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+                return bytes(track)
 
-                mixed_audio.extend(audio_bytes)
-                current_time = timestamp + len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+            ai_track = build_mono_track(ai_chunks)
+            user_track = build_mono_track(user_chunks)
 
-            # Save as MP3 using pydub (10x smaller than WAV)
+            # Pad shorter track to match length
+            max_len = max(len(ai_track), len(user_track))
+            ai_track = ai_track.ljust(max_len, b'\x00')
+            user_track = user_track.ljust(max_len, b'\x00')
+
+            # Interleave into stereo: [L_sample, R_sample, L_sample, R_sample, ...]
+            ai_samples = np.frombuffer(ai_track, dtype=np.int16)
+            user_samples = np.frombuffer(user_track, dtype=np.int16)
+            stereo = np.empty(len(ai_samples) + len(user_samples), dtype=np.int16)
+            stereo[0::2] = ai_samples   # Left channel = AI
+            stereo[1::2] = user_samples  # Right channel = USER
+            stereo_bytes = stereo.tobytes()
+
+            duration_s = max_len / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+            logger.info(f"Recording built: {duration_s:.1f}s stereo, {len(sorted_chunks)} chunks "
+                        f"(AI: {len(ai_chunks)}, USER: {len(user_chunks)})")
+
+            # Export as MP3 using pydub (10x smaller than WAV)
             mixed_mp3 = RECORDINGS_DIR / f"{self.call_uuid}_mixed.mp3"
             try:
                 from pydub import AudioSegment
                 audio_segment = AudioSegment(
-                    data=bytes(mixed_audio),
+                    data=stereo_bytes,
                     sample_width=2,
-                    frame_rate=16000,
-                    channels=1
+                    frame_rate=SAMPLE_RATE,
+                    channels=2
                 )
-                audio_segment.export(str(mixed_mp3), format="mp3", bitrate="64k")
-                logger.info(f"MP3 recording saved: {mixed_mp3.stat().st_size} bytes, {len(sorted_chunks)} chunks")
+                audio_segment.export(str(mixed_mp3), format="mp3", bitrate="128k")
+                logger.info(f"Stereo MP3 saved: {mixed_mp3.stat().st_size} bytes")
             except ImportError:
-                # Fallback to WAV if pydub not installed
-                logger.warning("pydub not installed, falling back to WAV")
+                logger.warning("pydub not installed, falling back to stereo WAV")
                 mixed_mp3 = RECORDINGS_DIR / f"{self.call_uuid}_mixed.wav"
                 with wave.open(str(mixed_mp3), 'wb') as wav:
-                    wav.setnchannels(1)
+                    wav.setnchannels(2)
                     wav.setsampwidth(2)
-                    wav.setframerate(16000)
-                    wav.writeframes(bytes(mixed_audio))
-                logger.info(f"WAV recording saved: {len(mixed_audio)} bytes")
+                    wav.setframerate(SAMPLE_RATE)
+                    wav.writeframes(stereo_bytes)
+                logger.info(f"Stereo WAV saved: {len(stereo_bytes)} bytes")
 
             return {
                 "mixed_wav": mixed_mp3,  # Key name kept for compatibility
@@ -874,6 +924,8 @@ class PlivoGeminiSession:
             }
         except Exception as e:
             logger.error(f"Error saving recording: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
     def _transcribe_recording_sync(self, recording_info: dict, call_uuid: str):
@@ -909,9 +961,10 @@ class PlivoGeminiSession:
             # Generate transcript with speaker diarization
             prompt = """Transcribe this phone call audio accurately.
 
+This is a stereo recording: the LEFT channel is the "Agent" (AI sales counselor) and the RIGHT channel is the "User" (customer).
+
 Rules:
-- The FIRST speaker is always the "Agent" (AI sales counselor calling)
-- The SECOND speaker is always the "User" (customer receiving the call)
+- Label left-channel speech as "Agent" and right-channel speech as "User"
 - Format each line as: [MM:SS] Speaker: text
 - Use timestamps from the audio
 - Keep the transcript natural and accurate
