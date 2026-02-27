@@ -312,6 +312,11 @@ class PlivoGeminiSession:
         self._last_user_audio_time = None  # Last time user audio received
         self._user_speech_start_time = None  # When user started speaking
 
+        # Wait-for-caller-speech: hold preloaded greeting until caller speaks
+        self._wait_for_caller_speech = True  # Hold greeting until caller says "hello"
+        self._caller_speech_detected = False  # Set True once speech energy detected
+        self._speech_energy_threshold = 300  # RMS threshold for 16-bit PCM (filters line noise)
+
         # Audio buffer for reconnection (store audio if Google WS drops briefly)
         self._reconnect_audio_buffer = []
         self._max_reconnect_buffer = 150  # Increased buffer (~3 seconds) for better reconnection
@@ -1074,8 +1079,24 @@ Rules:
         asyncio.create_task(self._session_watchdog())
 
     async def _send_preloaded_audio(self):
-        """Send preloaded audio directly to plivo_send_queue"""
-        # Minimal delay for Plivo WebSocket buffer to stabilize
+        """Send preloaded audio — waits for caller speech before flushing greeting."""
+        # Wait for caller to speak (say "hello") before playing greeting
+        # This prevents audio bleed where greeting plays while phone is still being raised to ear
+        if self._wait_for_caller_speech:
+            self.log.detail("Holding greeting — waiting for caller speech")
+            wait_start = time.time()
+            max_wait = 8.0  # Safety: flush after 8s even without speech (call might be silent pickup)
+            while not self._caller_speech_detected:
+                await asyncio.sleep(0.05)
+                if not self.is_active:
+                    return  # Call ended while waiting
+                if (time.time() - wait_start) > max_wait:
+                    self.log.warn(f"Caller speech timeout ({max_wait}s) — flushing greeting anyway")
+                    break
+            waited_ms = (time.time() - wait_start) * 1000
+            self.log.detail(f"Caller speech detected after {waited_ms:.0f}ms — releasing greeting")
+
+        # Minimal delay for WebSocket buffer to stabilize
         await asyncio.sleep(0.05)
         count = len(self.preloaded_audio)
         # Greeting recording happens in _plivo_sender_worker at send-time (16kHz)
@@ -3117,6 +3138,17 @@ Rules:
                     await self.handle_plivo_audio(buffered)
 
             chunk = base64.b64decode(audio_b64)
+
+            # Detect caller speech energy — triggers preloaded greeting release
+            if self._wait_for_caller_speech and not self._caller_speech_detected:
+                import struct
+                n_samples = len(chunk) // 2
+                if n_samples > 0:
+                    samples = struct.unpack(f"<{n_samples}h", chunk[:n_samples * 2])
+                    rms = (sum(s * s for s in samples) / n_samples) ** 0.5
+                    if rms > self._speech_energy_threshold:
+                        self._caller_speech_detected = True
+                        self._wait_for_caller_speech = False
 
             # Detect when user starts speaking (after agent finished)
             if self._last_user_audio_time is None or (now - self._last_user_audio_time) > 1.0:
