@@ -237,15 +237,15 @@ export default function BotConfigEditorPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push("/bot-config")}>
+        <div className="flex items-center gap-4 min-w-0 flex-1">
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => router.push("/bot-config")}>
             <ArrowLeft className="size-5" />
           </Button>
-          <div>
+          <div className="min-w-0 flex-1">
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="text-2xl font-bold border-none shadow-none px-0 h-auto focus-visible:ring-0"
+              className="text-2xl font-bold border-none shadow-none px-0 h-auto focus-visible:ring-0 w-full"
               placeholder="Config name"
             />
             <p className="text-sm text-muted-foreground ml-0.5">
