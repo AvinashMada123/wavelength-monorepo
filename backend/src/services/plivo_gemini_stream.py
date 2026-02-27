@@ -829,27 +829,6 @@ class PlivoGeminiSession:
         return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
 
     @staticmethod
-    def _resample_24k_to_16k_hq(audio_bytes: bytes) -> bytes:
-        """High-quality 24k→16k resampling with proper anti-aliasing.
-        Used ONLY in post-call recording path — never in live audio."""
-        samples_24k = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-        if len(samples_24k) == 0:
-            return b''
-        try:
-            from scipy.signal import resample_poly
-            # Downsample by factor 2/3: up=2, down=3
-            samples_16k = resample_poly(samples_24k, up=2, down=3)
-        except ImportError:
-            # Fallback to numpy linear interpolation
-            n_in = len(samples_24k)
-            n_out = int(n_in * 2 / 3)
-            if n_out == 0:
-                return b''
-            x_new = np.linspace(0, n_in - 1, n_out, dtype=np.float32)
-            samples_16k = np.interp(x_new, np.arange(n_in, dtype=np.float32), samples_24k)
-        return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
-
-    @staticmethod
     def _strip_trailing_silence(samples: np.ndarray, sample_rate: int, pad_seconds: float = 0.5) -> np.ndarray:
         """Remove trailing silence, keeping pad_seconds of buffer."""
         nonzero = np.nonzero(samples)[0]
@@ -860,10 +839,10 @@ class PlivoGeminiSession:
         return samples[:end]
 
     def _save_recording(self):
-        """Save stereo MP3: AI on left channel, USER on right channel.
-        Sample-counter based — no timestamps, no gap insertion.
-        USER audio is the master clock; AI placed at the USER sample position
-        where each AI chunk was generated."""
+        """Save stereo recording: AI on left channel, USER on right channel.
+        Both tracks are 16kHz (AI recorded at send-time after resampling).
+        USER chunks concatenated as continuous stream (master clock).
+        AI chunks placed by user_sample_pos with write cursor for sequential burst handling."""
         total_chunks = len(self._rec_user_chunks) + len(self._rec_ai_events)
         logger.info(f"Saving recording: enabled={self.recording_enabled}, "
                     f"user_chunks={len(self._rec_user_chunks)}, ai_events={len(self._rec_ai_events)}")
@@ -871,37 +850,30 @@ class PlivoGeminiSession:
             logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={total_chunks}")
             return None
         try:
-            OUTPUT_RATE = 24000  # Final output rate (native Gemini rate)
-            USER_RATE = 16000
+            RATE = 16000  # Both tracks are 16kHz
             BPS = 2  # bytes per sample (16-bit PCM)
 
-            # --- Step 1: Build continuous USER track (16kHz) ---
-            user_pcm_16k = b''.join(self._rec_user_chunks)
-            total_user_samples = len(user_pcm_16k) // BPS
-            duration_s = total_user_samples / USER_RATE
-            logger.info(f"USER track: {total_user_samples} samples = {duration_s:.1f}s @ {USER_RATE}Hz")
+            # --- Step 1: Build USER track (continuous 16kHz from Plivo) ---
+            user_pcm = b''.join(self._rec_user_chunks)
+            user_samples = len(user_pcm) // BPS
+            user_duration_s = user_samples / RATE
+            logger.info(f"USER track: {user_samples} samples = {user_duration_s:.1f}s")
 
-            # --- Step 2: Build AI track (24kHz) with write cursor ---
-            # AI chunks in a burst arrive with nearly identical user_pos (Gemini generates
-            # faster than real-time). A write cursor ensures chunks are placed sequentially
-            # within a burst, and only jump forward when user_pos genuinely advances
-            # (i.e., user spoke in between AI responses).
-
+            # --- Step 2: Build AI track (16kHz, placed by user sample position) ---
+            # Write cursor ensures burst chunks are sequential, not overlapping.
             # First pass: calculate total size needed
             ai_write_cursor = 0  # in bytes
             for user_pos, ai_audio in self._rec_ai_events:
-                target_offset = int(user_pos * OUTPUT_RATE / USER_RATE) * BPS
+                target_offset = user_pos * BPS  # Same rate, direct mapping
                 actual_offset = max(ai_write_cursor, target_offset)
                 ai_write_cursor = actual_offset + len(ai_audio)
-            ai_track_bytes = max(int(duration_s * OUTPUT_RATE) * BPS, ai_write_cursor)
+            ai_track_bytes = max(len(user_pcm), ai_write_cursor)
             ai_track = bytearray(ai_track_bytes)
 
             # Second pass: place chunks
             ai_write_cursor = 0
             for user_pos, ai_audio in self._rec_ai_events:
-                target_offset = int(user_pos * OUTPUT_RATE / USER_RATE) * BPS
-                # If target is ahead of cursor, jump forward (natural pause between responses)
-                # If target is behind cursor, continue sequentially (same response burst)
+                target_offset = user_pos * BPS
                 actual_offset = max(ai_write_cursor, target_offset)
                 end = actual_offset + len(ai_audio)
                 if end <= len(ai_track):
@@ -910,57 +882,44 @@ class PlivoGeminiSession:
                     ai_track[actual_offset:] = ai_audio[:len(ai_track) - actual_offset]
                 ai_write_cursor = end
 
-            ai_track_samples = len(ai_track) // BPS
-            logger.info(f"AI track: {ai_track_samples} samples = {ai_track_samples / OUTPUT_RATE:.1f}s @ {OUTPUT_RATE}Hz, "
+            ai_duration_s = len(ai_track) / (RATE * BPS)
+            logger.info(f"AI track: {len(ai_track) // BPS} samples = {ai_duration_s:.1f}s, "
                         f"{len(self._rec_ai_events)} events")
 
-            # --- Step 3: Upsample USER 16k→24k as one operation ---
-            user_samples_16k = np.frombuffer(user_pcm_16k, dtype=np.int16).astype(np.float32)
-            try:
-                from scipy.signal import resample_poly
-                user_samples_24k = resample_poly(user_samples_16k, up=3, down=2)
-            except ImportError:
-                n_out = int(len(user_samples_16k) * 3 / 2)
-                if n_out == 0:
-                    user_samples_24k = np.array([], dtype=np.float32)
-                else:
-                    x_new = np.linspace(0, len(user_samples_16k) - 1, n_out, dtype=np.float32)
-                    user_samples_24k = np.interp(x_new, np.arange(len(user_samples_16k), dtype=np.float32), user_samples_16k)
-            user_track_24k = np.clip(user_samples_24k, -32768, 32767).astype(np.int16)
+            # --- Step 3: Strip trailing silence ---
+            ai_np = np.frombuffer(bytes(ai_track), dtype=np.int16)
+            user_np = np.frombuffer(user_pcm, dtype=np.int16)
+            ai_np = self._strip_trailing_silence(ai_np, RATE)
+            user_np = self._strip_trailing_silence(user_np, RATE)
 
-            # --- Step 4: Strip trailing silence from both tracks ---
-            ai_samples = np.frombuffer(bytes(ai_track), dtype=np.int16)
-            ai_samples = self._strip_trailing_silence(ai_samples, OUTPUT_RATE)
-            user_track_24k = self._strip_trailing_silence(user_track_24k, OUTPUT_RATE)
-
-            # --- Step 5: Pad to equal length and interleave stereo ---
-            max_samples = max(len(ai_samples), len(user_track_24k))
+            # --- Step 4: Pad to equal length and interleave stereo ---
+            max_samples = max(len(ai_np), len(user_np))
             if max_samples == 0:
                 logger.warning("Recording is empty after stripping silence")
                 return None
 
             ai_padded = np.zeros(max_samples, dtype=np.int16)
-            ai_padded[:len(ai_samples)] = ai_samples
+            ai_padded[:len(ai_np)] = ai_np
             user_padded = np.zeros(max_samples, dtype=np.int16)
-            user_padded[:len(user_track_24k)] = user_track_24k
+            user_padded[:len(user_np)] = user_np
 
             stereo = np.empty(max_samples * 2, dtype=np.int16)
             stereo[0::2] = ai_padded    # Left = AI
             stereo[1::2] = user_padded   # Right = USER
             stereo_bytes = stereo.tobytes()
 
-            final_duration_s = max_samples / OUTPUT_RATE
-            logger.info(f"Recording built: {final_duration_s:.1f}s stereo @{OUTPUT_RATE}Hz "
-                        f"(user_chunks={len(self._rec_user_chunks)}, ai_events={len(self._rec_ai_events)})")
+            final_duration_s = max_samples / RATE
+            logger.info(f"Recording built: {final_duration_s:.1f}s stereo @{RATE}Hz "
+                        f"(user={user_duration_s:.1f}s, ai={ai_duration_s:.1f}s)")
 
-            # Export as MP3 using pydub
+            # Export as MP3 using pydub, fall back to WAV
             mixed_mp3 = RECORDINGS_DIR / f"{self.call_uuid}_mixed.mp3"
             try:
                 from pydub import AudioSegment
                 audio_segment = AudioSegment(
                     data=stereo_bytes,
                     sample_width=2,
-                    frame_rate=OUTPUT_RATE,
+                    frame_rate=RATE,
                     channels=2
                 )
                 audio_segment.export(str(mixed_mp3), format="mp3", bitrate="128k")
@@ -971,7 +930,7 @@ class PlivoGeminiSession:
                 with wave.open(str(mixed_mp3), 'wb') as wav:
                     wav.setnchannels(2)
                     wav.setsampwidth(2)
-                    wav.setframerate(OUTPUT_RATE)
+                    wav.setframerate(RATE)
                     wav.writeframes(stereo_bytes)
                 logger.info(f"Stereo WAV saved: {len(stereo_bytes)} bytes")
 
@@ -1119,10 +1078,7 @@ Rules:
         # Minimal delay for Plivo WebSocket buffer to stabilize
         await asyncio.sleep(0.05)
         count = len(self.preloaded_audio)
-        # Record greeting audio at playback time (user_sample_pos=0, before any USER audio)
-        for audio_b64 in self.preloaded_audio:
-            audio_bytes = base64.b64decode(audio_b64)
-            self._record_audio("AI", audio_bytes, 24000)
+        # Greeting recording happens in _plivo_sender_worker at send-time (16kHz)
         for audio in self.preloaded_audio:
             chunk = AudioChunk(audio_b64=audio, turn_id=0, sample_rate=24000)
             try:
@@ -1422,6 +1378,8 @@ Rules:
                         # Plivo: resample 24kHz → 16kHz PCM
                         if chunk.sample_rate == 24000:
                             audio_bytes = self._resample_24k_to_16k(audio_bytes)
+                        # Record AI audio at send-time, already 16kHz
+                        self._record_audio("AI", audio_bytes, 16000)
                         payload_b64 = base64.b64encode(audio_bytes).decode()
                         await self.plivo_ws.send_text(json.dumps({
                             "event": "playAudio",
@@ -3053,8 +3011,7 @@ Rules:
                                     self._first_audio_time = time.time()
                                     ttfb_ms = (self._first_audio_time - self._greeting_trigger_time) * 1000
                                     self.log.detail(f"Greeting TTFB: {ttfb_ms:.0f}ms")
-                            # Record AI audio (24kHz)
-                            self._record_audio("AI", audio_bytes, 24000)
+                            # AI audio is recorded in _plivo_sender_worker at send-time (16kHz)
 
                             # Latency check - only log if slow (> threshold)
                             if self._last_user_speech_time:
