@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, queryOne } from "@/lib/db";
-import { triggerCall } from "@/lib/call-trigger";
+import { triggerCall, checkConcurrencySlot, ConcurrencyLimitError } from "@/lib/call-trigger";
+import { enqueueCall } from "@/lib/call-queue";
 
 /**
  * Public webhook endpoint for triggering calls via API key.
@@ -66,7 +67,6 @@ export async function POST(request: NextRequest) {
       leadId = cd.leadId;
 
       // Extract cv* prefixed fields as context variable overrides
-      // e.g. cvAgent_name → agent_name, cvLocation → location
       customVariableOverrides = {};
       for (const [key, value] of Object.entries(cd)) {
         if (key.startsWith("cv") && key.length > 2 && value) {
@@ -155,8 +155,8 @@ export async function POST(request: NextRequest) {
     const protocol = forwardedProto || (host.includes("localhost") ? "http" : "https");
     const webhookBaseUrl = `${protocol}://${host}`;
 
-    // --- Trigger call via shared logic ---
-    const result = await triggerCall({
+    // --- Build call params ---
+    const callParams = {
       orgId,
       phoneNumber,
       contactName: contactName || "Customer",
@@ -165,33 +165,66 @@ export async function POST(request: NextRequest) {
       webhookBaseUrl,
       contactEmail,
       customVariableOverrides,
-    });
+    };
 
-    // --- Create ui_calls entry so the call-ended webhook can find & update it ---
-    if (result.callUuid) {
-      try {
-        const uiCallId = crypto.randomUUID();
-        await query(
-          `INSERT INTO ui_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10)`,
-          [
-            uiCallId, orgId, result.callUuid, leadId || null,
-            JSON.stringify({ phoneNumber, contactName, botConfigId, source: "api" }),
-            JSON.stringify(result.rawResponse),
-            "in-progress", "api", botConfigId, result.configDoc?.name || null,
-          ]
-        );
-        console.log(`[Webhook trigger-call] Created ui_calls entry ${uiCallId} for call ${result.callUuid}`);
-      } catch (uiCallErr) {
-        console.error("[Webhook trigger-call] Failed to create ui_calls entry (non-fatal):", uiCallErr);
+    // --- Check concurrency and reserve a slot ---
+    let uiCallId: string;
+    try {
+      const slot = await checkConcurrencySlot({
+        orgId,
+        phoneNumber,
+        contactName: contactName || "Customer",
+        botConfigId,
+        leadId,
+        initiatedBy: "api",
+        requestPayload: { phoneNumber, contactName, botConfigId, source: "webhook" },
+      });
+      uiCallId = slot.uiCallId;
+    } catch (err) {
+      if (err instanceof ConcurrencyLimitError) {
+        // At capacity — queue the call for later processing
+        const queueId = await enqueueCall({
+          orgId,
+          payload: callParams,
+          source: "webhook",
+          leadId,
+          botConfigId,
+        });
+        console.log(`[Webhook trigger-call] At capacity (${err.activeCount}/${err.limit}), queued as ${queueId}`);
+        return NextResponse.json({
+          success: true,
+          queued: true,
+          queueId,
+          message: `Call queued — system at capacity (${err.activeCount}/${err.limit} active). Will process when a slot opens.`,
+        });
       }
+      throw err;
     }
 
-    return NextResponse.json({
-      success: true,
-      callUuid: result.callUuid,
-      message: result.message,
-    });
+    // --- Trigger call via shared logic ---
+    try {
+      const result = await triggerCall(callParams);
+
+      // Update the reserved ui_calls row with call_uuid and status
+      await query(
+        "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
+        [result.callUuid, JSON.stringify(result.rawResponse), uiCallId]
+      );
+      console.log(`[Webhook trigger-call] Call triggered: ${result.callUuid} (ui_call: ${uiCallId})`);
+
+      return NextResponse.json({
+        success: true,
+        callUuid: result.callUuid,
+        message: result.message,
+      });
+    } catch (callErr) {
+      // Mark the reserved slot as failed
+      await query(
+        "UPDATE ui_calls SET status = 'failed' WHERE id = $1",
+        [uiCallId]
+      ).catch(() => {});
+      throw callErr;
+    }
   } catch (error) {
     console.error("[Webhook trigger-call] Error:", error);
     return NextResponse.json(

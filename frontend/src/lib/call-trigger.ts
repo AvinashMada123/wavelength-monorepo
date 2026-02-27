@@ -1,4 +1,108 @@
-import { query, queryOne } from "@/lib/db";
+import { query, queryOne, pool } from "@/lib/db";
+
+/* ------------------------------------------------------------------ */
+/*  Concurrency gate                                                  */
+/* ------------------------------------------------------------------ */
+
+export class ConcurrencyLimitError extends Error {
+  public readonly activeCount: number;
+  public readonly limit: number;
+  constructor(activeCount: number, limit: number) {
+    super(`Concurrency limit reached: ${activeCount}/${limit} active calls`);
+    this.name = "ConcurrencyLimitError";
+    this.activeCount = activeCount;
+    this.limit = limit;
+  }
+}
+
+/** Count currently active calls for an org. */
+export async function getActiveCallCount(orgId: string): Promise<number> {
+  const result = await queryOne<{ count: string }>(
+    "SELECT COUNT(*) as count FROM ui_calls WHERE org_id = $1 AND status IN ('in-progress', 'initiating')",
+    [orgId]
+  );
+  return parseInt(result?.count || "0", 10);
+}
+
+/** Read the org's maxConcurrentCalls setting (default 40). */
+export async function getMaxConcurrentCalls(orgId: string): Promise<number> {
+  const row = await queryOne<{ settings: Record<string, unknown> }>(
+    "SELECT settings FROM organizations WHERE id = $1",
+    [orgId]
+  );
+  const settings = row?.settings || {};
+  return (settings as Record<string, number>).maxConcurrentCalls || 40;
+}
+
+/**
+ * Atomically check concurrency and reserve a slot by inserting a ui_calls row
+ * with status 'initiating'. Uses pg_advisory_xact_lock to prevent race conditions.
+ * Returns the reserved uiCallId if successful, throws ConcurrencyLimitError if at capacity.
+ */
+export async function checkConcurrencySlot(params: {
+  orgId: string;
+  phoneNumber: string;
+  contactName: string;
+  botConfigId: string;
+  leadId?: string;
+  initiatedBy: string;
+  botConfigName?: string;
+  requestPayload: Record<string, unknown>;
+}): Promise<{ uiCallId: string; activeCount: number }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Acquire advisory lock scoped to this org (auto-released at COMMIT/ROLLBACK)
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [params.orgId]);
+
+    // Count active calls
+    const countResult = await client.query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM ui_calls WHERE org_id = $1 AND status IN ('in-progress', 'initiating')",
+      [params.orgId]
+    );
+    const activeCount = parseInt(countResult.rows[0]?.count || "0", 10);
+
+    // Get limit from org settings
+    const orgResult = await client.query<{ settings: Record<string, unknown> }>(
+      "SELECT settings FROM organizations WHERE id = $1",
+      [params.orgId]
+    );
+    const settings = orgResult.rows[0]?.settings || {};
+    const limit = (settings as Record<string, number>).maxConcurrentCalls || 40;
+
+    if (activeCount >= limit) {
+      await client.query("ROLLBACK");
+      throw new ConcurrencyLimitError(activeCount, limit);
+    }
+
+    // Reserve the slot
+    const uiCallId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO ui_calls (id, org_id, lead_id, request, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
+       VALUES ($1, $2, $3, $4, 'initiating', NOW(), $5, $6, $7)`,
+      [
+        uiCallId,
+        params.orgId,
+        params.leadId || null,
+        JSON.stringify(params.requestPayload),
+        params.initiatedBy,
+        params.botConfigId,
+        params.botConfigName || null,
+      ]
+    );
+
+    await client.query("COMMIT");
+    return { uiCallId, activeCount: activeCount + 1 };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/* ------------------------------------------------------------------ */
 
 const CALL_SERVER_URL =
   process.env.CALL_SERVER_URL ||
@@ -270,6 +374,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
 /**
  * Advance the campaign queue: trigger calls to fill available concurrency slots.
  * Called from campaign start/resume and from call-ended webhook.
+ * Respects both per-campaign and global org-level concurrency limits.
  */
 export async function triggerNextCampaignCalls(campaignId: string): Promise<number> {
   // Load campaign
@@ -280,16 +385,29 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
   );
   if (!campaign) return 0;
 
-  // Count currently active calls
+  const orgId = campaign.org_id as string;
+
+  // Count currently active calls (campaign-level)
   const activeResult = await queryOne<{ count: string }>(
     "SELECT COUNT(*) as count FROM campaign_leads WHERE campaign_id = $1 AND status = 'calling'",
     [campaignId]
   );
   const activeCalls = parseInt(activeResult?.count || "0", 10);
+  const perCampaignSlots = (campaign.concurrency_limit as number) - activeCalls;
 
-  // How many slots are available?
-  const slotsAvailable = (campaign.concurrency_limit as number) - activeCalls;
-  if (slotsAvailable <= 0) return 0;
+  // Also check global org-level concurrency
+  const globalActive = await getActiveCallCount(orgId);
+  const globalLimit = await getMaxConcurrentCalls(orgId);
+  const globalSlots = globalLimit - globalActive;
+
+  // Take the min of campaign slots and global slots
+  const slotsAvailable = Math.min(perCampaignSlots, globalSlots);
+  if (slotsAvailable <= 0) {
+    if (globalSlots <= 0) {
+      console.log(`[call-trigger] Campaign ${campaignId}: global concurrency limit reached (${globalActive}/${globalLimit}), deferring.`);
+    }
+    return 0;
+  }
 
   // Fetch next N queued leads
   const nextLeads = await query(
@@ -335,68 +453,83 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
 
   const webhookBaseUrl = campaign.webhook_base_url as string;
   const botConfigId = campaign.bot_config_id as string;
-  const orgId = campaign.org_id as string;
 
   let triggered = 0;
 
-  // Fire calls concurrently
-  const results = await Promise.allSettled(
-    allLeads.map(async (cl) => {
-      // Mark as calling BEFORE triggering (prevents double-trigger race)
-      // Handles both queued and retry_pending leads
-      const updated = await query(
-        "UPDATE campaign_leads SET status = 'calling', called_at = NOW() WHERE id = $1 AND status IN ('queued', 'retry_pending') RETURNING id",
-        [cl.id]
+  // Process leads sequentially to avoid racing past the global concurrency limit.
+  // (Promise.allSettled would fire N calls simultaneously, but only K < N global slots may be free.)
+  for (const cl of allLeads) {
+    // Mark as calling BEFORE triggering (prevents double-trigger race)
+    const updated = await query(
+      "UPDATE campaign_leads SET status = 'calling', called_at = NOW() WHERE id = $1 AND status IN ('queued', 'retry_pending') RETURNING id",
+      [cl.id]
+    );
+    if (updated.length === 0) continue; // already picked up
+
+    try {
+      // Reserve a global concurrency slot
+      const slot = await checkConcurrencySlot({
+        orgId,
+        phoneNumber: cl.phone_number as string,
+        contactName: (cl.contact_name as string) || "Customer",
+        botConfigId,
+        leadId: cl.lead_id as string,
+        initiatedBy: "campaign",
+        botConfigName: campaign.bot_config_name || null,
+        requestPayload: { phoneNumber: cl.phone_number, contactName: cl.contact_name, botConfigId, campaignId },
+      });
+
+      const result = await triggerCall({
+        orgId,
+        phoneNumber: cl.phone_number as string,
+        contactName: (cl.contact_name as string) || "Customer",
+        botConfigId,
+        leadId: cl.lead_id as string,
+        webhookBaseUrl,
+        contactEmail: (cl.email as string) || undefined,
+      });
+
+      // Update the reserved ui_calls row with call_uuid
+      await query(
+        "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
+        [result.callUuid, JSON.stringify(result.rawResponse), slot.uiCallId]
       );
-      if (updated.length === 0) return; // already picked up by another concurrent trigger
 
-      try {
-        const result = await triggerCall({
-          orgId,
-          phoneNumber: cl.phone_number as string,
-          contactName: (cl.contact_name as string) || "Customer",
-          botConfigId,
-          leadId: cl.lead_id as string,
-          webhookBaseUrl,
-          contactEmail: (cl.email as string) || undefined,
-        });
+      // Store call_uuid in campaign_lead
+      await query(
+        "UPDATE campaign_leads SET call_uuid = $1 WHERE id = $2",
+        [result.callUuid, cl.id]
+      );
 
-        // Store call_uuid in campaign_lead
+      triggered++;
+      console.log(`[call-trigger] Campaign ${campaignId}: triggered call for lead ${cl.lead_id}, uuid ${result.callUuid}`);
+    } catch (err) {
+      if (err instanceof ConcurrencyLimitError) {
+        // Revert to queued — global limit hit, stop triggering more
         await query(
-          "UPDATE campaign_leads SET call_uuid = $1 WHERE id = $2",
-          [result.callUuid, cl.id]
+          "UPDATE campaign_leads SET status = 'queued', called_at = NULL WHERE id = $1",
+          [cl.id]
         );
-
-        // Create ui_calls record so it appears in Call Logs
-        const callId = crypto.randomUUID();
-        await query(
-          `INSERT INTO ui_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
-           VALUES ($1, $2, $3, $4, $5, $6, 'in-progress', NOW(), 'campaign', $7, $8)`,
-          [
-            callId, orgId, result.callUuid, cl.lead_id,
-            JSON.stringify({ phoneNumber: cl.phone_number, contactName: cl.contact_name, botConfigId, campaignId }),
-            JSON.stringify(result.rawResponse),
-            botConfigId,
-            campaign.bot_config_name || null,
-          ]
-        );
-
-        triggered++;
-        console.log(`[call-trigger] Campaign ${campaignId}: triggered call for lead ${cl.lead_id}, uuid ${result.callUuid}`);
-      } catch (err) {
-        // Mark as failed
-        await query(
-          "UPDATE campaign_leads SET status = 'failed', completed_at = NOW(), error_message = $1 WHERE id = $2",
-          [err instanceof Error ? err.message : String(err), cl.id]
-        );
-        await query(
-          "UPDATE campaigns SET failed_calls = failed_calls + 1 WHERE id = $1",
-          [campaignId]
-        );
-        console.error(`[call-trigger] Campaign ${campaignId}: failed to trigger lead ${cl.lead_id}:`, err);
+        console.log(`[call-trigger] Campaign ${campaignId}: global concurrency limit reached, stopping.`);
+        break;
       }
-    })
-  );
+      // Mark as failed
+      await query(
+        "UPDATE campaign_leads SET status = 'failed', completed_at = NOW(), error_message = $1 WHERE id = $2",
+        [err instanceof Error ? err.message : String(err), cl.id]
+      );
+      await query(
+        "UPDATE campaigns SET failed_calls = failed_calls + 1 WHERE id = $1",
+        [campaignId]
+      );
+      // Clean up the reserved ui_calls row on failure
+      await query(
+        "UPDATE ui_calls SET status = 'failed' WHERE org_id = $1 AND lead_id = $2 AND status = 'initiating'",
+        [orgId, cl.lead_id]
+      ).catch(() => {});
+      console.error(`[call-trigger] Campaign ${campaignId}: failed to trigger lead ${cl.lead_id}:`, err);
+    }
+  }
 
   return triggered;
 }

@@ -165,6 +165,25 @@ export async function POST(request: NextRequest) {
     await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
     await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
 
+    // 16. call_queue (webhook calls queued when at concurrency limit)
+    await query(`CREATE TABLE IF NOT EXISTS call_queue (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      source TEXT NOT NULL DEFAULT 'api',
+      status TEXT NOT NULL DEFAULT 'queued',
+      lead_id TEXT,
+      bot_config_id TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      processed_at TIMESTAMPTZ,
+      error_message TEXT,
+      call_uuid TEXT
+    )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_call_queue_org_status ON call_queue(org_id, status, created_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_ui_calls_org_active ON ui_calls(org_id) WHERE status IN ('in-progress', 'initiating')`);
+
     return NextResponse.json({ success: true, message: "Database initialized" });
   } catch (error) {
     console.error("[Init API] POST error:", error);

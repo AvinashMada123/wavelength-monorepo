@@ -3,6 +3,7 @@ import { addCallUpdate } from "@/lib/call-updates-store";
 import { qualifyLead } from "@/lib/gemini";
 import { query, queryOne } from "@/lib/db";
 import { triggerNextCampaignCalls } from "@/lib/call-trigger";
+import { drainQueue } from "@/lib/call-queue";
 
 export async function POST(request: NextRequest) {
   try {
@@ -238,6 +239,19 @@ export async function POST(request: NextRequest) {
         }
       } catch (campaignErr) {
         console.error("[API /api/call-ended] Campaign queue error (non-fatal):", campaignErr);
+      }
+    }
+
+    // ---- Webhook/API call queue drain ----
+    // Process any queued calls now that a slot has freed up
+    if (orgId) {
+      try {
+        const drained = await drainQueue(orgId);
+        if (drained > 0) {
+          console.log(`[API /api/call-ended] Drained ${drained} queued call(s) for org ${orgId}`);
+        }
+      } catch (drainErr) {
+        console.error("[API /api/call-ended] Queue drain error (non-fatal):", drainErr);
       }
     }
 

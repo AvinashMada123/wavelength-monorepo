@@ -65,6 +65,9 @@ export function SettingsForm() {
   const [animationsEnabled, setAnimationsEnabled] = useState(
     settings.appearance.animationsEnabled
   );
+  const [maxConcurrentCalls, setMaxConcurrentCalls] = useState(
+    settings.maxConcurrentCalls ?? 40
+  );
   const [geminiConfigured, setGeminiConfigured] = useState<boolean | null>(
     null
   );
@@ -103,6 +106,7 @@ export function SettingsForm() {
     setTwilioPhoneNumber(settings.twilioPhoneNumber || "");
     setAutoQualify(settings.ai?.autoQualify ?? true);
     setAnimationsEnabled(settings.appearance.animationsEnabled);
+    setMaxConcurrentCalls(settings.maxConcurrentCalls ?? 40);
   }, [settings]);
 
   const handleSave = () => {
@@ -133,6 +137,7 @@ export function SettingsForm() {
         ...settings.appearance,
         animationsEnabled,
       },
+      maxConcurrentCalls,
     });
     toast.success("Settings saved");
   };
@@ -460,7 +465,44 @@ export function SettingsForm() {
         </Card>
       </motion.div>
 
-      {/* Section 5: Appearance */}
+      {/* Section 5: Call Concurrency */}
+      <motion.div variants={itemVariants}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Call Concurrency</CardTitle>
+            <CardDescription>
+              Maximum number of simultaneous active calls. Webhook calls
+              exceeding this limit are automatically queued and processed when
+              slots open up.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="maxConcurrentCalls">Max Concurrent Calls</Label>
+              <Input
+                id="maxConcurrentCalls"
+                type="number"
+                min={1}
+                max={50}
+                value={maxConcurrentCalls}
+                onChange={(e) =>
+                  setMaxConcurrentCalls(
+                    Math.max(1, Math.min(50, parseInt(e.target.value) || 40))
+                  )
+                }
+                placeholder="40"
+                className="w-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                The call server supports up to 50 concurrent sessions. We
+                recommend 40 to leave headroom. Default: 40.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Section 6: Appearance */}
       <motion.div variants={itemVariants}>
         <Card>
           <CardHeader>

@@ -278,3 +278,24 @@ ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
 
 -- Migrations: Twilio provider support (per bot config)
 ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS call_provider TEXT DEFAULT 'plivo';
+
+-- 16. call_queue (webhook calls queued when at concurrency limit)
+CREATE TABLE IF NOT EXISTS call_queue (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    source TEXT NOT NULL DEFAULT 'api',
+    status TEXT NOT NULL DEFAULT 'queued',
+    lead_id TEXT,
+    bot_config_id TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,
+    error_message TEXT,
+    call_uuid TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_call_queue_org_status ON call_queue(org_id, status, created_at);
+
+-- Fast counting of active calls for concurrency gate
+CREATE INDEX IF NOT EXISTS idx_ui_calls_org_active ON ui_calls(org_id) WHERE status IN ('in-progress', 'initiating');

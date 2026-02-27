@@ -35,4 +35,5 @@ export interface AppSettings {
   ghlSyncEnabled?: boolean;
   ghlLastSyncAt?: string;
   ghlCustomFields?: GHLCustomFieldDef[];
+  maxConcurrentCalls?: number; // default 40, max 50
 }
