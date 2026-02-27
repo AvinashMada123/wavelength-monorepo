@@ -233,6 +233,11 @@ class PlivoGeminiSession:
         self.ghl_location_id = self.context.pop("ghl_location_id", "")  # GHL location ID
         self.plivo_auth_id = self.context.pop("plivo_auth_id", "")  # Per-org Plivo Auth ID
         self.plivo_auth_token = self.context.pop("plivo_auth_token", "")  # Per-org Plivo Auth Token
+        # Twilio provider support
+        self.provider = self.context.pop("_call_provider", "plivo")  # "plivo" or "twilio"
+        self.twilio_stream_sid = None  # Set when Twilio stream connects
+        self.twilio_account_sid = self.context.pop("twilio_account_sid", "")
+        self.twilio_auth_token = self.context.pop("twilio_auth_token", "")
         self._social_proof_enabled = self.context.pop("_social_proof_enabled", False)  # Feature flag
         self._social_proof_min_turn = self.context.pop("_social_proof_min_turn", 0)  # Min turns before social proof fires
         self._ghl_workflows = self.context.pop("_ghl_workflows", [])  # Configurable GHL workflow triggers
@@ -254,8 +259,11 @@ class PlivoGeminiSession:
         self._preload_complete = asyncio.Event()
         self._silence_keepalive_task = None  # Sends silence to Gemini between greeting and call answer
 
-        # Audio recording - using queue and background thread (non-blocking)
-        self.audio_chunks = []  # List of (role, audio_bytes) tuples
+        # Audio recording — sample-counter based (no timestamps)
+        self._rec_user_chunks: list[bytes] = []         # USER audio in order (16kHz)
+        self._rec_ai_events: list[tuple[int, bytes]] = []  # (user_sample_pos, ai_audio_24k)
+        self._rec_user_sample_count: int = 0            # Running count of USER samples received
+        self._rec_started: bool = False                  # Gate: only record after call answered
         self.recording_enabled = config.enable_transcripts
         self._recording_queue = queue.Queue() if self.recording_enabled else None
         self._recording_thread = None
@@ -717,14 +725,18 @@ class PlivoGeminiSession:
                 pass
 
     def _start_recording_thread(self):
-        """Start background thread for recording audio"""
+        """Start background thread for recording audio (sample-counter based)"""
         def recording_worker():
             while True:
                 try:
                     item = self._recording_queue.get(timeout=1.0)
                     if item is None:  # Shutdown signal
                         break
-                    self.audio_chunks.append(item)
+                    role, audio_bytes, sample_rate, user_sample_pos = item
+                    if role == "USER":
+                        self._rec_user_chunks.append(audio_bytes)
+                    else:
+                        self._rec_ai_events.append((user_sample_pos, audio_bytes))
                 except queue.Empty:
                     continue
                 except Exception as e:
@@ -791,13 +803,16 @@ class PlivoGeminiSession:
             pass
 
     def _record_audio(self, role: str, audio_bytes: bytes, sample_rate: int = 16000):
-        """Record audio chunk for post-call transcription (non-blocking)"""
-        if not self.recording_enabled or not self._recording_queue:
+        """Record audio chunk for post-call recording (non-blocking, sample-counter based).
+        USER audio increments the sample counter; AI audio is tagged with current counter value."""
+        if not self.recording_enabled or not self._recording_queue or not self._rec_started:
             return
-        # Put in queue with timestamp - non-blocking, doesn't affect call latency
         try:
-            timestamp = time.time()  # ~0.001ms, negligible
-            self._recording_queue.put_nowait((role, audio_bytes, sample_rate, timestamp))
+            user_pos = self._rec_user_sample_count
+            self._recording_queue.put_nowait((role, audio_bytes, sample_rate, user_pos))
+            # Increment sample counter for USER audio (16-bit = 2 bytes per sample)
+            if role == "USER":
+                self._rec_user_sample_count += len(audio_bytes) // 2
         except queue.Full:
             pass  # Drop frame if queue is full (shouldn't happen)
 
@@ -834,106 +849,99 @@ class PlivoGeminiSession:
             samples_16k = np.interp(x_new, np.arange(n_in, dtype=np.float32), samples_24k)
         return np.clip(samples_16k, -32768, 32767).astype(np.int16).tobytes()
 
+    @staticmethod
+    def _strip_trailing_silence(samples: np.ndarray, sample_rate: int, pad_seconds: float = 0.5) -> np.ndarray:
+        """Remove trailing silence, keeping pad_seconds of buffer."""
+        nonzero = np.nonzero(samples)[0]
+        if len(nonzero) == 0:
+            return samples[:0]
+        last_nonzero = nonzero[-1]
+        end = min(last_nonzero + int(sample_rate * pad_seconds), len(samples))
+        return samples[:end]
+
     def _save_recording(self):
         """Save stereo MP3: AI on left channel, USER on right channel.
-        AI kept at native 24kHz (no resampling). USER upsampled 16k→24k once.
-        Same-speaker chunks always concatenated seamlessly (no gap insertion).
-        Silence only inserted at real turn transitions (speaker changes with gap)."""
-        logger.info(f"Saving recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
-        if not self.recording_enabled or not self.audio_chunks:
-            logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
+        Sample-counter based — no timestamps, no gap insertion.
+        USER audio is the master clock; AI placed at the USER sample position
+        where each AI chunk was generated."""
+        total_chunks = len(self._rec_user_chunks) + len(self._rec_ai_events)
+        logger.info(f"Saving recording: enabled={self.recording_enabled}, "
+                    f"user_chunks={len(self._rec_user_chunks)}, ai_events={len(self._rec_ai_events)}")
+        if not self.recording_enabled or total_chunks == 0:
+            logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={total_chunks}")
             return None
         try:
-            OUTPUT_RATE = 24000  # Native Gemini rate — no AI resampling needed
-            BYTES_PER_SAMPLE = 2  # 16-bit PCM
-            MAX_GAP = 0.8  # Max silence at turn transitions
-            TURN_GAP_THRESHOLD = 0.5  # Only add silence when speaker changes with > 500ms gap
+            OUTPUT_RATE = 24000  # Final output rate (native Gemini rate)
+            USER_RATE = 16000
+            BPS = 2  # bytes per sample (16-bit PCM)
 
-            # Sort ALL chunks by timestamp (keep native sample rates)
-            sorted_chunks = []
-            for role, audio_bytes, sample_rate, timestamp in self.audio_chunks:
-                sorted_chunks.append((role, audio_bytes, sample_rate, timestamp))
-            sorted_chunks.sort(key=lambda x: x[3])
+            # --- Step 1: Build continuous USER track (16kHz) ---
+            user_pcm_16k = b''.join(self._rec_user_chunks)
+            total_user_samples = len(user_pcm_16k) // BPS
+            duration_s = total_user_samples / USER_RATE
+            logger.info(f"USER track: {total_user_samples} samples = {duration_s:.1f}s @ {USER_RATE}Hz")
 
-            # --- Build unified compressed timeline ---
-            # Rules:
-            #   Same speaker consecutive chunks → always concatenate (no silence)
-            #   Different speaker with gap > TURN_GAP_THRESHOLD → insert min(gap, MAX_GAP)
-            #   Different speaker with gap <= threshold → concatenate (natural overlap)
-            prev_end = sorted_chunks[0][3]
-            prev_role = sorted_chunks[0][0]
-            compressed_pos = 0.0
+            # --- Step 2: Build AI track (24kHz) placed by user sample position ---
+            # Duration based on whichever track is longer
+            # AI might extend beyond user track if AI was still speaking when call ended
+            ai_max_end_sample = 0
+            for user_pos, ai_audio in self._rec_ai_events:
+                ai_offset_samples = int(user_pos * OUTPUT_RATE / USER_RATE)
+                ai_chunk_samples = len(ai_audio) // BPS
+                ai_max_end_sample = max(ai_max_end_sample, ai_offset_samples + ai_chunk_samples)
 
-            chunk_placements = []  # (role, audio_bytes, native_rate, compressed_time_seconds)
-            for role, audio_bytes, sample_rate, timestamp in sorted_chunks:
-                gap = timestamp - prev_end
+            ai_track_samples = max(int(duration_s * OUTPUT_RATE), ai_max_end_sample)
+            ai_track = bytearray(ai_track_samples * BPS)
 
-                # Only insert silence at turn transitions with a real gap
-                if role != prev_role and gap > TURN_GAP_THRESHOLD:
-                    compressed_pos += min(gap, MAX_GAP)
+            for user_pos, ai_audio in self._rec_ai_events:
+                ai_offset = int(user_pos * OUTPUT_RATE / USER_RATE) * BPS
+                end = ai_offset + len(ai_audio)
+                if end <= len(ai_track):
+                    ai_track[ai_offset:end] = ai_audio
+                elif ai_offset < len(ai_track):
+                    ai_track[ai_offset:] = ai_audio[:len(ai_track) - ai_offset]
 
-                chunk_placements.append((role, audio_bytes, sample_rate, compressed_pos))
+            logger.info(f"AI track: {ai_track_samples} samples = {ai_track_samples / OUTPUT_RATE:.1f}s @ {OUTPUT_RATE}Hz, "
+                        f"{len(self._rec_ai_events)} events")
 
-                chunk_duration = len(audio_bytes) / (sample_rate * BYTES_PER_SAMPLE)
-                compressed_pos += chunk_duration
-                new_end = timestamp + chunk_duration
-                prev_end = max(prev_end, new_end)
-                prev_role = role
-
-            # --- Place chunks in separate tracks at native rates ---
-            ai_total_bytes = int(compressed_pos * 24000) * BYTES_PER_SAMPLE
-            user_total_bytes = int(compressed_pos * 16000) * BYTES_PER_SAMPLE
-            ai_track = bytearray(ai_total_bytes)
-            user_track_16k = bytearray(user_total_bytes)
-
-            ai_count = 0
-            user_count = 0
-            for role, audio_bytes, sample_rate, comp_time in chunk_placements:
-                if role == "AI":
-                    offset = int(comp_time * 24000) * BYTES_PER_SAMPLE
-                    end = offset + len(audio_bytes)
-                    if end <= len(ai_track):
-                        ai_track[offset:end] = audio_bytes
-                    elif offset < len(ai_track):
-                        ai_track[offset:] = audio_bytes[:len(ai_track) - offset]
-                    ai_count += 1
-                else:
-                    offset = int(comp_time * 16000) * BYTES_PER_SAMPLE
-                    end = offset + len(audio_bytes)
-                    if end <= len(user_track_16k):
-                        user_track_16k[offset:end] = audio_bytes
-                    elif offset < len(user_track_16k):
-                        user_track_16k[offset:] = audio_bytes[:len(user_track_16k) - offset]
-                    user_count += 1
-
-            # --- Upsample complete USER track 16k→24k (one operation, no chunk artifacts) ---
-            user_samples_16k = np.frombuffer(bytes(user_track_16k), dtype=np.int16).astype(np.float32)
+            # --- Step 3: Upsample USER 16k→24k as one operation ---
+            user_samples_16k = np.frombuffer(user_pcm_16k, dtype=np.int16).astype(np.float32)
             try:
                 from scipy.signal import resample_poly
                 user_samples_24k = resample_poly(user_samples_16k, up=3, down=2)
             except ImportError:
                 n_out = int(len(user_samples_16k) * 3 / 2)
-                x_new = np.linspace(0, len(user_samples_16k) - 1, n_out, dtype=np.float32)
-                user_samples_24k = np.interp(x_new, np.arange(len(user_samples_16k), dtype=np.float32), user_samples_16k)
-            user_track_24k = np.clip(user_samples_24k, -32768, 32767).astype(np.int16).tobytes()
+                if n_out == 0:
+                    user_samples_24k = np.array([], dtype=np.float32)
+                else:
+                    x_new = np.linspace(0, len(user_samples_16k) - 1, n_out, dtype=np.float32)
+                    user_samples_24k = np.interp(x_new, np.arange(len(user_samples_16k), dtype=np.float32), user_samples_16k)
+            user_track_24k = np.clip(user_samples_24k, -32768, 32767).astype(np.int16)
 
-            # Pad to same length
-            ai_bytes = bytes(ai_track)
-            max_len = max(len(ai_bytes), len(user_track_24k))
-            ai_bytes = ai_bytes.ljust(max_len, b'\x00')
-            user_track_24k = user_track_24k.ljust(max_len, b'\x00')
+            # --- Step 4: Strip trailing silence from both tracks ---
+            ai_samples = np.frombuffer(bytes(ai_track), dtype=np.int16)
+            ai_samples = self._strip_trailing_silence(ai_samples, OUTPUT_RATE)
+            user_track_24k = self._strip_trailing_silence(user_track_24k, OUTPUT_RATE)
 
-            # Interleave into stereo
-            ai_samples = np.frombuffer(ai_bytes, dtype=np.int16)
-            user_samples = np.frombuffer(user_track_24k, dtype=np.int16)
-            stereo = np.empty(len(ai_samples) + len(user_samples), dtype=np.int16)
-            stereo[0::2] = ai_samples   # Left = AI
-            stereo[1::2] = user_samples  # Right = USER
+            # --- Step 5: Pad to equal length and interleave stereo ---
+            max_samples = max(len(ai_samples), len(user_track_24k))
+            if max_samples == 0:
+                logger.warning("Recording is empty after stripping silence")
+                return None
+
+            ai_padded = np.zeros(max_samples, dtype=np.int16)
+            ai_padded[:len(ai_samples)] = ai_samples
+            user_padded = np.zeros(max_samples, dtype=np.int16)
+            user_padded[:len(user_track_24k)] = user_track_24k
+
+            stereo = np.empty(max_samples * 2, dtype=np.int16)
+            stereo[0::2] = ai_padded    # Left = AI
+            stereo[1::2] = user_padded   # Right = USER
             stereo_bytes = stereo.tobytes()
 
-            duration_s = max_len / (OUTPUT_RATE * BYTES_PER_SAMPLE)
-            logger.info(f"Recording built: {duration_s:.1f}s stereo @24kHz, {len(sorted_chunks)} chunks "
-                        f"(AI: {ai_count}, USER: {user_count})")
+            final_duration_s = max_samples / OUTPUT_RATE
+            logger.info(f"Recording built: {final_duration_s:.1f}s stereo @{OUTPUT_RATE}Hz "
+                        f"(user_chunks={len(self._rec_user_chunks)}, ai_events={len(self._rec_ai_events)})")
 
             # Export as MP3 using pydub
             mixed_mp3 = RECORDINGS_DIR / f"{self.call_uuid}_mixed.mp3"
@@ -959,7 +967,7 @@ class PlivoGeminiSession:
 
             return {
                 "mixed_wav": mixed_mp3,
-                "call_start": sorted_chunks[0][3]
+                "call_start": time.time()
             }
         except Exception as e:
             logger.error(f"Error saving recording: {e}")
@@ -1062,6 +1070,8 @@ Rules:
         self.plivo_ws = plivo_ws
         self.call_start_time = datetime.now()
         self._call_answered_time = time.time()
+        # Start recording now — gates _record_audio() so pre-answer audio is excluded
+        self._rec_started = True
         # Stop silence keepalive — real user audio will flow now
         if self._silence_keepalive_task:
             self._silence_keepalive_task.cancel()
@@ -1099,6 +1109,10 @@ Rules:
         # Minimal delay for Plivo WebSocket buffer to stabilize
         await asyncio.sleep(0.05)
         count = len(self.preloaded_audio)
+        # Record greeting audio at playback time (user_sample_pos=0, before any USER audio)
+        for audio_b64 in self.preloaded_audio:
+            audio_bytes = base64.b64decode(audio_b64)
+            self._record_audio("AI", audio_bytes, 24000)
         for audio in self.preloaded_audio:
             chunk = AudioChunk(audio_b64=audio, turn_id=0, sample_rate=24000)
             try:
@@ -1375,21 +1389,40 @@ Rules:
                     continue
 
                 try:
-                    # Plivo only supports 8kHz or 16kHz — resample 24kHz Gemini output
                     audio_bytes = base64.b64decode(chunk.audio_b64)
-                    if chunk.sample_rate == 24000:
-                        audio_bytes = self._resample_24k_to_16k(audio_bytes)
-                    payload_b64 = base64.b64encode(audio_bytes).decode()
-                    await self.plivo_ws.send_text(json.dumps({
-                        "event": "playAudio",
-                        "media": {
-                            "contentType": "audio/x-l16",
-                            "sampleRate": 16000,
-                            "payload": payload_b64
-                        }
-                    }))
+
+                    if self.provider == "twilio":
+                        # Twilio: resample Gemini 24kHz → 8kHz mu-law
+                        from src.utils.audio_codec import gemini_to_twilio_outbound
+                        if chunk.sample_rate == 24000:
+                            mulaw_bytes = gemini_to_twilio_outbound(audio_bytes)
+                        else:
+                            # Already 16kHz PCM — convert to 8kHz mu-law
+                            from src.utils.audio_codec import resample_16k_to_8k, pcm16_to_mulaw
+                            mulaw_bytes = pcm16_to_mulaw(resample_16k_to_8k(audio_bytes))
+                        payload_b64 = base64.b64encode(mulaw_bytes).decode()
+                        await self.plivo_ws.send_text(json.dumps({
+                            "event": "media",
+                            "streamSid": self.twilio_stream_sid,
+                            "media": {
+                                "payload": payload_b64
+                            }
+                        }))
+                    else:
+                        # Plivo: resample 24kHz → 16kHz PCM
+                        if chunk.sample_rate == 24000:
+                            audio_bytes = self._resample_24k_to_16k(audio_bytes)
+                        payload_b64 = base64.b64encode(audio_bytes).decode()
+                        await self.plivo_ws.send_text(json.dumps({
+                            "event": "playAudio",
+                            "media": {
+                                "contentType": "audio/x-l16",
+                                "sampleRate": 16000,
+                                "payload": payload_b64
+                            }
+                        }))
                 except Exception as e:
-                    logger.error(f"[{self.call_uuid[:8]}] Plivo sender error: {e}")
+                    logger.error(f"[{self.call_uuid[:8]}] {self.provider} sender error: {e}")
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -2603,36 +2636,56 @@ Rules:
             logger.error(f"Fallback hangup error: {e}")
 
     async def _hangup_call_delayed(self, delay: float):
-        """Hang up the call after a short delay (audio is queued in Plivo buffer)"""
+        """Hang up the call after a short delay (audio is queued in provider buffer)"""
         try:
             await asyncio.sleep(delay)
 
             hangup_uuid = self.plivo_call_uuid or self.call_uuid
-            self.log.detail(f"Plivo hangup API: {hangup_uuid}")
+            self.log.detail(f"{self.provider} hangup API: {hangup_uuid}")
 
             import httpx
             import base64
 
-            # Use per-org Plivo credentials if available, otherwise fall back to defaults
-            auth_id = self.plivo_auth_id or config.plivo_auth_id
-            auth_token = self.plivo_auth_token or config.plivo_auth_token
-            auth_string = f"{auth_id}:{auth_token}"
-            auth_b64 = base64.b64encode(auth_string.encode()).decode()
-
-            url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/{hangup_uuid}/"
-
             t0 = time.time()
-            async with httpx.AsyncClient() as client:
-                response = await client.delete(
-                    url,
-                    headers={"Authorization": f"Basic {auth_b64}"}
-                )
-                api_ms = (time.time() - t0) * 1000
 
-                if response.status_code in [204, 200]:
-                    self.log.detail(f"Plivo hangup OK ({api_ms:.0f}ms)")
-                else:
-                    self.log.error(f"Plivo hangup failed: {response.status_code} ({api_ms:.0f}ms)")
+            if self.provider == "twilio":
+                # Twilio: POST to update call status to "completed"
+                account_sid = self.twilio_account_sid or config.twilio_account_sid
+                auth_token = self.twilio_auth_token or config.twilio_auth_token
+                url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{hangup_uuid}.json"
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        url,
+                        auth=(account_sid, auth_token),
+                        data={"Status": "completed"},
+                    )
+                    api_ms = (time.time() - t0) * 1000
+
+                    if response.status_code in [200, 204]:
+                        self.log.detail(f"Twilio hangup OK ({api_ms:.0f}ms)")
+                    else:
+                        self.log.error(f"Twilio hangup failed: {response.status_code} ({api_ms:.0f}ms)")
+            else:
+                # Plivo: DELETE call resource
+                auth_id = self.plivo_auth_id or config.plivo_auth_id
+                auth_token = self.plivo_auth_token or config.plivo_auth_token
+                auth_string = f"{auth_id}:{auth_token}"
+                auth_b64 = base64.b64encode(auth_string.encode()).decode()
+
+                url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/{hangup_uuid}/"
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.delete(
+                        url,
+                        headers={"Authorization": f"Basic {auth_b64}"}
+                    )
+                    api_ms = (time.time() - t0) * 1000
+
+                    if response.status_code in [204, 200]:
+                        self.log.detail(f"Plivo hangup OK ({api_ms:.0f}ms)")
+                    else:
+                        self.log.error(f"Plivo hangup failed: {response.status_code} ({api_ms:.0f}ms)")
 
         except Exception as e:
             logger.error(f"Error hanging up call {self.call_uuid}: {type(e).__name__}: {e}")
@@ -3156,6 +3209,22 @@ Rules:
             logger.info(f"Stream started: {self.stream_id}")
         elif event == "stop":
             await self.stop()
+
+    async def handle_twilio_media(self, message):
+        """Handle Twilio media event — convert mu-law 8kHz to PCM 16kHz and forward to Gemini."""
+        media = message.get("media", {})
+        payload = media.get("payload", "")
+        if not payload:
+            return
+        try:
+            from src.utils.audio_codec import twilio_inbound_to_gemini
+            mulaw_bytes = base64.b64decode(payload)
+            pcm_16k = twilio_inbound_to_gemini(mulaw_bytes)
+            # Re-encode as base64 and route through existing PCM handler
+            pcm_b64 = base64.b64encode(pcm_16k).decode()
+            await self.handle_plivo_audio(pcm_b64)
+        except Exception as e:
+            logger.error(f"[{self.call_uuid[:8]}] Twilio audio conversion error: {e}")
 
     async def stop(self):
         if not self.is_active:
