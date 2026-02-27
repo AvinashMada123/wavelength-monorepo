@@ -80,12 +80,13 @@ export async function POST(request: NextRequest) {
           ghlWorkflows: "ghl_workflows",
           voice: "voice",
           microMomentsConfig: "micro_moments_config",
+          retryConfig: "retry_config",
         };
 
         const jsonCols = new Set([
           "questions", "objections", "objection_keywords",
           "context_variables", "qualification_criteria", "ghl_workflows",
-          "micro_moments_config",
+          "micro_moments_config", "retry_config",
         ]);
 
         for (const [key, value] of Object.entries(updates || {})) {

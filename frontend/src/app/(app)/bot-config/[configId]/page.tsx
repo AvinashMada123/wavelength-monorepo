@@ -20,7 +20,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { generateId } from "@/lib/utils";
 import { downloadJson } from "@/lib/bot-config-io";
-import type { BotConfig, BotContextVariables, GhlWorkflow, MicroMomentsConfig } from "@/types/bot-config";
+import type { BotConfig, BotContextVariables, GhlWorkflow, MicroMomentsConfig, RetryConfig } from "@/types/bot-config";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -82,6 +82,7 @@ export default function BotConfigEditorPage() {
   const [ghlWorkflows, setGhlWorkflows] = useState<GhlWorkflow[]>([]);
   const [voice, setVoice] = useState("");
   const [microMomentsConfig, setMicroMomentsConfig] = useState<MicroMomentsConfig | null>(null);
+  const [retryConfig, setRetryConfig] = useState<RetryConfig | null>(null);
   const hasLoadedRef = useRef(false);
 
   const populateConfig = useCallback((found: BotConfig) => {
@@ -99,6 +100,7 @@ export default function BotConfigEditorPage() {
     setGhlWorkflows(found.ghlWorkflows || []);
     setVoice(found.voice || "");
     setMicroMomentsConfig(found.microMomentsConfig || null);
+    setRetryConfig(found.retryConfig || null);
     setLoading(false);
     hasLoadedRef.current = true;
   }, []);
@@ -183,6 +185,7 @@ export default function BotConfigEditorPage() {
         ghlWorkflows,
         voice,
         microMomentsConfig,
+        retryConfig,
       },
     });
     refreshProfile();
@@ -378,6 +381,8 @@ export default function BotConfigEditorPage() {
             onMaxCallDurationChange={setMaxCallDuration}
             microMomentsConfig={microMomentsConfig}
             onMicroMomentsConfigChange={setMicroMomentsConfig}
+            retryConfig={retryConfig}
+            onRetryConfigChange={setRetryConfig}
           />
         )}
       </motion.div>
@@ -658,6 +663,8 @@ function AdditionalOptionsTab({
   onMaxCallDurationChange,
   microMomentsConfig,
   onMicroMomentsConfigChange,
+  retryConfig,
+  onRetryConfigChange,
 }: {
   user: { getIdToken: () => Promise<string> };
   preResearchEnabled: boolean;
@@ -668,6 +675,8 @@ function AdditionalOptionsTab({
   onMaxCallDurationChange: (v: number) => void;
   microMomentsConfig: MicroMomentsConfig | null;
   onMicroMomentsConfigChange: (v: MicroMomentsConfig | null) => void;
+  retryConfig: RetryConfig | null;
+  onRetryConfigChange: (v: RetryConfig | null) => void;
 }) {
   const ALL_MOMENTS = ["buying_signal", "resistance", "price_shock", "interest_spike", "last_chance"] as const;
   const MOMENT_LABELS: Record<string, string> = {
@@ -849,6 +858,86 @@ function AdditionalOptionsTab({
                 );
               })}
             </div>
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Call Retry Settings */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Call Retry Settings</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Automatically retry calls that go unanswered or fail during campaigns. Configure the number of retries and delay between each.
+              </p>
+            </div>
+            <Switch
+              checked={retryConfig?.enabled ?? false}
+              onCheckedChange={(v) =>
+                onRetryConfigChange({ enabled: v, intervals: retryConfig?.intervals ?? [10] })
+              }
+            />
+          </div>
+        </CardHeader>
+        {retryConfig?.enabled && (
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              {(retryConfig.intervals ?? []).map((interval, idx) => (
+                <div key={idx} className="flex items-center gap-3 rounded-lg border p-3">
+                  <span className="text-xs text-muted-foreground w-16 shrink-0">Retry {idx + 1}</span>
+                  <div className="flex items-center gap-2 flex-1">
+                    <span className="text-xs text-muted-foreground">after</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      className="h-8 w-24 text-sm"
+                      value={interval}
+                      onChange={(e) => {
+                        const newIntervals = [...(retryConfig.intervals ?? [])];
+                        newIntervals[idx] = Math.max(1, parseInt(e.target.value) || 10);
+                        onRetryConfigChange({ ...retryConfig, intervals: newIntervals });
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">minutes</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => {
+                      const newIntervals = (retryConfig.intervals ?? []).filter((_, i) => i !== idx);
+                      onRetryConfigChange({
+                        ...retryConfig,
+                        intervals: newIntervals.length > 0 ? newIntervals : [10],
+                      });
+                    }}
+                    disabled={(retryConfig.intervals ?? []).length <= 1}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                onRetryConfigChange({
+                  ...retryConfig,
+                  intervals: [...(retryConfig.intervals ?? []), 10],
+                })
+              }
+              disabled={(retryConfig.intervals ?? []).length >= 10}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Add Retry
+            </Button>
+            <p className="text-[10px] text-muted-foreground">
+              {(retryConfig.intervals ?? []).length} {(retryConfig.intervals ?? []).length === 1 ? "retry" : "retries"}:{" "}
+              {(retryConfig.intervals ?? []).map((m, i) => `${m} min${i < (retryConfig.intervals ?? []).length - 1 ? " → " : ""}`).join("")}
+            </p>
           </CardContent>
         )}
       </Card>

@@ -39,6 +39,11 @@ export interface MicroMomentsConfig {
   hints?: Record<string, string>;
 }
 
+export interface RetryConfig {
+  enabled: boolean;
+  intervals: number[]; // delay in minutes before each retry, e.g. [10, 10, 30]
+}
+
 export interface BotConfig {
   id: string;
   name: string;
@@ -63,6 +68,7 @@ export interface BotConfig {
   ghlWorkflows?: GhlWorkflow[];
   voice?: string;
   microMomentsConfig?: MicroMomentsConfig | null;
+  retryConfig?: RetryConfig | null;
   createdAt: string;
   updatedAt: string;
   createdBy: string;
