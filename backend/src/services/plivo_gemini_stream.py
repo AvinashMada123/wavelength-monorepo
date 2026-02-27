@@ -1362,16 +1362,12 @@ Rules:
                         from src.utils.audio_codec import gemini_to_twilio_outbound
                         if chunk.sample_rate == 24000:
                             mulaw_bytes = gemini_to_twilio_outbound(audio_bytes)
+                            # Record at 16kHz (same as Plivo path)
+                            rec_16k = self._resample_24k_to_16k(audio_bytes)
                         else:
                             # Already 16kHz PCM — convert to 8kHz mu-law
                             from src.utils.audio_codec import resample_16k_to_8k, pcm16_to_mulaw
                             mulaw_bytes = pcm16_to_mulaw(resample_16k_to_8k(audio_bytes))
-                        # Record AI audio for Twilio (convert to 16kHz PCM for recording)
-                        from src.utils.audio_codec import resample_24k_to_8k, resample_8k_to_16k
-                        if chunk.sample_rate == 24000:
-                            rec_8k = resample_24k_to_8k(audio_bytes)
-                            rec_16k = resample_8k_to_16k(rec_8k)
-                        else:
                             rec_16k = audio_bytes
                         self._record_audio("AI", rec_16k, 16000)
                         payload_b64 = base64.b64encode(mulaw_bytes).decode()

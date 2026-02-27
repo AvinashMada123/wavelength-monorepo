@@ -95,6 +95,7 @@ export async function drainQueue(orgId: string): Promise<number> {
             phoneNumber: payload.phoneNumber,
             contactName: payload.contactName,
             botConfigId: payload.botConfigId,
+            botConfigName: next.bot_config_name || undefined,
             leadId: next.lead_id || payload.leadId,
             initiatedBy: next.source === "webhook" ? "api" : next.source,
             requestPayload: payload as unknown as Record<string, unknown>,

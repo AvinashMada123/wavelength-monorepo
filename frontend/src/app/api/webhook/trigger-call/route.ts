@@ -113,6 +113,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Resolve bot config name for call log
+    let botConfigName = "";
+    if (botConfigId && orgId) {
+      const cfg = await queryOne<{ name: string }>(
+        "SELECT name FROM bot_configs WHERE id = $1 AND org_id = $2",
+        [botConfigId, orgId]
+      );
+      if (cfg) botConfigName = cfg.name;
+    }
+
     // --- Auto-create lead if not provided ---
     if (!leadId) {
       let existingLead: { id: string; bot_notes: string | null } | null = null;
@@ -175,6 +185,7 @@ export async function POST(request: NextRequest) {
         phoneNumber,
         contactName: contactName || "Customer",
         botConfigId,
+        botConfigName: botConfigName || undefined,
         leadId,
         initiatedBy: "api",
         requestPayload: { phoneNumber, contactName, botConfigId, source: "webhook" },

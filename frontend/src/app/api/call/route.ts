@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
 
     // Resolve botConfigId — fall back to active config if not specified
     let botConfigId = payload.botConfigId || "";
+    let botConfigName = "";
     if (orgId && !botConfigId) {
       const activeConfig = await queryOne<{ id: string; name: string }>(
         "SELECT id, name FROM bot_configs WHERE org_id = $1 AND is_active = true LIMIT 1",
@@ -41,10 +42,17 @@ export async function POST(request: NextRequest) {
       );
       if (activeConfig) {
         botConfigId = activeConfig.id;
+        botConfigName = activeConfig.name;
         console.log(`[API /api/call] Using active config: "${activeConfig.name}" (id: ${activeConfig.id})`);
       } else {
         console.warn(`[API /api/call] No active config found for org ${orgId}`);
       }
+    } else if (botConfigId && orgId) {
+      const config = await queryOne<{ name: string }>(
+        "SELECT name FROM bot_configs WHERE id = $1 AND org_id = $2",
+        [botConfigId, orgId]
+      );
+      if (config) botConfigName = config.name;
     }
 
     // Build webhook base URL from request
@@ -62,6 +70,7 @@ export async function POST(request: NextRequest) {
           phoneNumber: payload.phoneNumber,
           contactName: payload.contactName || "Customer",
           botConfigId,
+          botConfigName: botConfigName || undefined,
           leadId: payload.leadId,
           initiatedBy: "user",
           requestPayload: { phoneNumber: payload.phoneNumber, contactName: payload.contactName, botConfigId },
