@@ -128,7 +128,7 @@ async def process_document(raw_text: str, source_type: str = "text") -> dict:
 
         response = await asyncio.wait_for(
             _client.aio.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-2.5-flash",
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",

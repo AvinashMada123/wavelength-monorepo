@@ -987,7 +987,7 @@ Rules:
 - Do NOT add any commentary, just the transcript"""
 
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=[audio_file, prompt]
             )
 
@@ -2177,7 +2177,7 @@ Rules:
         if config.use_vertex_ai:
             model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"
         else:
-            model_name = "models/gemini-2.5-flash-native-audio-preview-09-2025"
+            model_name = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 
         msg = {
             "setup": {
@@ -2189,7 +2189,7 @@ Rules:
                             "prebuilt_voice_config": {
                                 "voice_name": voice_name
                             }
-                        }
+                        },
                     },
                     "thinking_config": {
                         "thinking_budget": 0  # Disable reasoning for fastest responses
@@ -3420,7 +3420,7 @@ Rules:
                 f"Respond with ONLY the summary text, no headers or labels."
             )
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=prompt,
             )
             return response.text.strip()

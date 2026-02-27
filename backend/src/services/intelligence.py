@@ -70,7 +70,7 @@ async def gather_intelligence(contact_name: str, context: dict, timeout: float =
 
         response = await asyncio.wait_for(
             _client.aio.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-2.5-flash",
                 contents=query,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
