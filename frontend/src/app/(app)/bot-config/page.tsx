@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Plus, Pencil, Trash2, Zap, Bot, Loader2, Upload, Download, Brain, ShoppingBag, Users, Clock, Mic, Webhook } from "lucide-react";
+import { Plus, Pencil, Trash2, Zap, Bot, Loader2, Upload, Download, Brain, ShoppingBag, Users, Clock, Mic, Webhook, Copy } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAuth } from "@/hooks/use-auth";
@@ -96,6 +96,17 @@ function BotConfigContent() {
       loadConfigs();
     } catch {
       toast.error("Failed to update configuration status");
+    }
+  }
+
+  async function handleDuplicate(configId: string) {
+    if (!user) return;
+    try {
+      await apiBotConfigs(user, "POST", { action: "duplicate", configId });
+      toast.success("Configuration duplicated");
+      loadConfigs();
+    } catch {
+      toast.error("Failed to duplicate configuration");
     }
   }
 
@@ -233,6 +244,7 @@ function BotConfigContent() {
           configs={configs}
           onEdit={(id) => router.push(`/bot-config/${id}`)}
           onToggleActive={handleToggleActive}
+          onDuplicate={handleDuplicate}
           onDelete={handleDelete}
         />
       )}
@@ -245,12 +257,14 @@ function ConfigCard({
   index,
   onEdit,
   onToggleActive,
+  onDuplicate,
   onDelete,
 }: {
   config: BotConfig;
   index: number;
   onEdit: (id: string) => void;
   onToggleActive: (id: string) => void;
+  onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [webhookOpen, setWebhookOpen] = useState(false);
@@ -345,6 +359,14 @@ function ConfigCard({
             <Button
               variant="outline"
               size="sm"
+              onClick={() => onDuplicate(config.id)}
+              title="Duplicate"
+            >
+              <Copy className="size-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               className="text-destructive hover:text-destructive"
               onClick={() => onDelete(config.id)}
             >
@@ -369,11 +391,13 @@ function ConfigGrid({
   configs,
   onEdit,
   onToggleActive,
+  onDuplicate,
   onDelete,
 }: {
   configs: BotConfig[];
   onEdit: (id: string) => void;
   onToggleActive: (id: string) => void;
+  onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const active = configs.filter((c) => c.isActive);
@@ -395,6 +419,7 @@ function ConfigGrid({
                 index={i}
                 onEdit={onEdit}
                 onToggleActive={onToggleActive}
+                onDuplicate={onDuplicate}
                 onDelete={onDelete}
               />
             ))}
@@ -423,6 +448,7 @@ function ConfigGrid({
                 index={i + active.length}
                 onEdit={onEdit}
                 onToggleActive={onToggleActive}
+                onDuplicate={onDuplicate}
                 onDelete={onDelete}
               />
             ))}

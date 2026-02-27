@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
           maxCallDuration: "max_call_duration",
           ghlWorkflows: "ghl_workflows",
           voice: "voice",
+          callProvider: "call_provider",
           microMomentsConfig: "micro_moments_config",
           retryConfig: "retry_config",
         };
@@ -261,6 +262,87 @@ export async function POST(request: NextRequest) {
         }
 
         return NextResponse.json({ success: true });
+      }
+
+      case "duplicate": {
+        const { configId } = body;
+        const newId = `dup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const now = new Date().toISOString();
+
+        // Fetch original config and all related data
+        const [configRows, personas, situations, productSections, companies, cities, roles] = await Promise.all([
+          query("SELECT * FROM bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]),
+          query("SELECT name, content, keywords FROM personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT name, content, keywords FROM situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT name, content, keywords FROM product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT company_name, enrollments_count FROM ui_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT city_name, enrollments_count FROM ui_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT role_name, enrollments_count FROM ui_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+        ]);
+        if (configRows.length === 0) {
+          return NextResponse.json({ error: "Config not found" }, { status: 404 });
+        }
+        const src = configRows[0];
+
+        // Create duplicate config (inactive, with "(Copy)" suffix)
+        await query(
+          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, call_provider, micro_moments_config, retry_config, created_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24)`,
+          [
+            newId, orgId, (src.name || "") + " (Copy)", false,
+            src.prompt || "", JSON.stringify(src.questions || []),
+            JSON.stringify(src.objections || []), JSON.stringify(src.objection_keywords || {}),
+            JSON.stringify(src.context_variables || {}), JSON.stringify(src.qualification_criteria || {}),
+            src.persona_engine_enabled ?? false, src.product_intelligence_enabled ?? false,
+            src.social_proof_enabled ?? false, src.social_proof_min_turn ?? 0,
+            src.pre_research_enabled ?? false, src.memory_recall_enabled ?? false,
+            src.max_call_duration ?? 480, JSON.stringify(src.ghl_workflows || []),
+            src.voice || "", src.call_provider || "plivo",
+            JSON.stringify(src.micro_moments_config || null),
+            JSON.stringify(src.retry_config || null),
+            src.created_by || null, now,
+          ]
+        );
+
+        // Duplicate related data
+        for (const p of personas) {
+          await query(
+            "INSERT INTO personas (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            [`dup_p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, p.name, p.content, JSON.stringify(p.keywords || []), now]
+          );
+        }
+        for (const s of situations) {
+          await query(
+            "INSERT INTO situations (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            [`dup_s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, s.name, s.content, JSON.stringify(s.keywords || []), now]
+          );
+        }
+        for (const ps of productSections) {
+          await query(
+            "INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            [`dup_ps_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, ps.name, ps.content, JSON.stringify(ps.keywords || []), now]
+          );
+        }
+        for (const c of companies) {
+          await query(
+            "INSERT INTO ui_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            [`dup_c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, c.company_name, c.enrollments_count ?? 0]
+          );
+        }
+        for (const c of cities) {
+          await query(
+            "INSERT INTO ui_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            [`dup_ci_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, c.city_name, c.enrollments_count ?? 0]
+          );
+        }
+        for (const r of roles) {
+          await query(
+            "INSERT INTO ui_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            [`dup_r_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, r.role_name, r.enrollments_count ?? 0]
+          );
+        }
+
+        return NextResponse.json({ success: true, newConfigId: newId });
       }
 
       default:
