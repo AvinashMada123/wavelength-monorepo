@@ -862,16 +862,19 @@ class PlivoGeminiSession:
                     user_chunks.append((audio_bytes, timestamp))
 
             def build_mono_track(chunks):
-                """Build a mono track from timestamped chunks with capped gaps."""
+                """Build a mono track from timestamped chunks with capped gaps.
+                Uses 300ms threshold to ignore streaming jitter between chunks."""
+                JITTER_THRESHOLD = 0.3  # 300ms — gaps below this are streaming jitter, not real silence
                 track = bytearray()
                 current_time = call_start
                 for audio_bytes, timestamp in chunks:
                     gap = timestamp - current_time
-                    if gap > 0.02:  # Gap > 20ms
+                    if gap > JITTER_THRESHOLD:
+                        # Real pause (other speaker was talking) — insert capped silence
                         capped_gap = min(gap, MAX_GAP)
                         silence_samples = int(capped_gap * SAMPLE_RATE)
                         track.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
-                        current_time = timestamp - gap + capped_gap  # Advance by capped amount
+                        current_time = timestamp - gap + capped_gap
                     track.extend(audio_bytes)
                     current_time = timestamp + len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
                 return bytes(track)
