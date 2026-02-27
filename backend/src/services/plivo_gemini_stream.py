@@ -2717,6 +2717,12 @@ Rules:
 
                 # Check if turn is complete (greeting done)
                 if sc.get("turnComplete"):
+                    # Debug: log empty turns to diagnose Twilio preload failures
+                    if self._current_turn_audio_chunks == 0:
+                        sc_keys = list(sc.keys())
+                        has_model_turn = "modelTurn" in sc
+                        interrupted = sc.get("interrupted", False)
+                        logger.warning(f"[{self.call_uuid[:8]}] turnComplete with 0 audio — provider={self.provider}, turn={self._turn_count}, interrupted={interrupted}, sc_keys={sc_keys}, has_modelTurn={has_model_turn}, plivo_ws={'set' if self.plivo_ws else 'None'}")
                     # Only mark preload complete if greeting audio was actually generated.
                     # Empty turnComplete (0 chunks) = Gemini returned no audio; the nudge
                     # handler will retry, and the NEXT turnComplete with audio will fire this.
