@@ -15,6 +15,7 @@ const PUBLIC_PATHS = [
   "/api/call-updates",
   "/api/call",
   "/api/call-hangup",
+  "/api/calls",
   "/api/webhook",
 ];
 
