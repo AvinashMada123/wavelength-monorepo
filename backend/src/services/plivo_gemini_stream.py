@@ -881,26 +881,36 @@ class PlivoGeminiSession:
             duration_s = total_user_samples / USER_RATE
             logger.info(f"USER track: {total_user_samples} samples = {duration_s:.1f}s @ {USER_RATE}Hz")
 
-            # --- Step 2: Build AI track (24kHz) placed by user sample position ---
-            # Duration based on whichever track is longer
-            # AI might extend beyond user track if AI was still speaking when call ended
-            ai_max_end_sample = 0
-            for user_pos, ai_audio in self._rec_ai_events:
-                ai_offset_samples = int(user_pos * OUTPUT_RATE / USER_RATE)
-                ai_chunk_samples = len(ai_audio) // BPS
-                ai_max_end_sample = max(ai_max_end_sample, ai_offset_samples + ai_chunk_samples)
+            # --- Step 2: Build AI track (24kHz) with write cursor ---
+            # AI chunks in a burst arrive with nearly identical user_pos (Gemini generates
+            # faster than real-time). A write cursor ensures chunks are placed sequentially
+            # within a burst, and only jump forward when user_pos genuinely advances
+            # (i.e., user spoke in between AI responses).
 
-            ai_track_samples = max(int(duration_s * OUTPUT_RATE), ai_max_end_sample)
-            ai_track = bytearray(ai_track_samples * BPS)
-
+            # First pass: calculate total size needed
+            ai_write_cursor = 0  # in bytes
             for user_pos, ai_audio in self._rec_ai_events:
-                ai_offset = int(user_pos * OUTPUT_RATE / USER_RATE) * BPS
-                end = ai_offset + len(ai_audio)
+                target_offset = int(user_pos * OUTPUT_RATE / USER_RATE) * BPS
+                actual_offset = max(ai_write_cursor, target_offset)
+                ai_write_cursor = actual_offset + len(ai_audio)
+            ai_track_bytes = max(int(duration_s * OUTPUT_RATE) * BPS, ai_write_cursor)
+            ai_track = bytearray(ai_track_bytes)
+
+            # Second pass: place chunks
+            ai_write_cursor = 0
+            for user_pos, ai_audio in self._rec_ai_events:
+                target_offset = int(user_pos * OUTPUT_RATE / USER_RATE) * BPS
+                # If target is ahead of cursor, jump forward (natural pause between responses)
+                # If target is behind cursor, continue sequentially (same response burst)
+                actual_offset = max(ai_write_cursor, target_offset)
+                end = actual_offset + len(ai_audio)
                 if end <= len(ai_track):
-                    ai_track[ai_offset:end] = ai_audio
-                elif ai_offset < len(ai_track):
-                    ai_track[ai_offset:] = ai_audio[:len(ai_track) - ai_offset]
+                    ai_track[actual_offset:end] = ai_audio
+                elif actual_offset < len(ai_track):
+                    ai_track[actual_offset:] = ai_audio[:len(ai_track) - actual_offset]
+                ai_write_cursor = end
 
+            ai_track_samples = len(ai_track) // BPS
             logger.info(f"AI track: {ai_track_samples} samples = {ai_track_samples / OUTPUT_RATE:.1f}s @ {OUTPUT_RATE}Hz, "
                         f"{len(self._rec_ai_events)} events")
 
