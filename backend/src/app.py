@@ -137,10 +137,16 @@ async def lifespan(app: FastAPI):
 
     cleanup_task = asyncio.create_task(_cleanup_stale_data())
 
+    # Start session reaper — cleans up zombie preloaded/stuck sessions
+    from src.services.plivo_gemini_stream import _session_reaper
+    reaper_task = asyncio.create_task(_session_reaper())
+    logger.info("Session reaper started (60s interval)")
+
     yield
 
     # Shutdown
     cleanup_task.cancel()
+    reaper_task.cancel()
     session_db.shutdown()
     logger.info("Server shutting down...")
 
@@ -1343,15 +1349,17 @@ async def plivo_hangup(request: Request):
     logger.info(f"Plivo call ended: plivo={plivo_uuid}, internal={internal_uuid}, duration: {duration}s")
     clear_conversation(internal_uuid)
 
+    # Always clean up preloaded/active session on hangup to prevent zombie sessions
+    # This catches: unanswered calls, rejected calls, and any other hangup scenario
+    # where the WebSocket cleanup path (plivo_stream finally block) didn't fire.
+    from src.services.plivo_gemini_stream import remove_session
+    await remove_session(internal_uuid)
+
     # If duration is 0 and call data exists, this was an unanswered call.
     # Send a "no-answer" webhook so the frontend can update the status.
     if call_data and int(duration or 0) == 0:
-        from src.services.plivo_gemini_stream import get_session
-        session = await get_session(internal_uuid)
-        # Only send no-answer if there's no active session (call was never answered)
-        if not session:
-            webhook_url = call_data.get("webhookUrl")
-            if webhook_url:
+        webhook_url = call_data.get("webhookUrl")
+        if webhook_url:
                 import httpx
                 from datetime import datetime
                 no_answer_payload = {
@@ -1546,13 +1554,14 @@ async def twilio_hangup(request: Request):
     logger.info(f"Twilio call ended: sid={twilio_sid}, internal={internal_uuid}, status={call_status}, duration={duration}s")
     clear_conversation(internal_uuid)
 
+    # Always clean up preloaded/active session to prevent zombie sessions
+    from src.services.plivo_gemini_stream import remove_session
+    await remove_session(internal_uuid)
+
     # If no-answer/busy/canceled, send webhook so frontend can update
     if call_data and call_status in ("no-answer", "busy", "canceled", "failed"):
-        from src.services.plivo_gemini_stream import get_session
-        session = await get_session(internal_uuid)
-        if not session:
-            webhook_url = call_data.get("webhookUrl")
-            if webhook_url:
+        webhook_url = call_data.get("webhookUrl")
+        if webhook_url:
                 import httpx
                 no_answer_payload = {
                     "event": "call_ended",

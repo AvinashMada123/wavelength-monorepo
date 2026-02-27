@@ -3682,3 +3682,38 @@ async def remove_session(call_uuid: str):
         await session.stop()
     if preload_session_obj:
         await preload_session_obj.stop()
+
+
+async def _session_reaper():
+    """Background task: clean up zombie sessions that were never answered or got stuck.
+    Runs every 60s. Removes preloading sessions older than 2 minutes and
+    active sessions with no audio activity for 10 minutes."""
+    PRELOAD_TTL = 120   # 2 minutes — if call wasn't answered by now, it won't be
+    ACTIVE_TTL = 600    # 10 minutes — max call duration safety net
+    while True:
+        await asyncio.sleep(60)
+        now = time.time()
+        stale = []
+        try:
+            async with _sessions_lock:
+                # Check preloading sessions (never got answered)
+                for uuid, session in list(_preloading_sessions.items()):
+                    age = now - (session._preload_start_time or now)
+                    if age > PRELOAD_TTL:
+                        stale.append(("preload", uuid, age))
+                # Check active sessions (stuck/leaked)
+                for uuid, session in list(_sessions.items()):
+                    started = session._call_answered_time or session._preload_start_time or now
+                    age = now - started
+                    if age > ACTIVE_TTL and not session.is_active:
+                        stale.append(("active", uuid, age))
+
+            for kind, uuid, age in stale:
+                logger.warning(f"Reaper: removing stale {kind} session {uuid[:8]} (age={age:.0f}s)")
+                await remove_session(uuid)
+
+            if stale:
+                total = len(_sessions) + len(_preloading_sessions)
+                logger.info(f"Reaper: cleaned {len(stale)} sessions, {total} remaining")
+        except Exception as e:
+            logger.error(f"Session reaper error: {e}")
