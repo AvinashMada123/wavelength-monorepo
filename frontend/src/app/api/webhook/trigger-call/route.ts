@@ -227,9 +227,10 @@ export async function POST(request: NextRequest) {
       } else {
         // Create new lead
         const newLeadId = crypto.randomUUID();
+        const leadSource = ghlContactId ? "ghl" : "api";
         await query(
           `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, status, call_count, source, ghl_contact_id, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', 0, 'ghl', $9, NOW(), NOW())`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', 0, $9, $10, NOW(), NOW())`,
           [
             newLeadId,
             orgId,
@@ -239,6 +240,7 @@ export async function POST(request: NextRequest) {
             ghlCompanyName || null,
             ghlCity || null,
             JSON.stringify(ghlTags || []),
+            leadSource,
             ghlContactId || null,
           ]
         );
@@ -354,9 +356,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // --- Create ui_calls entry so the call-ended webhook can find & update it ---
+    const callUuid = data.call_uuid || "";
+    if (callUuid) {
+      try {
+        const uiCallId = crypto.randomUUID();
+        await query(
+          `INSERT INTO ui_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10)`,
+          [
+            uiCallId,
+            orgId,
+            callUuid,
+            leadId || null,
+            JSON.stringify({ phoneNumber, contactName, botConfigId, source: "api" }),
+            JSON.stringify(data),
+            "in-progress",
+            "api",
+            cfgId,
+            configDoc.name || null,
+          ]
+        );
+        console.log(`[Webhook trigger-call] Created ui_calls entry ${uiCallId} for call ${callUuid}`);
+      } catch (uiCallErr) {
+        console.error("[Webhook trigger-call] Failed to create ui_calls entry (non-fatal):", uiCallErr);
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      callUuid: data.call_uuid || "",
+      callUuid,
       message: data.message || "Call initiated",
     });
   } catch (error) {
