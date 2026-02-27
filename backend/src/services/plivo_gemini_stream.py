@@ -836,86 +836,113 @@ class PlivoGeminiSession:
 
     def _save_recording(self):
         """Save stereo MP3: AI on left channel, USER on right channel.
-        Uses a unified compressed timeline so both channels stay in sync."""
+        AI kept at native 24kHz (no resampling). USER upsampled 16k→24k once.
+        Same-speaker chunks always concatenated seamlessly (no gap insertion).
+        Silence only inserted at real turn transitions (speaker changes with gap)."""
         logger.info(f"Saving recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
         if not self.recording_enabled or not self.audio_chunks:
             logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
             return None
         try:
-            SAMPLE_RATE = 16000
+            OUTPUT_RATE = 24000  # Native Gemini rate — no AI resampling needed
             BYTES_PER_SAMPLE = 2  # 16-bit PCM
-            MAX_GAP = 1.5  # Cap silence to 1.5s (natural pause)
-            JITTER_THRESHOLD = 0.3  # Ignore gaps < 300ms (streaming jitter)
+            MAX_GAP = 0.8  # Max silence at turn transitions
+            TURN_GAP_THRESHOLD = 0.5  # Only add silence when speaker changes with > 500ms gap
 
-            # Sort ALL chunks by timestamp, resample AI 24k→16k
+            # Sort ALL chunks by timestamp (keep native sample rates)
             sorted_chunks = []
             for role, audio_bytes, sample_rate, timestamp in self.audio_chunks:
-                if sample_rate == 24000:
-                    audio_bytes = self._resample_24k_to_16k_hq(audio_bytes)
-                sorted_chunks.append((role, audio_bytes, timestamp))
-            sorted_chunks.sort(key=lambda x: x[2])
+                sorted_chunks.append((role, audio_bytes, sample_rate, timestamp))
+            sorted_chunks.sort(key=lambda x: x[3])
 
             # --- Build unified compressed timeline ---
-            # Walk all chunks in time order, compute a shared compressed position
-            # for each chunk. Both AI and USER tracks use the same timeline.
-            prev_end = sorted_chunks[0][2]  # Wall-clock end of previous chunk
-            compressed_pos = 0.0  # Current position in compressed timeline
+            # Rules:
+            #   Same speaker consecutive chunks → always concatenate (no silence)
+            #   Different speaker with gap > TURN_GAP_THRESHOLD → insert min(gap, MAX_GAP)
+            #   Different speaker with gap <= threshold → concatenate (natural overlap)
+            prev_end = sorted_chunks[0][3]
+            prev_role = sorted_chunks[0][0]
+            compressed_pos = 0.0
 
-            chunk_placements = []  # (role, audio_bytes, compressed_byte_offset)
-            for role, audio_bytes, timestamp in sorted_chunks:
+            chunk_placements = []  # (role, audio_bytes, native_rate, compressed_time_seconds)
+            for role, audio_bytes, sample_rate, timestamp in sorted_chunks:
                 gap = timestamp - prev_end
-                if gap > JITTER_THRESHOLD:
-                    # Real gap — add compressed silence
+
+                # Only insert silence at turn transitions with a real gap
+                if role != prev_role and gap > TURN_GAP_THRESHOLD:
                     compressed_pos += min(gap, MAX_GAP)
-                # else: jitter — no gap, just concatenate
 
-                byte_offset = int(compressed_pos * SAMPLE_RATE) * BYTES_PER_SAMPLE
-                chunk_placements.append((role, audio_bytes, byte_offset))
+                chunk_placements.append((role, audio_bytes, sample_rate, compressed_pos))
 
-                chunk_duration = len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+                chunk_duration = len(audio_bytes) / (sample_rate * BYTES_PER_SAMPLE)
                 compressed_pos += chunk_duration
-                prev_end = timestamp + chunk_duration
+                new_end = timestamp + chunk_duration
+                prev_end = max(prev_end, new_end)
+                prev_role = role
 
-            # Allocate tracks and place chunks
-            total_bytes = int(compressed_pos * SAMPLE_RATE) * BYTES_PER_SAMPLE
-            ai_track = bytearray(total_bytes)
-            user_track = bytearray(total_bytes)
+            # --- Place chunks in separate tracks at native rates ---
+            ai_total_bytes = int(compressed_pos * 24000) * BYTES_PER_SAMPLE
+            user_total_bytes = int(compressed_pos * 16000) * BYTES_PER_SAMPLE
+            ai_track = bytearray(ai_total_bytes)
+            user_track_16k = bytearray(user_total_bytes)
 
-            for role, audio_bytes, offset in chunk_placements:
-                target = ai_track if role == "AI" else user_track
-                end = offset + len(audio_bytes)
-                if end <= len(target):
-                    target[offset:end] = audio_bytes
+            ai_count = 0
+            user_count = 0
+            for role, audio_bytes, sample_rate, comp_time in chunk_placements:
+                if role == "AI":
+                    offset = int(comp_time * 24000) * BYTES_PER_SAMPLE
+                    end = offset + len(audio_bytes)
+                    if end <= len(ai_track):
+                        ai_track[offset:end] = audio_bytes
+                    elif offset < len(ai_track):
+                        ai_track[offset:] = audio_bytes[:len(ai_track) - offset]
+                    ai_count += 1
                 else:
-                    # Clip to track length
-                    fit = len(target) - offset
-                    if fit > 0:
-                        target[offset:offset + fit] = audio_bytes[:fit]
+                    offset = int(comp_time * 16000) * BYTES_PER_SAMPLE
+                    end = offset + len(audio_bytes)
+                    if end <= len(user_track_16k):
+                        user_track_16k[offset:end] = audio_bytes
+                    elif offset < len(user_track_16k):
+                        user_track_16k[offset:] = audio_bytes[:len(user_track_16k) - offset]
+                    user_count += 1
 
-            max_len = len(ai_track)  # Both are same length
+            # --- Upsample complete USER track 16k→24k (one operation, no chunk artifacts) ---
+            user_samples_16k = np.frombuffer(bytes(user_track_16k), dtype=np.int16).astype(np.float32)
+            try:
+                from scipy.signal import resample_poly
+                user_samples_24k = resample_poly(user_samples_16k, up=3, down=2)
+            except ImportError:
+                n_out = int(len(user_samples_16k) * 3 / 2)
+                x_new = np.linspace(0, len(user_samples_16k) - 1, n_out, dtype=np.float32)
+                user_samples_24k = np.interp(x_new, np.arange(len(user_samples_16k), dtype=np.float32), user_samples_16k)
+            user_track_24k = np.clip(user_samples_24k, -32768, 32767).astype(np.int16).tobytes()
 
-            # Interleave into stereo: [L_sample, R_sample, L_sample, R_sample, ...]
-            ai_samples = np.frombuffer(ai_track, dtype=np.int16)
-            user_samples = np.frombuffer(user_track, dtype=np.int16)
+            # Pad to same length
+            ai_bytes = bytes(ai_track)
+            max_len = max(len(ai_bytes), len(user_track_24k))
+            ai_bytes = ai_bytes.ljust(max_len, b'\x00')
+            user_track_24k = user_track_24k.ljust(max_len, b'\x00')
+
+            # Interleave into stereo
+            ai_samples = np.frombuffer(ai_bytes, dtype=np.int16)
+            user_samples = np.frombuffer(user_track_24k, dtype=np.int16)
             stereo = np.empty(len(ai_samples) + len(user_samples), dtype=np.int16)
-            stereo[0::2] = ai_samples   # Left channel = AI
-            stereo[1::2] = user_samples  # Right channel = USER
+            stereo[0::2] = ai_samples   # Left = AI
+            stereo[1::2] = user_samples  # Right = USER
             stereo_bytes = stereo.tobytes()
 
-            duration_s = max_len / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-            ai_count = sum(1 for r, _, _ in chunk_placements if r == "AI")
-            user_count = len(chunk_placements) - ai_count
-            logger.info(f"Recording built: {duration_s:.1f}s stereo, {len(sorted_chunks)} chunks "
+            duration_s = max_len / (OUTPUT_RATE * BYTES_PER_SAMPLE)
+            logger.info(f"Recording built: {duration_s:.1f}s stereo @24kHz, {len(sorted_chunks)} chunks "
                         f"(AI: {ai_count}, USER: {user_count})")
 
-            # Export as MP3 using pydub (10x smaller than WAV)
+            # Export as MP3 using pydub
             mixed_mp3 = RECORDINGS_DIR / f"{self.call_uuid}_mixed.mp3"
             try:
                 from pydub import AudioSegment
                 audio_segment = AudioSegment(
                     data=stereo_bytes,
                     sample_width=2,
-                    frame_rate=SAMPLE_RATE,
+                    frame_rate=OUTPUT_RATE,
                     channels=2
                 )
                 audio_segment.export(str(mixed_mp3), format="mp3", bitrate="128k")
@@ -926,13 +953,13 @@ class PlivoGeminiSession:
                 with wave.open(str(mixed_mp3), 'wb') as wav:
                     wav.setnchannels(2)
                     wav.setsampwidth(2)
-                    wav.setframerate(SAMPLE_RATE)
+                    wav.setframerate(OUTPUT_RATE)
                     wav.writeframes(stereo_bytes)
                 logger.info(f"Stereo WAV saved: {len(stereo_bytes)} bytes")
 
             return {
                 "mixed_wav": mixed_mp3,
-                "call_start": sorted_chunks[0][2]
+                "call_start": sorted_chunks[0][3]
             }
         except Exception as e:
             logger.error(f"Error saving recording: {e}")
