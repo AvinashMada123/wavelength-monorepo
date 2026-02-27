@@ -836,7 +836,7 @@ class PlivoGeminiSession:
 
     def _save_recording(self):
         """Save stereo MP3: AI on left channel, USER on right channel.
-        Gaps capped at 1.5s to prevent silence inflation from reconnections."""
+        Uses a unified compressed timeline so both channels stay in sync."""
         logger.info(f"Saving recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
         if not self.recording_enabled or not self.audio_chunks:
             logger.warning(f"Skipping recording: enabled={self.recording_enabled}, chunks={len(self.audio_chunks)}")
@@ -845,47 +845,54 @@ class PlivoGeminiSession:
             SAMPLE_RATE = 16000
             BYTES_PER_SAMPLE = 2  # 16-bit PCM
             MAX_GAP = 1.5  # Cap silence to 1.5s (natural pause)
+            JITTER_THRESHOLD = 0.3  # Ignore gaps < 300ms (streaming jitter)
 
-            # Sort all chunks by timestamp
-            sorted_chunks = sorted(self.audio_chunks, key=lambda x: x[3])
-            call_start = sorted_chunks[0][3]
-
-            # Separate AI and USER chunks, resample AI 24k→16k with HQ filter
-            ai_chunks = []
-            user_chunks = []
-            for role, audio_bytes, sample_rate, timestamp in sorted_chunks:
+            # Sort ALL chunks by timestamp, resample AI 24k→16k
+            sorted_chunks = []
+            for role, audio_bytes, sample_rate, timestamp in self.audio_chunks:
                 if sample_rate == 24000:
                     audio_bytes = self._resample_24k_to_16k_hq(audio_bytes)
-                if role == "AI":
-                    ai_chunks.append((audio_bytes, timestamp))
+                sorted_chunks.append((role, audio_bytes, timestamp))
+            sorted_chunks.sort(key=lambda x: x[2])
+
+            # --- Build unified compressed timeline ---
+            # Walk all chunks in time order, compute a shared compressed position
+            # for each chunk. Both AI and USER tracks use the same timeline.
+            prev_end = sorted_chunks[0][2]  # Wall-clock end of previous chunk
+            compressed_pos = 0.0  # Current position in compressed timeline
+
+            chunk_placements = []  # (role, audio_bytes, compressed_byte_offset)
+            for role, audio_bytes, timestamp in sorted_chunks:
+                gap = timestamp - prev_end
+                if gap > JITTER_THRESHOLD:
+                    # Real gap — add compressed silence
+                    compressed_pos += min(gap, MAX_GAP)
+                # else: jitter — no gap, just concatenate
+
+                byte_offset = int(compressed_pos * SAMPLE_RATE) * BYTES_PER_SAMPLE
+                chunk_placements.append((role, audio_bytes, byte_offset))
+
+                chunk_duration = len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+                compressed_pos += chunk_duration
+                prev_end = timestamp + chunk_duration
+
+            # Allocate tracks and place chunks
+            total_bytes = int(compressed_pos * SAMPLE_RATE) * BYTES_PER_SAMPLE
+            ai_track = bytearray(total_bytes)
+            user_track = bytearray(total_bytes)
+
+            for role, audio_bytes, offset in chunk_placements:
+                target = ai_track if role == "AI" else user_track
+                end = offset + len(audio_bytes)
+                if end <= len(target):
+                    target[offset:end] = audio_bytes
                 else:
-                    user_chunks.append((audio_bytes, timestamp))
+                    # Clip to track length
+                    fit = len(target) - offset
+                    if fit > 0:
+                        target[offset:offset + fit] = audio_bytes[:fit]
 
-            def build_mono_track(chunks):
-                """Build a mono track from timestamped chunks with capped gaps.
-                Uses 300ms threshold to ignore streaming jitter between chunks."""
-                JITTER_THRESHOLD = 0.3  # 300ms — gaps below this are streaming jitter, not real silence
-                track = bytearray()
-                current_time = call_start
-                for audio_bytes, timestamp in chunks:
-                    gap = timestamp - current_time
-                    if gap > JITTER_THRESHOLD:
-                        # Real pause (other speaker was talking) — insert capped silence
-                        capped_gap = min(gap, MAX_GAP)
-                        silence_samples = int(capped_gap * SAMPLE_RATE)
-                        track.extend(b'\x00' * (silence_samples * BYTES_PER_SAMPLE))
-                        current_time = timestamp - gap + capped_gap
-                    track.extend(audio_bytes)
-                    current_time = timestamp + len(audio_bytes) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-                return bytes(track)
-
-            ai_track = build_mono_track(ai_chunks)
-            user_track = build_mono_track(user_chunks)
-
-            # Pad shorter track to match length
-            max_len = max(len(ai_track), len(user_track))
-            ai_track = ai_track.ljust(max_len, b'\x00')
-            user_track = user_track.ljust(max_len, b'\x00')
+            max_len = len(ai_track)  # Both are same length
 
             # Interleave into stereo: [L_sample, R_sample, L_sample, R_sample, ...]
             ai_samples = np.frombuffer(ai_track, dtype=np.int16)
@@ -896,8 +903,10 @@ class PlivoGeminiSession:
             stereo_bytes = stereo.tobytes()
 
             duration_s = max_len / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+            ai_count = sum(1 for r, _, _ in chunk_placements if r == "AI")
+            user_count = len(chunk_placements) - ai_count
             logger.info(f"Recording built: {duration_s:.1f}s stereo, {len(sorted_chunks)} chunks "
-                        f"(AI: {len(ai_chunks)}, USER: {len(user_chunks)})")
+                        f"(AI: {ai_count}, USER: {user_count})")
 
             # Export as MP3 using pydub (10x smaller than WAV)
             mixed_mp3 = RECORDINGS_DIR / f"{self.call_uuid}_mixed.mp3"
@@ -922,8 +931,8 @@ class PlivoGeminiSession:
                 logger.info(f"Stereo WAV saved: {len(stereo_bytes)} bytes")
 
             return {
-                "mixed_wav": mixed_mp3,  # Key name kept for compatibility
-                "call_start": call_start
+                "mixed_wav": mixed_mp3,
+                "call_start": sorted_chunks[0][2]
             }
         except Exception as e:
             logger.error(f"Error saving recording: {e}")
