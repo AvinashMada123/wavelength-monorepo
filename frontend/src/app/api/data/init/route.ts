@@ -118,6 +118,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Campaign tables
+    await query(`
+      CREATE TABLE IF NOT EXISTS campaigns (
+        id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        bot_config_id TEXT NOT NULL,
+        bot_config_name TEXT,
+        status TEXT NOT NULL DEFAULT 'queued',
+        concurrency_limit INTEGER NOT NULL DEFAULT 100,
+        total_leads INTEGER NOT NULL DEFAULT 0,
+        completed_calls INTEGER NOT NULL DEFAULT 0,
+        failed_calls INTEGER NOT NULL DEFAULT 0,
+        no_answer_calls INTEGER NOT NULL DEFAULT 0,
+        webhook_base_url TEXT NOT NULL,
+        created_by TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        started_at TIMESTAMPTZ,
+        paused_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ
+      )
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS campaign_leads (
+        id TEXT PRIMARY KEY,
+        campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        lead_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        call_uuid TEXT,
+        position INTEGER NOT NULL,
+        queued_at TIMESTAMPTZ DEFAULT NOW(),
+        called_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        error_message TEXT
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_campaigns_org ON campaigns(org_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_campaigns_org_status ON campaigns(org_id, status)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_cl_campaign ON campaign_leads(campaign_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_cl_campaign_status ON campaign_leads(campaign_id, status)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_cl_call_uuid ON campaign_leads(call_uuid)`);
+
+    // Migrations: retry support
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS retry_config JSONB`);
+    await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
+    await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
+
     return NextResponse.json({ success: true, message: "Database initialized" });
   } catch (error) {
     console.error("[Init API] POST error:", error);

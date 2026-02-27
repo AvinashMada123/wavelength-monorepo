@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Trash2, Phone, Plus, X } from "lucide-react";
+import { Search, Trash2, Phone, Plus, X, Megaphone } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,7 @@ import { useLeads } from "@/hooks/use-leads";
 import { useSettings } from "@/hooks/use-settings";
 import { useCalls } from "@/hooks/use-calls";
 import { BulkCallDialog } from "@/components/leads/bulk-call-dialog";
+import { CreateCampaignDialog } from "@/components/campaigns/create-campaign-dialog";
 import { toast } from "sonner";
 import type { LeadStatus, CustomFilter } from "@/types/lead";
 import type { Lead } from "@/types/lead";
@@ -40,6 +41,7 @@ export function LeadsToolbar() {
   const { initiateCall } = useCalls();
   const [searchValue, setSearchValue] = useState(filters.search);
   const [bulkCallOpen, setBulkCallOpen] = useState(false);
+  const [campaignDialogOpen, setCampaignDialogOpen] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const customFilters: CustomFilter[] = filters.customFilters || [];
@@ -298,6 +300,14 @@ export function LeadsToolbar() {
                 Call Selected ({selectedIds.length})
               </Button>
               <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setCampaignDialogOpen(true)}
+              >
+                <Megaphone className="mr-2 h-4 w-4" />
+                Start Campaign ({selectedIds.length})
+              </Button>
+              <Button
                 variant="destructive"
                 size="sm"
                 onClick={handleDeleteSelected}
@@ -315,6 +325,12 @@ export function LeadsToolbar() {
         onOpenChange={setBulkCallOpen}
         leads={selectedLeads}
         onConfirm={startBulkCalls}
+      />
+      <CreateCampaignDialog
+        open={campaignDialogOpen}
+        onOpenChange={setCampaignDialogOpen}
+        leads={selectedLeads}
+        onCreated={deselectAll}
       />
     </>
   );

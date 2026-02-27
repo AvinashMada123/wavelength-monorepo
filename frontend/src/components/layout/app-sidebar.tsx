@@ -16,6 +16,7 @@ import {
   CreditCard,
   Building2,
   Brain,
+  Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -33,6 +34,7 @@ const clientNavItems: NavItem[] = [
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/call-center", label: "Call Center", icon: Phone },
   { href: "/call-logs", label: "Call Logs", icon: ClipboardList },
+  { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/memory", label: "Memory", icon: Brain },
   {
     href: "/bot-config",

@@ -70,6 +70,24 @@ export const QUALIFICATION_LEVEL_CONFIG = {
   },
 } as const;
 
+export const CAMPAIGN_STATUS_CONFIG = {
+  queued: { label: "Queued", color: "bg-gray-500/15 text-gray-400 border-gray-500/20" },
+  running: { label: "Running", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" },
+  paused: { label: "Paused", color: "bg-amber-500/15 text-amber-400 border-amber-500/20" },
+  completed: { label: "Completed", color: "bg-green-500/15 text-green-400 border-green-500/20" },
+  cancelled: { label: "Cancelled", color: "bg-red-500/15 text-red-400 border-red-500/20" },
+} as const;
+
+export const CAMPAIGN_LEAD_STATUS_CONFIG = {
+  queued: { label: "Queued", color: "bg-gray-500/15 text-gray-400" },
+  calling: { label: "Calling", color: "bg-blue-500/15 text-blue-400" },
+  completed: { label: "Completed", color: "bg-green-500/15 text-green-400" },
+  failed: { label: "Failed", color: "bg-red-500/15 text-red-400" },
+  skipped: { label: "Skipped", color: "bg-gray-500/15 text-gray-400" },
+  no_answer: { label: "No Answer", color: "bg-amber-500/15 text-amber-400" },
+  retry_pending: { label: "Retry Pending", color: "bg-orange-500/15 text-orange-400" },
+} as const;
+
 export const DEFAULT_SETTINGS: AppSettings = {
   defaults: {
     clientName: "fwai",

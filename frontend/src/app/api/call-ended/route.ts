@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { addCallUpdate } from "@/lib/call-updates-store";
 import { qualifyLead } from "@/lib/gemini";
 import { query, queryOne } from "@/lib/db";
+import { triggerNextCampaignCalls } from "@/lib/call-trigger";
 
 export async function POST(request: NextRequest) {
   try {
@@ -169,6 +170,74 @@ export async function POST(request: NextRequest) {
         console.log(`[API /api/call-ended] Incremented usage for org ${orgId}`);
       } catch (dbErr) {
         console.error("[API /api/call-ended] DB update error (non-fatal):", dbErr);
+      }
+    }
+
+    // ---- Campaign queue advancement ----
+    // Check if this call belongs to a campaign and trigger the next queued lead
+    if (data.call_uuid) {
+      try {
+        const campaignLead = await queryOne<{ id: string; campaign_id: string; retry_count: number }>(
+          "SELECT id, campaign_id, retry_count FROM campaign_leads WHERE call_uuid = $1 AND status = 'calling'",
+          [data.call_uuid]
+        );
+
+        if (campaignLead) {
+          const isCallFailed = !isNoAnswer && !!data.call_failed;
+
+          // Check if this call qualifies for a retry
+          let retryScheduled = false;
+          if (isNoAnswer || isCallFailed) {
+            try {
+              const campaignRow = await queryOne<{ bot_config_id: string }>(
+                "SELECT bot_config_id FROM campaigns WHERE id = $1",
+                [campaignLead.campaign_id]
+              );
+              if (campaignRow) {
+                const botConfigRow = await queryOne<{ retry_config: { enabled: boolean; intervals: number[] } | null }>(
+                  "SELECT retry_config FROM bot_configs WHERE id = $1",
+                  [campaignRow.bot_config_id]
+                );
+                const retryConfig = botConfigRow?.retry_config;
+                const retryCount = campaignLead.retry_count ?? 0;
+
+                if (retryConfig?.enabled && retryCount < (retryConfig.intervals?.length ?? 0)) {
+                  const delayMinutes = retryConfig.intervals[retryCount];
+                  const nextRetryAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
+                  await query(
+                    "UPDATE campaign_leads SET status = 'retry_pending', retry_count = retry_count + 1, next_retry_at = $1, completed_at = NOW() WHERE id = $2",
+                    [nextRetryAt, campaignLead.id]
+                  );
+                  retryScheduled = true;
+                  console.log(`[API /api/call-ended] Campaign ${campaignLead.campaign_id}: scheduled retry ${retryCount + 1} for lead ${campaignLead.id} in ${delayMinutes}min`);
+                }
+              }
+            } catch (retryErr) {
+              console.error("[API /api/call-ended] Retry config check error (non-fatal):", retryErr);
+            }
+          }
+
+          if (!retryScheduled) {
+            const clStatus = isNoAnswer ? "no_answer" : isCallFailed ? "failed" : "completed";
+            await query(
+              "UPDATE campaign_leads SET status = $1, completed_at = NOW() WHERE id = $2",
+              [clStatus, campaignLead.id]
+            );
+          }
+
+          // Update campaign counters
+          const counterCol = isNoAnswer ? "no_answer_calls" : isCallFailed ? "failed_calls" : "completed_calls";
+          await query(
+            `UPDATE campaigns SET ${counterCol} = ${counterCol} + 1 WHERE id = $1`,
+            [campaignLead.campaign_id]
+          );
+
+          // Trigger next call(s) to maintain the rolling window
+          await triggerNextCampaignCalls(campaignLead.campaign_id);
+          console.log(`[API /api/call-ended] Campaign ${campaignLead.campaign_id}: advanced queue after ${data.call_uuid}${retryScheduled ? " (retry scheduled)" : ""}`);
+        }
+      } catch (campaignErr) {
+        console.error("[API /api/call-ended] Campaign queue error (non-fatal):", campaignErr);
       }
     }
 

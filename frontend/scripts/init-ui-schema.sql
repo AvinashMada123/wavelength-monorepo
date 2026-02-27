@@ -227,6 +227,51 @@ CREATE TABLE IF NOT EXISTS usage (
     PRIMARY KEY (org_id, period)
 );
 
+-- 14. campaigns
+CREATE TABLE IF NOT EXISTS campaigns (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    bot_config_id TEXT NOT NULL,
+    bot_config_name TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    concurrency_limit INTEGER NOT NULL DEFAULT 100,
+    total_leads INTEGER NOT NULL DEFAULT 0,
+    completed_calls INTEGER NOT NULL DEFAULT 0,
+    failed_calls INTEGER NOT NULL DEFAULT 0,
+    no_answer_calls INTEGER NOT NULL DEFAULT 0,
+    webhook_base_url TEXT NOT NULL,
+    created_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    paused_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_campaigns_org ON campaigns(org_id);
+CREATE INDEX IF NOT EXISTS idx_campaigns_org_status ON campaigns(org_id, status);
+
+-- 15. campaign_leads
+CREATE TABLE IF NOT EXISTS campaign_leads (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    lead_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    call_uuid TEXT,
+    position INTEGER NOT NULL,
+    queued_at TIMESTAMPTZ DEFAULT NOW(),
+    called_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cl_campaign ON campaign_leads(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_cl_campaign_status ON campaign_leads(campaign_id, status);
+CREATE INDEX IF NOT EXISTS idx_cl_call_uuid ON campaign_leads(call_uuid);
+
 -- Migrations: add bot config tracking to ui_calls
 ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS bot_config_id TEXT;
 ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS bot_config_name TEXT;
+
+-- Migrations: retry support
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS retry_config JSONB;
+ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
