@@ -39,6 +39,12 @@ class Config(BaseModel):
     plivo_phone_number: str = os.getenv("PLIVO_PHONE_NUMBER", "")
     plivo_callback_url: str = os.getenv("PLIVO_CALLBACK_URL", "")
 
+    # Twilio API settings
+    twilio_account_sid: str = os.getenv("TWILIO_ACCOUNT_SID", "")
+    twilio_auth_token: str = os.getenv("TWILIO_AUTH_TOKEN", "")
+    twilio_phone_number: str = os.getenv("TWILIO_PHONE_NUMBER", "")
+    twilio_callback_url: str = os.getenv("TWILIO_CALLBACK_URL", "")
+
     # Exotel API settings
     exotel_api_key: str = os.getenv("EXOTEL_API_KEY", "")
     exotel_api_token: str = os.getenv("EXOTEL_API_TOKEN", "")
@@ -138,6 +144,14 @@ class Config(BaseModel):
                 errors.append("PLIVO_AUTH_TOKEN is required for Plivo")
             if not self.plivo_phone_number:
                 errors.append("PLIVO_PHONE_NUMBER is required for Plivo")
+
+        elif self.call_provider == "twilio":
+            if not self.twilio_account_sid:
+                errors.append("TWILIO_ACCOUNT_SID is required for Twilio")
+            if not self.twilio_auth_token:
+                errors.append("TWILIO_AUTH_TOKEN is required for Twilio")
+            if not self.twilio_phone_number:
+                errors.append("TWILIO_PHONE_NUMBER is required for Twilio")
 
         elif self.call_provider == "exotel":
             if not self.exotel_api_key:

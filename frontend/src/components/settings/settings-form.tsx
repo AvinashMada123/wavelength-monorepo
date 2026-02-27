@@ -50,6 +50,15 @@ export function SettingsForm() {
   const [plivoPhoneNumber, setPlivoPhoneNumber] = useState(
     settings.plivoPhoneNumber || ""
   );
+  const [twilioAccountSid, setTwilioAccountSid] = useState(
+    settings.twilioAccountSid || ""
+  );
+  const [twilioAuthToken, setTwilioAuthToken] = useState(
+    settings.twilioAuthToken || ""
+  );
+  const [twilioPhoneNumber, setTwilioPhoneNumber] = useState(
+    settings.twilioPhoneNumber || ""
+  );
   const [autoQualify, setAutoQualify] = useState(
     settings.ai?.autoQualify ?? true
   );
@@ -89,6 +98,9 @@ export function SettingsForm() {
     setPlivoAuthId(settings.plivoAuthId || "");
     setPlivoAuthToken(settings.plivoAuthToken || "");
     setPlivoPhoneNumber(settings.plivoPhoneNumber || "");
+    setTwilioAccountSid(settings.twilioAccountSid || "");
+    setTwilioAuthToken(settings.twilioAuthToken || "");
+    setTwilioPhoneNumber(settings.twilioPhoneNumber || "");
     setAutoQualify(settings.ai?.autoQualify ?? true);
     setAnimationsEnabled(settings.appearance.animationsEnabled);
   }, [settings]);
@@ -111,6 +123,9 @@ export function SettingsForm() {
       plivoAuthId,
       plivoAuthToken,
       plivoPhoneNumber,
+      twilioAccountSid,
+      twilioAuthToken,
+      twilioPhoneNumber,
       ai: {
         autoQualify,
       },
@@ -331,6 +346,59 @@ export function SettingsForm() {
               />
               <p className="text-xs text-muted-foreground">
                 Your Plivo phone number (E.164 format, e.g., +1234567890)
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Section 3b: Twilio Configuration */}
+      <motion.div variants={itemVariants}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Twilio Configuration</CardTitle>
+            <CardDescription>
+              Configure your Twilio credentials for international voice calling. Set a bot config&apos;s Call Provider to &quot;Twilio&quot; to use these credentials.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="twilioAccountSid">Twilio Account SID</Label>
+                <Input
+                  id="twilioAccountSid"
+                  value={twilioAccountSid}
+                  onChange={(e) => setTwilioAccountSid(e.target.value)}
+                  placeholder="ACXXXXXXXXXXXXXXXX"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Your Twilio Account SID from the Twilio console
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="twilioAuthToken">Twilio Auth Token</Label>
+                <Input
+                  id="twilioAuthToken"
+                  type="password"
+                  value={twilioAuthToken}
+                  onChange={(e) => setTwilioAuthToken(e.target.value)}
+                  placeholder="Your auth token"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Your Twilio Auth Token (keep this secure)
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="twilioPhoneNumber">Twilio Phone Number</Label>
+              <Input
+                id="twilioPhoneNumber"
+                value={twilioPhoneNumber}
+                onChange={(e) => setTwilioPhoneNumber(e.target.value)}
+                placeholder="+1234567890"
+              />
+              <p className="text-xs text-muted-foreground">
+                Your Twilio phone number (E.164 format, e.g., +1234567890)
               </p>
             </div>
           </CardContent>

@@ -105,6 +105,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   plivoAuthId: "",
   plivoAuthToken: "",
   plivoPhoneNumber: "",
+  twilioAccountSid: "",
+  twilioAuthToken: "",
+  twilioPhoneNumber: "",
   appearance: {
     sidebarCollapsed: false,
     animationsEnabled: true,

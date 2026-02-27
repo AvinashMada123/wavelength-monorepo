@@ -81,6 +81,7 @@ export default function BotConfigEditorPage() {
   const [maxCallDuration, setMaxCallDuration] = useState(480);
   const [ghlWorkflows, setGhlWorkflows] = useState<GhlWorkflow[]>([]);
   const [voice, setVoice] = useState("");
+  const [callProvider, setCallProvider] = useState("plivo");
   const [microMomentsConfig, setMicroMomentsConfig] = useState<MicroMomentsConfig | null>(null);
   const [retryConfig, setRetryConfig] = useState<RetryConfig | null>(null);
   const hasLoadedRef = useRef(false);
@@ -99,6 +100,7 @@ export default function BotConfigEditorPage() {
     setMaxCallDuration(found.maxCallDuration ?? 480);
     setGhlWorkflows(found.ghlWorkflows || []);
     setVoice(found.voice || "");
+    setCallProvider(found.callProvider || "plivo");
     setMicroMomentsConfig(found.microMomentsConfig || null);
     setRetryConfig(found.retryConfig || null);
     setLoading(false);
@@ -184,6 +186,7 @@ export default function BotConfigEditorPage() {
         maxCallDuration,
         ghlWorkflows,
         voice,
+        callProvider,
         microMomentsConfig,
         retryConfig,
       },
@@ -331,6 +334,8 @@ export default function BotConfigEditorPage() {
             onContextChange={setContextVariables}
             voice={voice}
             onVoiceChange={setVoice}
+            callProvider={callProvider}
+            onCallProviderChange={setCallProvider}
           />
         )}
         {activeTab === "persona" && user && (
@@ -453,11 +458,15 @@ function ContextTab({
   onContextChange,
   voice,
   onVoiceChange,
+  callProvider,
+  onCallProviderChange,
 }: {
   contextVariables: BotContextVariables;
   onContextChange: (v: BotContextVariables) => void;
   voice: string;
   onVoiceChange: (v: string) => void;
+  callProvider: string;
+  onCallProviderChange: (v: string) => void;
 }) {
   const fields: { key: Exclude<keyof BotContextVariables, "customVariables" | "customVariableMappings">; label: string; placeholder: string; variable: string }[] = [
     { key: "agentName", label: "Agent Name", placeholder: "e.g. Priya", variable: "{agent_name}" },
@@ -625,25 +634,43 @@ function ContextTab({
 
       <Card>
         <CardHeader>
-          <CardTitle>Voice</CardTitle>
+          <CardTitle>Voice & Provider</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Choose the speaking voice for calls made with this bot configuration.
+            Choose the speaking voice and telephony provider for calls made with this bot configuration.
           </p>
         </CardHeader>
         <CardContent>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Voice</Label>
-            <select
-              value={voice}
-              onChange={(e) => onVoiceChange(e.target.value)}
-              className="flex h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              {VOICE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-sm">Voice</Label>
+              <select
+                value={voice}
+                onChange={(e) => onVoiceChange(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                {VOICE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Call Provider</Label>
+              <select
+                value={callProvider}
+                onChange={(e) => onCallProviderChange(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <option value="plivo">Plivo (Domestic)</option>
+                <option value="twilio">Twilio (International)</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {callProvider === "twilio"
+                  ? "Twilio credentials must be configured in Settings."
+                  : "Plivo credentials must be configured in Settings."}
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>

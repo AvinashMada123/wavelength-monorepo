@@ -885,8 +885,9 @@ async def get_call_recording(call_id: str):
 # Plivo Endpoints
 # ============================================================================
 
-# Import Plivo adapter
+# Import call adapters
 from src.adapters.plivo_adapter import plivo_adapter
+from src.adapters.twilio_adapter import twilio_adapter
 
 # Store call data for pending calls (call_uuid -> {phone, prompt, context})
 _pending_call_data = {}
@@ -924,6 +925,10 @@ class PlivoMakeCallRequest(BaseModel):
     plivoAuthId: Optional[str] = None  # Per-org Plivo Auth ID (overrides env default)
     plivoAuthToken: Optional[str] = None  # Per-org Plivo Auth Token (overrides env default)
     plivoPhoneNumber: Optional[str] = None  # Per-org Plivo caller ID (overrides env default)
+    callProvider: Optional[str] = "plivo"  # "plivo" or "twilio" (per bot config)
+    twilioAccountSid: Optional[str] = None  # Per-org Twilio Account SID
+    twilioAuthToken: Optional[str] = None  # Per-org Twilio Auth Token
+    twilioPhoneNumber: Optional[str] = None  # Per-org Twilio phone number
     maxCallDuration: Optional[int] = 480  # Max call duration in seconds (default 8 min)
     ghlWorkflows: Optional[list] = []  # GHL workflow triggers [{id, name, description, tag, timing, enabled}]
     microMomentsConfig: Optional[dict] = None  # Per-bot micro-moments config override
@@ -1013,11 +1018,21 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         if request.ghlWorkflows:
             context["_ghl_workflows"] = request.ghlWorkflows
 
+        # Determine call provider (per bot config)
+        provider = request.callProvider or config.call_provider or "plivo"
+        context["_call_provider"] = provider
+
         # Pass per-org Plivo credentials in context for hangup
         if request.plivoAuthId:
             context["plivo_auth_id"] = request.plivoAuthId
         if request.plivoAuthToken:
             context["plivo_auth_token"] = request.plivoAuthToken
+
+        # Pass per-org Twilio credentials in context for hangup
+        if request.twilioAccountSid:
+            context["twilio_account_sid"] = request.twilioAccountSid
+        if request.twilioAuthToken:
+            context["twilio_auth_token"] = request.twilioAuthToken
 
         # Store all call data
         async with _call_data_lock:
@@ -1025,7 +1040,8 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
                 "phone": request.phoneNumber,
                 "prompt": request.prompt,
                 "context": context,
-                "webhookUrl": request.webhookUrl
+                "webhookUrl": request.webhookUrl,
+                "provider": provider,
             }
 
         # Record call in DB (non-blocking)
@@ -1123,37 +1139,45 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             max_call_duration=request.maxCallDuration or 480,
         )
 
-        logger.info(f"Gemini preload complete for {call_uuid} - now making call")
+        logger.info(f"Gemini preload complete for {call_uuid} - now making {provider} call")
 
-        # NOW make the Plivo call (AI is already ready)
-        # Use per-org Plivo credentials if provided, otherwise adapter uses env defaults
-        result = await plivo_adapter.make_call(
-            phone_number=request.phoneNumber,
-            caller_name=request.contactName,
-            plivo_auth_id=request.plivoAuthId,
-            plivo_auth_token=request.plivoAuthToken,
-            plivo_phone_number=request.plivoPhoneNumber,
-        )
+        # NOW make the call via selected provider (AI is already ready)
+        if provider == "twilio":
+            result = await twilio_adapter.make_call(
+                phone_number=request.phoneNumber,
+                caller_name=request.contactName,
+                twilio_account_sid=request.twilioAccountSid,
+                twilio_auth_token=request.twilioAuthToken,
+                twilio_phone_number=request.twilioPhoneNumber,
+            )
+        else:
+            result = await plivo_adapter.make_call(
+                phone_number=request.phoneNumber,
+                caller_name=request.contactName,
+                plivo_auth_id=request.plivoAuthId,
+                plivo_auth_token=request.plivoAuthToken,
+                plivo_phone_number=request.plivoPhoneNumber,
+            )
 
         if result.get("success"):
-            # Map Plivo's UUID to our internal UUID (for preloaded session lookup)
-            plivo_uuid = result.get("call_uuid")
-            if plivo_uuid:
+            # Map provider's UUID to our internal UUID (for preloaded session lookup)
+            provider_uuid = result.get("call_uuid")
+            if provider_uuid:
                 async with _call_data_lock:
-                    _plivo_to_internal_uuid[plivo_uuid] = call_uuid
-                    _internal_to_plivo_uuid[call_uuid] = plivo_uuid
+                    _plivo_to_internal_uuid[provider_uuid] = call_uuid
+                    _internal_to_plivo_uuid[call_uuid] = provider_uuid
                     if call_uuid in _pending_call_data:
-                        _pending_call_data[call_uuid]["plivo_uuid"] = plivo_uuid
-                logger.info(f"UUID mapping: Plivo {plivo_uuid} -> Internal {call_uuid}")
+                        _pending_call_data[call_uuid]["plivo_uuid"] = provider_uuid
+                logger.info(f"UUID mapping: {provider} {provider_uuid} -> Internal {call_uuid}")
 
-                # Set Plivo UUID on the preloaded session for hangup
+                # Set provider UUID on the preloaded session for hangup
                 from src.services.plivo_gemini_stream import set_plivo_uuid
-                set_plivo_uuid(call_uuid, plivo_uuid)
+                set_plivo_uuid(call_uuid, provider_uuid)
 
             return JSONResponse(content={
                 "success": True,
                 "call_uuid": call_uuid,
-                "plivo_uuid": plivo_uuid,
+                "plivo_uuid": provider_uuid,
                 "message": f"Call initiated to {request.phoneNumber}. Waiting for user to answer."
             })
         else:
@@ -1371,6 +1395,205 @@ async def plivo_hangup(request: Request):
     return JSONResponse(content={"status": "ok"})
 
 
+# ============================================================================
+# Twilio Endpoints
+# ============================================================================
+
+@app.post("/twilio/answer")
+async def twilio_answer(request: Request):
+    """Handle Twilio call answer - returns TwiML with bidirectional Stream"""
+    body = await request.form()
+    twilio_sid = body.get("CallSid", "")
+    from_phone = body.get("From", "")
+    to_phone = body.get("To", "")
+    call_status = body.get("CallStatus", "")
+
+    # Look up our internal UUID from Twilio's SID (same mapping as Plivo)
+    async with _call_data_lock:
+        internal_uuid = _plivo_to_internal_uuid.get(twilio_sid, twilio_sid)
+        customer_phone = to_phone or from_phone
+        if customer_phone and internal_uuid and internal_uuid not in _pending_call_data:
+            _pending_call_data[internal_uuid] = {"phone": customer_phone, "prompt": None, "context": {}}
+
+    logger.info(f"Twilio call answered: sid={twilio_sid}, internal={internal_uuid}, from {from_phone} to {to_phone}, status={call_status}")
+
+    # WebSocket URL for bidirectional audio stream (use internal UUID for preloaded session)
+    callback_url = config.twilio_callback_url or config.plivo_callback_url
+    ws_base = callback_url.replace("https://", "wss://").replace("http://", "ws://")
+    stream_url = f"{ws_base}/twilio/stream/{internal_uuid}"
+
+    logger.info(f"Twilio stream URL: {stream_url}")
+
+    # Return TwiML with bidirectional Stream
+    twiml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="{stream_url}" />
+    </Connect>
+</Response>"""
+
+    return Response(content=twiml_response, media_type="application/xml")
+
+
+@app.websocket("/twilio/stream/{call_uuid}")
+async def twilio_stream(websocket: WebSocket, call_uuid: str):
+    """
+    WebSocket endpoint for Twilio bidirectional audio stream.
+    Bridges Twilio audio (mu-law 8kHz) with Gemini 2.5 Live for real-time voice AI.
+    """
+    from src.services.plivo_gemini_stream import create_session, remove_session
+
+    await websocket.accept()
+    logger.info(f"Twilio stream WebSocket connected for call {call_uuid}")
+
+    session = None
+    caller_phone = ""
+    stream_sid = ""
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            event = message.get("event")
+
+            if event == "connected":
+                # WebSocket connected — Twilio sends this first
+                logger.info(f"Twilio stream connected event for {call_uuid}")
+
+            elif event == "start":
+                # Stream started - create Gemini session
+                start_data = message.get("start", {})
+                stream_sid = start_data.get("streamSid", "")
+                custom_params = start_data.get("customParameters", {})
+                caller_phone = custom_params.get("callerPhone", "")
+
+                # Fallback: look up phone from pending call data
+                if not caller_phone:
+                    async with _call_data_lock:
+                        call_data = _pending_call_data.get(call_uuid, {})
+                    caller_phone = call_data.get("phone", "")
+                if caller_phone and not caller_phone.startswith("+"):
+                    caller_phone = "+" + caller_phone
+
+                logger.info(f"Twilio stream started: {call_uuid}, streamSid={stream_sid}, phone={caller_phone}")
+
+                # Create Gemini Live session (reuses preloaded session)
+                session = await create_session(call_uuid, caller_phone, websocket)
+
+                if session:
+                    logger.info(f"Gemini Live session created for Twilio call {call_uuid}")
+                    session.provider = "twilio"
+                    session.twilio_stream_sid = stream_sid
+                    # Set Twilio credentials on session for hangup
+                    async with _call_data_lock:
+                        call_data = _pending_call_data.get(call_uuid, {})
+                    ctx = call_data.get("context", {})
+                    session.twilio_account_sid = ctx.get("twilio_account_sid", "")
+                    session.twilio_auth_token = ctx.get("twilio_auth_token", "")
+                    session_db.update_call(call_uuid, status="active",
+                                           started_at=datetime.now().isoformat())
+                    # Ensure provider UUID is set
+                    if not session.plivo_call_uuid:
+                        async with _call_data_lock:
+                            call_data = _pending_call_data.get(call_uuid, {})
+                            provider_uuid = call_data.get("plivo_uuid") or _internal_to_plivo_uuid.get(call_uuid)
+                        if provider_uuid:
+                            session.plivo_call_uuid = provider_uuid
+                else:
+                    logger.error(f"Failed to create Gemini session for Twilio call {call_uuid}")
+
+            elif event == "media":
+                # Audio from caller (mu-law 8kHz) — forward to Gemini
+                if session:
+                    await session.handle_twilio_media(message)
+
+            elif event == "stop":
+                logger.info(f"Twilio stream stopped for {call_uuid}")
+                break
+
+    except WebSocketDisconnect:
+        logger.info(f"Twilio stream WebSocket disconnected for {call_uuid}")
+    except Exception as e:
+        logger.error(f"Twilio stream error for {call_uuid}: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if session:
+            await remove_session(call_uuid)
+        clear_conversation(call_uuid)
+        logger.info(f"Twilio stream cleanup complete for {call_uuid}")
+
+
+@app.post("/twilio/hangup")
+async def twilio_hangup(request: Request):
+    """Handle Twilio call status callback (completed, no-answer, etc.)"""
+    body = await request.form()
+    twilio_sid = body.get("CallSid", "")
+    call_status = body.get("CallStatus", "")
+    duration = body.get("CallDuration", body.get("Duration", "0"))
+
+    # Only process terminal statuses
+    if call_status not in ("completed", "busy", "no-answer", "canceled", "failed"):
+        logger.debug(f"Twilio status callback: {twilio_sid} -> {call_status} (non-terminal, ignoring)")
+        return JSONResponse(content={"status": "ok"})
+
+    # Look up internal UUID and call data for cleanup
+    async with _call_data_lock:
+        internal_uuid = _plivo_to_internal_uuid.pop(twilio_sid, twilio_sid)
+        call_data = _pending_call_data.pop(internal_uuid, None)
+        _internal_to_plivo_uuid.pop(internal_uuid, None)
+
+    logger.info(f"Twilio call ended: sid={twilio_sid}, internal={internal_uuid}, status={call_status}, duration={duration}s")
+    clear_conversation(internal_uuid)
+
+    # If no-answer/busy/canceled, send webhook so frontend can update
+    if call_data and call_status in ("no-answer", "busy", "canceled", "failed"):
+        from src.services.plivo_gemini_stream import get_session
+        session = await get_session(internal_uuid)
+        if not session:
+            webhook_url = call_data.get("webhookUrl")
+            if webhook_url:
+                import httpx
+                no_answer_payload = {
+                    "event": "call_ended",
+                    "call_uuid": internal_uuid,
+                    "caller_phone": call_data.get("phone", ""),
+                    "contact_name": (call_data.get("context") or {}).get("customer_name", ""),
+                    "client_name": "",
+                    "duration_seconds": 0,
+                    "timestamp": datetime.now().isoformat(),
+                    "transcript": "",
+                    "transcript_entries": [],
+                    "persona": "",
+                    "triggered_persona": None,
+                    "questions_completed": 0,
+                    "total_questions": 0,
+                    "completion_rate": 0,
+                    "interest_level": "None",
+                    "call_summary": f"Call was not answered ({call_status})",
+                    "objections_raised": [],
+                    "collected_responses": {},
+                    "question_pairs": [],
+                    "call_metrics": {
+                        "total_duration_s": 0,
+                        "turn_count": 0,
+                        "avg_latency_ms": 0,
+                        "p90_latency_ms": 0,
+                        "min_latency_ms": 0,
+                        "max_latency_ms": 0,
+                        "total_nudges": 0,
+                    },
+                    "no_answer": True,
+                    "call_failed": call_status == "failed",
+                }
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        await client.post(webhook_url, json=no_answer_payload)
+                    logger.info(f"Sent no-answer webhook for Twilio call {internal_uuid}")
+                except Exception as e:
+                    logger.error(f"Failed to send Twilio no-answer webhook: {e}")
+
+    return JSONResponse(content={"status": "ok"})
 
 
 @app.post("/calls/{call_uuid}/hangup")

@@ -22,6 +22,9 @@ export interface AppSettings {
   plivoAuthId: string;
   plivoAuthToken: string;
   plivoPhoneNumber: string;
+  twilioAccountSid: string;
+  twilioAuthToken: string;
+  twilioPhoneNumber: string;
   appearance: {
     sidebarCollapsed: boolean;
     animationsEnabled: boolean;

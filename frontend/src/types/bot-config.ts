@@ -67,6 +67,7 @@ export interface BotConfig {
   maxCallDuration?: number;
   ghlWorkflows?: GhlWorkflow[];
   voice?: string;
+  callProvider?: string;
   microMomentsConfig?: MicroMomentsConfig | null;
   retryConfig?: RetryConfig | null;
   createdAt: string;

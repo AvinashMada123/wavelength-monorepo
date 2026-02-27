@@ -206,6 +206,10 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     callServerPayload.microMomentsConfig = configDoc.micro_moments_config;
   }
 
+  // Provider from bot config (per-config, not org-wide)
+  const callProvider = (configDoc.call_provider as string) || "plivo";
+  callServerPayload.callProvider = callProvider;
+
   // GHL + Plivo from org settings
   if (orgSettings.ghlWhatsappWebhookUrl) callServerPayload.ghlWhatsappWebhookUrl = orgSettings.ghlWhatsappWebhookUrl;
   if (orgSettings.ghlApiKey) callServerPayload.ghlApiKey = orgSettings.ghlApiKey;
@@ -215,6 +219,13 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     callServerPayload.plivoAuthToken = orgSettings.plivoAuthToken;
   }
   if (orgSettings.plivoPhoneNumber) callServerPayload.plivoPhoneNumber = orgSettings.plivoPhoneNumber;
+
+  // Twilio credentials from org settings (used when callProvider is "twilio")
+  if (orgSettings.twilioAccountSid && orgSettings.twilioAuthToken) {
+    callServerPayload.twilioAccountSid = orgSettings.twilioAccountSid;
+    callServerPayload.twilioAuthToken = orgSettings.twilioAuthToken;
+  }
+  if (orgSettings.twilioPhoneNumber) callServerPayload.twilioPhoneNumber = orgSettings.twilioPhoneNumber;
 
   // --- Send to call server ---
   console.log(`[call-trigger] Triggering call for org ${orgId}, config "${configDoc.name}", phone ${phoneNumber}`);
@@ -234,8 +245,20 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     throw new Error(`Call server returned ${response.status}: ${responseText.slice(0, 200) || "(empty body)"}`);
   }
 
+  // Check for error responses from the call server
+  if (!response.ok) {
+    const errMsg = data.detail || data.message || data.error || JSON.stringify(data);
+    console.error(`[call-trigger] Call server error (${response.status}):`, errMsg);
+    throw new Error(`Call server error (${response.status}): ${errMsg}`);
+  }
+
+  if (!data.call_uuid) {
+    console.error("[call-trigger] Call server returned no call_uuid:", JSON.stringify(data).slice(0, 500));
+    throw new Error(`Call server did not return a call_uuid: ${data.detail || data.message || JSON.stringify(data).slice(0, 200)}`);
+  }
+
   return {
-    callUuid: data.call_uuid || "",
+    callUuid: data.call_uuid,
     success: true,
     message: data.message || "Call initiated",
     rawResponse: data,

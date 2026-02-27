@@ -275,3 +275,6 @@ ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS bot_config_name TEXT;
 ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS retry_config JSONB;
 ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+
+-- Migrations: Twilio provider support (per bot config)
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS call_provider TEXT DEFAULT 'plivo';
