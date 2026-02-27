@@ -88,6 +88,17 @@ export async function drainQueue(orgId: string): Promise<number> {
 
         const payload = next.payload;
 
+        // Resolve bot config name for call log display
+        let botConfigName: string | undefined;
+        const cfgId = next.bot_config_id || payload.botConfigId;
+        if (cfgId) {
+          const cfg = await queryOne<{ name: string }>(
+            "SELECT name FROM bot_configs WHERE id = $1",
+            [cfgId]
+          );
+          botConfigName = cfg?.name;
+        }
+
         try {
           // Reserve a concurrency slot
           const slot = await checkConcurrencySlot({
@@ -95,7 +106,7 @@ export async function drainQueue(orgId: string): Promise<number> {
             phoneNumber: payload.phoneNumber,
             contactName: payload.contactName,
             botConfigId: payload.botConfigId,
-            botConfigName: undefined,
+            botConfigName,
             leadId: next.lead_id || payload.leadId,
             initiatedBy: next.source === "webhook" ? "api" : next.source,
             requestPayload: payload as unknown as Record<string, unknown>,
