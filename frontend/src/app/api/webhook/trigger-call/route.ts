@@ -69,7 +69,62 @@ export async function POST(request: NextRequest) {
 
     // --- Parse request body ---
     const body = await request.json();
-    const { phoneNumber, contactName, botConfigId, leadId, customVariableOverrides } = body;
+
+    // Detect GHL webhook format: GHL sends customData with our fields, plus hundreds
+    // of custom field Q&A pairs at the top level that we ignore.
+    let phoneNumber: string | undefined;
+    let contactName: string | undefined;
+    let contactEmail: string | undefined;
+    let botConfigId: string | undefined;
+    let leadId: string | undefined;
+    let customVariableOverrides: Record<string, string> | undefined;
+    let ghlContactId: string | undefined;
+    let ghlCompanyName: string | undefined;
+    let ghlCity: string | undefined;
+    let ghlTags: string[] | undefined;
+
+    if (body.customData && body.customData.botConfigId) {
+      // --- GHL webhook payload ---
+      const cd = body.customData as Record<string, string>;
+      phoneNumber = cd.phoneNumber;
+      contactName = cd.contactName;
+      contactEmail = cd.contactEmail;
+      botConfigId = cd.botConfigId;
+      leadId = cd.leadId;
+
+      // Extract cv* prefixed fields as context variable overrides
+      // e.g. cvAgent_name → agent_name, cvLocation → location
+      customVariableOverrides = {};
+      for (const [key, value] of Object.entries(cd)) {
+        if (key.startsWith("cv") && key.length > 2 && value) {
+          const varName = key.slice(2, 3).toLowerCase() + key.slice(3);
+          customVariableOverrides[varName] = String(value);
+        }
+      }
+
+      // Capture standard GHL contact fields for lead creation
+      ghlContactId = body.contact_id;
+      ghlCompanyName = body.company_name;
+      ghlCity = body.city;
+      if (typeof body.tags === "string" && body.tags) {
+        ghlTags = body.tags.split(",").map((t: string) => t.trim()).filter(Boolean);
+      }
+
+      // Fallback: use top-level GHL fields if customData doesn't have them
+      if (!phoneNumber) phoneNumber = body.phone;
+      if (!contactName) contactName = body.full_name || [body.first_name, body.last_name].filter(Boolean).join(" ");
+      if (!contactEmail) contactEmail = body.email;
+
+      console.log(`[Webhook trigger-call] GHL payload detected. Phone: ${phoneNumber}, Config: ${botConfigId}, Contact: ${ghlContactId}`);
+    } else {
+      // --- Standard webhook payload ---
+      phoneNumber = body.phoneNumber;
+      contactName = body.contactName;
+      contactEmail = body.contactEmail;
+      botConfigId = body.botConfigId;
+      leadId = body.leadId;
+      customVariableOverrides = body.customVariableOverrides;
+    }
 
     if (!phoneNumber) {
       return NextResponse.json(
@@ -149,6 +204,49 @@ export async function POST(request: NextRequest) {
       socialProofPayload = { socialProofCompanies: companies, socialProofCities: cities, socialProofRoles: roles };
     }
 
+    // --- Auto-create lead if not provided ---
+    // Look up existing lead by phone (or GHL contact ID), create if missing
+    if (!leadId) {
+      let existingLead: { id: string; bot_notes: string | null } | null = null;
+
+      if (ghlContactId) {
+        existingLead = await queryOne<{ id: string; bot_notes: string | null }>(
+          "SELECT id, bot_notes FROM leads WHERE org_id = $1 AND ghl_contact_id = $2",
+          [orgId, ghlContactId]
+        );
+      }
+      if (!existingLead && phoneNumber) {
+        existingLead = await queryOne<{ id: string; bot_notes: string | null }>(
+          "SELECT id, bot_notes FROM leads WHERE org_id = $1 AND phone_number = $2",
+          [orgId, phoneNumber]
+        );
+      }
+
+      if (existingLead) {
+        leadId = existingLead.id;
+      } else {
+        // Create new lead
+        const newLeadId = crypto.randomUUID();
+        await query(
+          `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, status, call_count, source, ghl_contact_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', 0, 'ghl', $9, NOW(), NOW())`,
+          [
+            newLeadId,
+            orgId,
+            contactName || "Unknown",
+            phoneNumber,
+            contactEmail || null,
+            ghlCompanyName || null,
+            ghlCity || null,
+            JSON.stringify(ghlTags || []),
+            ghlContactId || null,
+          ]
+        );
+        leadId = newLeadId;
+        console.log(`[Webhook trigger-call] Created new lead ${newLeadId} for phone ${phoneNumber}`);
+      }
+    }
+
     // --- Load bot notes if memory recall enabled ---
     let botNotes = "";
     if (configDoc.memory_recall_enabled && leadId) {
@@ -168,6 +266,7 @@ export async function POST(request: NextRequest) {
       event_name: ctx.eventName || "",
       event_host: ctx.eventHost || "",
       location: ctx.location || "",
+      ...(contactEmail ? { email: contactEmail } : {}),
     };
     const customVars = ctx.customVariables as Record<string, string> | undefined;
     if (customVars && typeof customVars === "object") {
@@ -207,6 +306,7 @@ export async function POST(request: NextRequest) {
       personaEngineEnabled: configDoc.persona_engine_enabled ?? false,
       productIntelligenceEnabled: configDoc.product_intelligence_enabled ?? false,
       ...(botNotes ? { botNotes } : {}),
+      ...(leadId ? { leadId } : {}),
       maxCallDuration: configDoc.max_call_duration ?? 480,
       ghlWorkflows: configDoc.ghl_workflows ?? [],
       ...(configDoc.voice ? { voice: configDoc.voice } : {}),
