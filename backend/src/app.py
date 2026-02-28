@@ -132,6 +132,26 @@ async def lifespan(app: FastAPI):
                     logger.info(f"Cleanup: removed {len(stale_keys)} stale pending, {len(stale_internal)} stale UUID mappings")
                 # Clean stale DB records
                 session_db.cleanup_stale(max_age_minutes=10)
+
+                # Clean stale ui_calls stuck in 'in-progress'/'initiating' (prevents concurrency lock)
+                # Calls older than 15 minutes that are still active are definitely stale
+                import asyncpg
+                try:
+                    ui_db_url = config.database_url if hasattr(config, 'database_url') else os.environ.get("DATABASE_URL", "")
+                    if ui_db_url:
+                        conn = await asyncpg.connect(ui_db_url)
+                        try:
+                            updated = await conn.execute(
+                                "UPDATE ui_calls SET status = 'failed' "
+                                "WHERE status IN ('in-progress', 'initiating') "
+                                "AND initiated_at < NOW() - INTERVAL '15 minutes'"
+                            )
+                            if updated and updated != "UPDATE 0":
+                                logger.info(f"Cleanup: marked stale ui_calls as failed: {updated}")
+                        finally:
+                            await conn.close()
+                except Exception as db_err:
+                    logger.debug(f"ui_calls cleanup error: {db_err}")
             except Exception as e:
                 logger.debug(f"Cleanup task error: {e}")
 
