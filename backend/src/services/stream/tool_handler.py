@@ -106,8 +106,8 @@ class ToolHandler:
                         except Exception as e:
                             self.log.error(f"Failed to set DND: {e}")
 
-                # Fallback: end call after 2 seconds regardless
-                asyncio.create_task(s._lifecycle._fallback_hangup(2.0))
+                # Hang up after 2 seconds (flush final audio to caller)
+                asyncio.create_task(s._lifecycle._hangup_call_delayed(2.0))
                 return
 
             # Handle save_user_info tool — saves user details via Gemini's audio understanding

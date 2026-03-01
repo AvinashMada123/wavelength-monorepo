@@ -179,97 +179,6 @@ class AudioPipeline:
             logger.error(traceback.format_exc())
             return None
 
-    async def _send_preloaded_audio(self):
-        """Send preloaded audio — waits for caller speech before flushing greeting."""
-        s = self.state
-        # Wait for caller to speak (say "hello") before playing greeting
-        # This prevents audio bleed where greeting plays while phone is still being raised to ear
-        if s._wait_for_caller_speech:
-            self.log.detail("Holding greeting — waiting for caller speech")
-            wait_start = time.time()
-            max_wait = 5.0  # Safety: flush after 5s even without speech (call might be silent pickup)
-            while not s._caller_speech_detected:
-                await asyncio.sleep(0.05)
-                if not s.is_active:
-                    return  # Call ended while waiting
-                if (time.time() - wait_start) > max_wait:
-                    self.log.warn(f"Caller speech timeout ({max_wait}s) — flushing greeting anyway")
-                    break
-            waited_ms = (time.time() - wait_start) * 1000
-            self.log.detail(f"Caller speech detected after {waited_ms:.0f}ms — releasing greeting")
-
-        # If greeting is still being generated, wait up to 2s for completion
-        if not s.greeting_audio_complete and s.preloaded_audio:
-            self.log.detail("Greeting still generating — waiting up to 2s for completion")
-            wait_start = time.time()
-            while not s.greeting_audio_complete and (time.time() - wait_start) < 2.0:
-                await asyncio.sleep(0.05)
-                if not s.is_active:
-                    return
-
-            if not s.greeting_audio_complete:
-                # Timeout — skip partial greeting, trigger fresh shorter greeting
-                self.log.warn("Greeting incomplete after 2s — skipping partial, triggering fresh")
-                s.preloaded_audio = []
-                s.greeting_sent = False
-                s._greeting_trigger_time = time.time()
-                # Send fresh greeting trigger to Gemini
-                if s.goog_live_ws:
-                    try:
-                        await s.goog_live_ws.send(json.dumps({
-                            "client_content": {
-                                "turns": [{"role": "user", "parts": [{"text":
-                                    "[SYSTEM: Start the conversation with a brief greeting. Keep it to one sentence.]"
-                                }]}],
-                                "turn_complete": True
-                            }
-                        }))
-                    except Exception:
-                        pass
-                return  # Fresh greeting will come through normal audio pipeline
-
-        # Minimal delay for WebSocket buffer to stabilize
-        await asyncio.sleep(0.05)
-        count = len(s.preloaded_audio)
-        # Greeting recording happens in _plivo_sender_worker at send-time (16kHz)
-        for audio in s.preloaded_audio:
-            chunk = AudioChunk(audio_b64=audio, turn_id=0, sample_rate=24000)
-            try:
-                s._plivo_send_queue.put_nowait(chunk)
-            except asyncio.QueueFull:
-                self.log.warn("plivo_send_queue full during preload send")
-        if s._call_answered_time:
-            first_audio_ms = (time.time() - s._call_answered_time) * 1000
-            self.log.detail_last(f"First audio to caller: {first_audio_ms:.0f}ms ({count} chunks)")
-        s.preloaded_audio = []
-
-    async def _send_silence_keepalive(self):
-        """Send silence frames to Gemini between greeting completion and call answer.
-        Prevents Gemini's VAD from going dormant during the ringing period.
-        Without this, the preloaded session becomes unresponsive to user audio."""
-        s = self.state
-        try:
-            # 20ms of silence at 16kHz mono (320 bytes of zeros)
-            silence_frame = base64.b64encode(bytes(320)).decode()
-            silence_msg = json.dumps({
-                "realtime_input": {
-                    "media_chunks": [{
-                        "mime_type": "audio/pcm;rate=16000",
-                        "data": silence_frame
-                    }]
-                }
-            })
-            while s.is_active and not s.plivo_ws and s.goog_live_ws:
-                try:
-                    await s.goog_live_ws.send(silence_msg)
-                except Exception:
-                    break
-                await asyncio.sleep(0.1)  # Send 10 silence frames per second
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.debug(f"[{s.call_uuid[:8]}] Silence keepalive ended: {e}")
-
     async def _plivo_sender_worker(self):
         """Worker: Reads from plivo_send_queue, sends to Plivo WebSocket"""
         s = self.state
@@ -401,17 +310,6 @@ class AudioPipeline:
 
             chunk = base64.b64decode(audio_b64)
 
-            # Detect caller speech energy — triggers preloaded greeting release
-            if s._wait_for_caller_speech and not s._caller_speech_detected:
-                import struct
-                n_samples = len(chunk) // 2
-                if n_samples > 0:
-                    samples = struct.unpack(f"<{n_samples}h", chunk[:n_samples * 2])
-                    rms = (sum(s_val * s_val for s_val in samples) / n_samples) ** 0.5
-                    if rms > s._speech_energy_threshold:
-                        s._caller_speech_detected = True
-                        s._wait_for_caller_speech = False
-
             # Detect when user starts speaking (after agent finished)
             if s._last_user_audio_time is None or (now - s._last_user_audio_time) > 1.0:
                 # Gap > 1 second means new user speech segment
@@ -441,6 +339,12 @@ class AudioPipeline:
 
             # Record user audio (16kHz)
             self._record_audio("USER", chunk, 16000)
+
+            # Mute user audio to Gemini during greeting — prevents VAD from
+            # interrupting the greeting and causing double-greeting regeneration
+            if s._greeting_in_progress:
+                return
+
             s.inbuffer.extend(chunk)
             chunks_sent = 0
             while len(s.inbuffer) >= s.BUFFER_SIZE:

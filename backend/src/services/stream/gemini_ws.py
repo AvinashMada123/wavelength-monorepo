@@ -22,15 +22,21 @@ class GeminiConnection:
         self.log = log
 
     def _is_garbled(self, text):
-        """Check if text appears garbled (STT noise)."""
-        if not text or len(text.strip()) < 2:
-            return True
-        # Check if any word has 3+ chars with vowels
-        words = re.findall(r'[a-zA-Z]{3,}', text)
-        if not words:
-            return True
-        # At least one word must contain a vowel
-        return not any(re.search(r'[aeiouAEIOU]', w) for w in words)
+        """Check if accumulated turn text appears garbled (STT noise).
+        Called on full turn text, not individual fragments."""
+        if not text or len(text.strip()) < 3:
+            return False  # Too short to judge — not garbled
+        stripped = text.strip()
+        # If it has any recognizable word (2+ alpha chars), it's not garbled
+        words = re.findall(r'[a-zA-Z]{2,}', stripped)
+        if words:
+            return False
+        # If it has Indic script characters, it's not garbled
+        if re.search(r'[\u0900-\u0D7F]', stripped):
+            return False
+        # Only flag if it's mostly non-alpha noise
+        alpha_ratio = sum(1 for c in stripped if c.isalpha()) / max(len(stripped), 1)
+        return alpha_ratio < 0.3
 
     def _has_blocked_script(self, text):
         """Check if text contains blocked scripts (STT hallucinations).
@@ -599,21 +605,12 @@ class GeminiConnection:
                         has_model_turn = "modelTurn" in sc
                         interrupted = sc.get("interrupted", False)
                         logger.warning(f"[{s.call_uuid[:8]}] turnComplete with 0 audio — provider={s.provider}, turn={s._turn_count}, interrupted={interrupted}, sc_keys={sc_keys}, has_modelTurn={has_model_turn}, plivo_ws={'set' if s.plivo_ws else 'None'}")
-                    # Only mark preload complete if greeting audio was actually generated.
-                    # Empty turnComplete (0 chunks) = Gemini returned no audio; the nudge
-                    # handler will retry, and the NEXT turnComplete with audio will fire this.
-                    if s.preloaded_audio or s.plivo_ws or s._preload_complete.is_set():
-                        s._preload_complete.set()
-                    s.greeting_audio_complete = True
                     s._turn_count += 1
                     s._current_turn_id += 1
-
-                    # Start silence keepalive if call hasn't been answered yet.
-                    # This prevents Gemini's VAD from going dormant during ringing.
-                    if not s.plivo_ws and s._turn_count == 1:
-                        s._silence_keepalive_task = asyncio.create_task(
-                            s._audio._send_silence_keepalive()
-                        )
+                    # Mark when greeting finishes (ghost monitor + audio mute anchor to this)
+                    if s._turn_count == 1 and s._greeting_completed_time is None:
+                        s._greeting_completed_time = time.time()
+                        s._greeting_in_progress = False
 
                     if s._turn_start_time and s._current_turn_audio_chunks > 0:
                         turn_duration_ms = (time.time() - s._turn_start_time) * 1000
@@ -637,6 +634,17 @@ class GeminiConnection:
                             full_user = " ".join(s._current_turn_user_text)
                             s._last_user_text = full_user
                             s._current_turn_user_text = []
+
+                            # D1b: Garbled audio circuit breaker (check full turn, not fragments)
+                            if self._is_garbled(full_user):
+                                s._garbled_turn_count += 1
+                                self.log.warn(f"Garbled turn text ({s._garbled_turn_count}/3): '{full_user[:60]}'")
+                                if s._garbled_turn_count >= 3:
+                                    self.log.warn("Garbled audio circuit breaker — 3 consecutive garbled turns")
+                                    s._closing_call = True
+                                    await s._lifecycle._hangup_call_delayed(1.0)
+                            else:
+                                s._garbled_turn_count = 0
 
                         # Accumulate agent text for phase detection (D3c)
                         if full_agent:
@@ -765,16 +773,11 @@ class GeminiConnection:
                     # Skip nudge during post-split cooldown to avoid triple-nudge storm
                     is_empty_turn = s._current_turn_audio_chunks == 0
                     post_split_cooldown = s._last_split_time and (time.time() - s._last_split_time) < 5.0
-                    if is_empty_turn and s.greeting_audio_complete and not s._closing_call and not post_split_cooldown:
+                    if is_empty_turn and s._turn_count >= 1 and not s._closing_call and not post_split_cooldown:
                         s._empty_turn_nudge_count += 1
                         if s._empty_turn_nudge_count <= 3:
-                            # During preload (no caller yet), use greeting-specific nudge
-                            if not s.plivo_ws:
-                                self.log.warn(f"Empty turn, nudging AI with greeting prompt ({s._empty_turn_nudge_count}/3)")
-                                asyncio.create_task(self._send_greeting_nudge())
-                            else:
-                                self.log.warn(f"Empty turn, nudging AI ({s._empty_turn_nudge_count}/3)")
-                                asyncio.create_task(self._send_silence_nudge())
+                            self.log.warn(f"Empty turn, nudging AI ({s._empty_turn_nudge_count}/3)")
+                            asyncio.create_task(self._send_silence_nudge())
                     else:
                         s._empty_turn_nudge_count = 0
 
@@ -787,7 +790,7 @@ class GeminiConnection:
                             and not s._prewarm_task
                             and not s._closing_call
                             and not s.agent_said_goodbye
-                            and s.greeting_audio_complete):
+                            and s._turn_count >= 1):
                         s._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
 
                     # Set split pending at threshold (defer to silence gap)
@@ -796,7 +799,7 @@ class GeminiConnection:
                             and not s._closing_call
                             and not s._goodbye_pending
                             and not s.agent_said_goodbye
-                            and s.greeting_audio_complete
+                            and s._turn_count >= 1
                             and not s._split_pending):
                         s._split_pending = True
                         s._split_pending_since = time.time()
@@ -874,16 +877,6 @@ class GeminiConnection:
                                         pass
 
                             if not _skip_transcript:
-                                # D1b: Garbled audio circuit breaker
-                                if self._is_garbled(user_text):
-                                    s._garbled_turn_count += 1
-                                    self.log.warn(f"Garbled STT text ({s._garbled_turn_count}/3): '{user_text[:40]}'")
-                                    if s._garbled_turn_count >= 3:
-                                        self.log.warn("Garbled audio circuit breaker — 3 consecutive garbled turns")
-                                        s._closing_call = True
-                                        await s._lifecycle._hangup_call_delayed(1.0)
-                                else:
-                                    s._garbled_turn_count = 0  # Reset on good text
 
                                 s._last_user_speech_time = time.time()  # Track for latency
                                 s._last_user_transcript_time = time.time()
@@ -912,10 +905,13 @@ class GeminiConnection:
                                         await s._lifecycle._hangup_call_delayed(0.5)
 
                                 # D2c: Non-English / regional language detection — graceful exit
+                                # Rate-limited: fires once, then 60s cooldown before re-firing
                                 if not s._closing_call:
                                     if self._is_non_english(user_text):
                                         s._consecutive_non_english += 1
-                                        if s._consecutive_non_english >= 2:
+                                        lang_cooldown = getattr(s, '_lang_barrier_last_fired', 0)
+                                        if s._consecutive_non_english >= 2 and (time.time() - lang_cooldown) > 60:
+                                            s._lang_barrier_last_fired = time.time()
                                             self.log.warn(f"Language barrier detected — {s._consecutive_non_english} non-English messages")
                                             s._transcript._save_transcript("SYSTEM", f"Language barrier: {s._consecutive_non_english} consecutive non-English messages")
                                             if s.goog_live_ws:
@@ -981,10 +977,7 @@ class GeminiConnection:
                                     self.log.warn(f"Slow response: {latency_ms:.0f}ms")
                                 s._last_user_speech_time = None  # Reset after first response
 
-                            # During preload (no plivo_ws yet), always store audio
-                            if not s.plivo_ws:
-                                s.preloaded_audio.append(audio)
-                            elif s._mute_audio:
+                            if s._mute_audio:
                                 # Swap in progress — suppress audio to prevent duplicates
                                 pass
                             elif s.plivo_ws:

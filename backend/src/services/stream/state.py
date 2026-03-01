@@ -66,10 +66,9 @@ class SessionState:
         self.inbuffer = bytearray(b"")
         self.greeting_sent = False
         self.setup_complete = False
+        self._greeting_in_progress = True  # Mute user audio to Gemini until greeting finishes
         self._resolved_voice = None  # Cached voice — set once, reused on all session splits
-        self.preloaded_audio = []  # Store audio generated during preload
-        self._preload_complete = asyncio.Event()
-        self._silence_keepalive_task = None  # Sends silence to Gemini between greeting and call answer
+        # (preloaded_audio removed — greeting now generated in real-time after connect)
 
         # Audio recording — sample-counter based (no timestamps)
         self._rec_user_chunks: list[bytes] = []         # USER audio in order (16kHz)
@@ -81,8 +80,7 @@ class SessionState:
         self._recording_thread = None
         # NOTE: _start_recording_thread() is called by the TranscriptLogger component
 
-        # Flag to prevent double greeting
-        self.greeting_audio_complete = False
+        # (greeting_audio_complete removed — no preloaded greeting to track)
 
         # Call duration management (configurable, default 5 minutes)
         self.call_start_time = None
@@ -126,10 +124,7 @@ class SessionState:
         self._last_user_audio_time = None  # Last time user audio received
         self._user_speech_start_time = None  # When user started speaking
 
-        # Wait-for-caller-speech: hold preloaded greeting until caller speaks
-        self._wait_for_caller_speech = True  # Hold greeting until caller says "hello"
-        self._caller_speech_detected = False  # Set True once speech energy detected
-        self._speech_energy_threshold = 2000  # RMS threshold for 16-bit PCM (filters line noise)
+        # (speech energy gate removed — greeting now streams after connect, no need to detect speech first)
 
         # Audio buffer for reconnection (store audio if Google WS drops briefly)
         self._reconnect_audio_buffer = []
@@ -190,8 +185,7 @@ class SessionState:
         self._post_swap_reengagement_task = None  # Dead air detector after session splits
         self._prebuilt_setup_msg = None  # Pre-built setup JSON for hot-swap (avoids rebuild at swap time)
 
-        # Greeting playback tracking (for watchdog timer)
-        self._preloaded_chunk_count = 0    # Number of preloaded greeting chunks (for watchdog timeout calc)
+        # (preloaded_chunk_count removed — greeting streams in real-time now)
 
         # Timing instrumentation
         self._preload_start_time = None    # When preload() started
@@ -199,6 +193,7 @@ class SessionState:
         self._greeting_trigger_time = None # When greeting trigger was sent
         self._first_audio_time = None      # When first AI audio chunk arrived
         self._call_answered_time = None    # When Plivo WS attached
+        self._greeting_completed_time = None  # When greeting turn finishes streaming (for ghost monitor)
         self._first_audio_to_caller = None # When first audio sent to caller
         self._turn_first_byte_time = None  # When first audio byte of current turn arrived
 

@@ -290,6 +290,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     event_name: eventName || ctx.eventName || "",
     event_host: eventHost || ctx.eventHost || "",
     location: location || ctx.location || "",
+    bot_config_id: botConfigId,
     ...(contactEmail ? { email: contactEmail } : {}),
   };
   const customVars = ctx.customVariables as Record<string, string> | undefined;

@@ -6,6 +6,9 @@
 const IST_OFFSET_HOURS = 5.5; // IST is UTC+5:30
 
 export function isCallableTime(phoneNumber: string): boolean {
+  // Bypass in development/local testing
+  if (process.env.NODE_ENV === 'development') return true;
+
   const now = new Date();
 
   // India (+91): 9AM-8PM IST

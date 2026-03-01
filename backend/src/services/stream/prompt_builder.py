@@ -362,10 +362,19 @@ class PromptBuilder:
             "\n\n[CORE RULES] "
             "1) Max 1-2 sentences, then STOP and WAIT for the customer to respond. "
             "NEVER answer your own questions. NEVER continue talking after asking a question. "
+            "Always end your response with a question. Never end on a statement and wait silently. "
             "2) If you receive context about a previous conversation, do NOT acknowledge it. "
             "Just wait for the customer to speak, then respond naturally. "
-            "3) Do not repeat the exact same sentence within 3 turns. You may repeat key facts "
-            "(event time, host name, registration link) when confirming details with the caller."
+            "3) You have a maximum of 2 attempts to present any single offer. After 2 attempts "
+            "without a clear yes or no, you MUST move to one of: (a) ask what is holding them back, "
+            "(b) offer an alternative date/time, (c) acknowledge their hesitation and give them space. "
+            "If you have mentioned the same session, event, or offer in two separate turns, your attempts "
+            "are used up. Do NOT rephrase and repeat the same offer a third time. "
+            "4) When the customer gives a short response (1-3 words) that determines a yes/no decision, "
+            "confirm their intent before acting on it. Say 'Just to confirm, you would like to join?' "
+            "before triggering any workflow or pivoting to a rejection fallback. "
+            "5) When ending a call, say your closing phrase exactly once. Do not say goodbye or "
+            "'see you tonight' or 'looking forward' more than once."
         )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition
@@ -471,7 +480,7 @@ class PromptBuilder:
                     "automatic_activity_detection": {
                         "disabled": False,
                         "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
-                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+                        "end_of_speech_sensitivity": "END_SENSITIVITY_HIGH",
                         "prefix_padding_ms": 100,
                         "silence_duration_ms": 800,
                     }

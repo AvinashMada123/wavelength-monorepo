@@ -82,7 +82,8 @@ class CallLifecycle:
             pass
 
     async def preload(self):
-        """Preload the Gemini session while phone is ringing"""
+        """Prepare session bookkeeping while phone is ringing.
+        Does NOT connect to Gemini — that happens in attach_plivo_ws() after the call connects."""
         s = self.state
         try:
             s._preload_start_time = time.time()
@@ -90,56 +91,35 @@ class CallLifecycle:
             self.log.phase("PRELOAD")
             self.log.detail(f"Phone: {s.caller_phone} ({s.context.get('customer_name', 'Unknown')})")
             self.log.detail(f"Prompt: {len(s.prompt):,} chars")
-            s.is_active = True
-            s._session_task = asyncio.create_task(s._gemini._run_google_live_session())
-            try:
-                await asyncio.wait_for(s._preload_complete.wait(), timeout=8.0)
-                preload_ms = (time.time() - s._preload_start_time) * 1000
-                self.log.detail_last(f"Preloaded: {len(s.preloaded_audio)} chunks in {preload_ms:.0f}ms")
-            except asyncio.TimeoutError:
-                preload_ms = (time.time() - s._preload_start_time) * 1000
-                self.log.warn(f"Preload timeout ({preload_ms:.0f}ms), {len(s.preloaded_audio)} chunks")
+            self.log.detail_last("Session prepared (Gemini deferred to connect)")
             return True
         except Exception as e:
             self.log.error(f"Preload failed: {e}")
             return False
 
     def attach_plivo_ws(self, plivo_ws):
-        """Attach Plivo WebSocket when user answers"""
+        """Attach Plivo WebSocket when user answers, then start Gemini."""
         s = self.state
         s.plivo_ws = plivo_ws
         s.call_start_time = datetime.now()
         s._call_answered_time = time.time()
+        s._last_agent_turn_end_time = time.time()
         # Start recording now — gates _record_audio() so pre-answer audio is excluded
         s._rec_started = True
-        # Stop silence keepalive — real user audio will flow now
-        if s._silence_keepalive_task:
-            s._silence_keepalive_task.cancel()
-            s._silence_keepalive_task = None
-        # Reset agent turn end time to NOW — the greeting is about to play to the caller.
-        # Without this, watchdog measures from preload generation time (seconds/minutes ago)
-        # and fires a false "unresponsive" alarm while greeting is still playing.
-        s._last_agent_turn_end_time = time.time()
-        preload_count = len(s.preloaded_audio)
-        s._preloaded_chunk_count = preload_count  # Save for watchdog timeout calc
+        s.is_active = True
+
         self.log.phase("CALL ANSWERED")
         if s._preload_start_time:
             wait_ms = (time.time() - s._preload_start_time) * 1000
             self.log.detail(f"Ring duration: {wait_ms:.0f}ms")
-        self.log.detail(f"Plivo WS attached, {preload_count} preloaded chunks")
-        # Start sender worker BEFORE sending preloaded audio so consumer is ready
+
+        # Start sender worker so audio can flow to caller
         s._sender_worker_task = asyncio.create_task(s._audio._plivo_sender_worker())
-        if s.preloaded_audio:
-            asyncio.create_task(s._audio._send_preloaded_audio())
-        else:
-            self.log.warn("No preloaded audio - re-triggering greeting")
-            # Re-trigger greeting so Gemini generates it in real-time
-            s.greeting_sent = False
-            s._greeting_trigger_time = time.time()
-            asyncio.create_task(s._prompt_builder._send_initial_greeting())
+        # Connect to Gemini NOW — greeting will generate and stream in real-time
+        s._session_task = asyncio.create_task(s._gemini._run_google_live_session())
         # Start call duration timer
         s._timeout_task = asyncio.create_task(self._monitor_call_duration())
-        # Start silence monitor (3 second SLA)
+        # Start silence monitor (5 second SLA)
         s._silence_monitor_task = asyncio.create_task(self._monitor_silence())
         # Start session watchdog — detects dead Gemini sessions
         asyncio.create_task(self._session_watchdog())
@@ -291,11 +271,26 @@ class CallLifecycle:
 
     async def _monitor_ghost_monologue(self):
         """End call gracefully if user never speaks after greeting.
-        3-strike system: check at 15s, 25s, 30s — then end call."""
+        3-strike system: check at 15s, 25s, 30s after greeting completes."""
         s = self.state
         try:
-            # Strike 1: Wait 15s after call answer for user to speak
-            await asyncio.sleep(15.0)
+            # Wait for greeting to finish streaming before starting countdown
+            # Poll every 0.5s up to 30s (covers Gemini connect + greeting generation)
+            for _ in range(60):
+                if s._greeting_completed_time is not None:
+                    break
+                if not s.is_active or s._closing_call:
+                    return
+                await asyncio.sleep(0.5)
+            else:
+                # Greeting never completed in 30s — session is broken, bail out
+                return
+
+            # Strike 1: Wait 15s after greeting completed for user to speak
+            elapsed = time.time() - s._greeting_completed_time
+            remaining = max(0, 15.0 - elapsed)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
             if not s.is_active or s._closing_call:
                 return
             if s._last_user_speech_time is not None or s._turn_count > 1:
@@ -440,15 +435,12 @@ class CallLifecycle:
                         time_since_agent = time.time() - s._last_agent_turn_end_time
 
                         # Post-greeting: user needs time to HEAR the greeting + respond.
-                        # Greeting playback takes ~40ms per chunk. Add that to the base 15s timeout
-                        # so the user gets a full 15s AFTER the greeting finishes playing.
-                        # Cap playback estimate at 15s to avoid disabling the watchdog entirely.
-                        greeting_playback_s = min(s._preloaded_chunk_count * 0.04, 15.0)
-                        post_greeting_timeout = greeting_playback_s + 15.0
+                        # Greeting streams in real-time (~5s) + user needs time to respond.
+                        post_greeting_timeout = 20.0
                         if s._turn_count <= 1 and time_since_agent > post_greeting_timeout and not getattr(s, '_post_greeting_watchdog_fired', False):
                             s._post_greeting_watchdog_fired = True
                             self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s after greeting "
-                                          f"(timeout={post_greeting_timeout:.0f}s, playback={greeting_playback_s:.1f}s) — forcing reconnect")
+                                          f"(timeout={post_greeting_timeout:.0f}s) — forcing reconnect")
                             s._transcript._save_transcript("SYSTEM", "Watchdog: AI unresponsive post-greeting, forcing reconnect")
 
                             # Try nudge first before full session split
@@ -687,8 +679,8 @@ class CallLifecycle:
                 ttfb = (s._first_audio_time - s._greeting_trigger_time) * 1000
                 self.log.detail(f"Greeting TTFB: {ttfb:.0f}ms")
             if s._call_answered_time and s._preload_start_time:
-                preload_total = (s._call_answered_time - s._preload_start_time) * 1000
-                self.log.detail_last(f"Preload→Answer: {preload_total:.0f}ms")
+                ring_total = (s._call_answered_time - s._preload_start_time) * 1000
+                self.log.detail_last(f"Ring duration: {ring_total:.0f}ms")
             s._transcript._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s, turns: {s._turn_count}")
 
         if s.goog_live_ws:
