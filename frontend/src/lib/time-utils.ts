@@ -6,8 +6,9 @@
 const IST_OFFSET_HOURS = 5.5; // IST is UTC+5:30
 
 export function isCallableTime(phoneNumber: string): boolean {
-  // Bypass in development/local testing
+  // Bypass in development/local testing, or when explicitly disabled
   if (process.env.NODE_ENV === 'development') return true;
+  if (process.env.DISABLE_TIME_GATE === 'true') return true;
 
   const now = new Date();
 
