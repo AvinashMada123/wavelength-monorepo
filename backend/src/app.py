@@ -18,7 +18,7 @@ from pydantic import BaseModel
 import json
 
 import hashlib
-from src.core.config import config
+from src.core.config import config, gemini_key_pool
 from src.conversation_memory import add_message, get_history, clear_conversation
 from src.db.session_db import session_db
 from fastapi.staticfiles import StaticFiles
@@ -106,6 +106,7 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Server starting on http://{config.host}:{config.port}")
     logger.info(f"Gemini Voice: {config.tts_voice}")
+    logger.info(f"Gemini API key pool: {gemini_key_pool.size} key(s)")
     logger.info(f"Session DB: PostgreSQL ({session_db._dsn.split('@')[-1] if session_db._dsn else 'unknown'})")
 
     # Start background cleanup task for stale pending data

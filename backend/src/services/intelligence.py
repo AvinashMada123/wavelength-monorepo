@@ -13,10 +13,10 @@ import time
 from loguru import logger
 from google import genai
 from google.genai import types
-from src.core.config import config
+from src.core.config import config, gemini_key_pool
 
 # Pre-warm client at import time (avoids cold-start on first call)
-_client = genai.Client(api_key=config.google_api_key) if config.google_api_key else None
+_client = genai.Client(api_key=gemini_key_pool.get_key()) if config.google_api_key else None
 
 
 async def gather_intelligence(contact_name: str, context: dict, timeout: float = None) -> str:

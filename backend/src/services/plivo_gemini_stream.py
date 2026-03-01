@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 import websockets
 import numpy as np
-from src.core.config import config
+from src.core.config import config, gemini_key_pool
 from src.tools import execute_tool
 from src.conversational_prompts import render_prompt
 from src.db.session_db import session_db
@@ -295,6 +295,9 @@ class PlivoGeminiSession:
         self._last_agent_turn_end_time = None  # Track when AI finished speaking (for nudge guard)
         self._current_turn_audio_chunks = 0  # Track audio chunks in current turn
         self._empty_turn_nudge_count = 0  # Track consecutive empty turns
+
+        # API key for this session (round-robin from pool)
+        self._api_key = gemini_key_pool.get_key()
         self._turn_start_time = None  # Track when current turn started (for latency logging)
         self._turn_count = 0  # Count turns for latency tracking
         self._current_turn_agent_text = []  # Accumulate agent speech fragments per turn
@@ -964,7 +967,7 @@ class PlivoGeminiSession:
             logger.info(f"Starting Gemini transcription for {call_uuid}")
 
             # Initialize Gemini client
-            client = genai.Client(api_key=config.google_api_key)
+            client = genai.Client(api_key=self._api_key)
 
             # Upload the audio file
             logger.info(f"Uploading audio file for transcription...")
@@ -1461,14 +1464,14 @@ Rules:
             token = get_vertex_ai_token()
             if not token:
                 logger.error("Failed to get Vertex AI token - falling back to Google AI Studio")
-                url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+                url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={self._api_key}"
                 extra_headers = None
             else:
                 url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
                 extra_headers = {"Authorization": f"Bearer {token}"}
                 self.log.detail(f"Vertex AI: {config.vertex_location} ({label})")
         else:
-            url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+            url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={self._api_key}"
             extra_headers = None
             self.log.detail(f"Google AI Studio ({label})")
 
@@ -1525,13 +1528,13 @@ Rules:
             if config.use_vertex_ai:
                 token = get_vertex_ai_token()
                 if not token:
-                    url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+                    url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={self._api_key}"
                     extra_headers = None
                 else:
                     url = f"wss://{config.vertex_location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
                     extra_headers = {"Authorization": f"Bearer {token}"}
             else:
-                url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={config.google_api_key}"
+                url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={self._api_key}"
                 extra_headers = None
 
             ws_kwargs = {"ping_interval": 30, "ping_timeout": 20, "close_timeout": 5}
@@ -3441,7 +3444,7 @@ Rules:
             return ""
         try:
             from google import genai as _genai
-            client = _genai.Client(api_key=config.google_api_key)
+            client = _genai.Client(api_key=self._api_key)
             contact = self.context.get("customer_name", "the contact")
             prompt = (
                 f"You are a sales call analyst. Summarize this call transcript in 2-3 sentences.\n"

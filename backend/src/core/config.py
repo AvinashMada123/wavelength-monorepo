@@ -55,6 +55,7 @@ class Config(BaseModel):
 
     # Google Gemini settings
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
+    google_api_keys: str = os.getenv("GOOGLE_API_KEYS", "")  # Comma-separated pool
     tts_voice: str = os.getenv("TTS_VOICE", "Kore")
 
     # Vertex AI settings (for lower latency with regional endpoints)
@@ -168,6 +169,40 @@ class Config(BaseModel):
 
 # Global config instance
 config = Config()
+
+
+# ---------------------------------------------------------------------------
+# Gemini API key pool (round-robin rotation across multiple keys)
+# ---------------------------------------------------------------------------
+
+class GeminiKeyPool:
+    """Round-robin pool of Gemini API keys to spread load across quotas."""
+
+    def __init__(self):
+        keys: list[str] = []
+        # GOOGLE_API_KEYS takes priority (comma-separated)
+        if config.google_api_keys:
+            keys = [k.strip() for k in config.google_api_keys.split(",") if k.strip()]
+        # Fall back to single GOOGLE_API_KEY
+        if not keys and config.google_api_key:
+            keys = [config.google_api_key]
+        self._keys = keys
+        self._index = 0
+
+    @property
+    def size(self) -> int:
+        return len(self._keys)
+
+    def get_key(self) -> str:
+        """Return the next API key in round-robin order."""
+        if not self._keys:
+            return config.google_api_key  # fallback
+        key = self._keys[self._index % len(self._keys)]
+        self._index += 1
+        return key
+
+
+gemini_key_pool = GeminiKeyPool()
 
 
 # Conversation script path

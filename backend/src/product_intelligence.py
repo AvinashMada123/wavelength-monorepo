@@ -56,9 +56,9 @@ SECTION_TYPES = [
 # Reuse the same genai client pattern as intelligence.py
 from google import genai
 from google.genai import types
-from src.core.config import config
+from src.core.config import config, gemini_key_pool
 
-_client = genai.Client(api_key=config.google_api_key) if config.google_api_key else None
+_client = genai.Client(api_key=gemini_key_pool.get_key()) if config.google_api_key else None
 
 _PROCESSING_PROMPT = """You are a product knowledge structurer. Given raw product/service content, extract and organize it into structured sections.
 
