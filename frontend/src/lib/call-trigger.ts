@@ -1,6 +1,40 @@
 import { query, queryOne, pool } from "@/lib/db";
 
 /* ------------------------------------------------------------------ */
+/*  Call initiation rate limiter (prevents Gemini API overload)        */
+/* ------------------------------------------------------------------ */
+
+const CALLS_PER_SECOND = parseInt(process.env.CALL_RATE_LIMIT || "2", 10);
+const RATE_LIMIT_INTERVAL_MS = Math.ceil(1000 / CALLS_PER_SECOND);
+
+class CallRateLimiter {
+  private queue: Array<{ resolve: () => void }> = [];
+  private processing = false;
+
+  async acquire(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.queue.push({ resolve });
+      this.processQueue();
+    });
+  }
+
+  private async processQueue() {
+    if (this.processing) return;
+    this.processing = true;
+    while (this.queue.length > 0) {
+      const item = this.queue.shift()!;
+      item.resolve();
+      if (this.queue.length > 0) {
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_INTERVAL_MS));
+      }
+    }
+    this.processing = false;
+  }
+}
+
+const callRateLimiter = new CallRateLimiter();
+
+/* ------------------------------------------------------------------ */
 /*  Concurrency gate                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -330,6 +364,9 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     callServerPayload.twilioAuthToken = orgSettings.twilioAuthToken;
   }
   if (orgSettings.twilioPhoneNumber) callServerPayload.twilioPhoneNumber = orgSettings.twilioPhoneNumber;
+
+  // --- Rate-limit call initiation (2 calls/sec default) ---
+  await callRateLimiter.acquire();
 
   // --- Send to call server ---
   console.log(`[call-trigger] Triggering call for org ${orgId}, config "${configDoc.name}", phone ${phoneNumber}`);
