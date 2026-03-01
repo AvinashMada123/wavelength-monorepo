@@ -58,6 +58,7 @@ def extract_and_save_memory(
     interest_level: str = "",
     linguistic_style: dict = None,
     org_id: str = "",
+    bot_config_id: str = "",
 ):
     """
     Extract key facts from a completed call and save/update contact memory.
@@ -146,6 +147,9 @@ def extract_and_save_memory(
             except Exception:
                 final_style = {}
 
+    # Count user turns (exchanges where user actually spoke)
+    user_turn_count = sum(1 for ex in turn_exchanges if ex.get("user", "").strip())
+
     # Save to DB — scoped to org
     session_db.save_contact_memory(
         phone, org_id,
@@ -162,6 +166,9 @@ def extract_and_save_memory(
         last_call_outcome=interest_level or "Unknown",
         all_call_uuids=all_uuids,
         linguistic_style=final_style,
+        last_call_duration=int(duration),
+        last_call_user_turns=user_turn_count,
+        last_call_bot_id=bot_config_id or "",
     )
 
     logger.info(
@@ -240,10 +247,16 @@ def save_from_tool_call(
 # Pre-Call: Load & Format Memory for Prompt Injection
 # =============================================================================
 
-def load_memory_context(phone: str, org_id: str = "") -> dict:
+def load_memory_context(phone: str, org_id: str = "", context: dict = None) -> dict:
     """
     Load contact memory and return a dict with prompt text + metadata.
     Returns {"prompt": str, "persona": str|None} or empty dict if no memory.
+
+    Args:
+        phone: Caller phone number.
+        org_id: Organization ID for tenant scoping.
+        context: Current call context (contains bot_config_id etc.) for
+                 cross-bot dead-call filtering.
     """
     if not phone:
         return {}
@@ -265,20 +278,42 @@ def load_memory_context(phone: str, org_id: str = "") -> dict:
             style = {}
 
     return {
-        "prompt": _format_memory_for_prompt(memory),
+        "prompt": _format_memory_for_prompt(memory, context=context),
         "persona": memory.get("persona"),
         "linguistic_style": style,
     }
 
 
-def _format_memory_for_prompt(memory: dict) -> str:
-    """Build a natural-language context string from stored memory."""
+def _format_memory_for_prompt(memory: dict, context: dict = None) -> str:
+    """Build a natural-language context string from stored memory.
+
+    Args:
+        memory: Contact memory dict from DB.
+        context: Current call context (contains bot_config_id etc.) for
+                 cross-bot dead-call filtering.
+    """
+    context = context or {}
     parts = []
     name = memory.get("name") or "this customer"
     call_count = memory.get("call_count", 0)
 
-    # Header
-    parts.append(f"[PREVIOUS INTERACTION — you have spoken with {name} {call_count} time(s) before]")
+    # Check if prior call was meaningful enough to reference as "we spoke"
+    has_meaningful_prior_call = True
+    last_duration = memory.get("last_call_duration", 0) or 0
+    last_turns = memory.get("last_call_user_turns", 0) or 0
+    last_bot_id = memory.get("last_call_bot_id", "") or ""
+    current_bot_id = context.get("bot_config_id", "") or context.get("_bot_id", "")
+
+    # Different bot made a short/dead prior call — don't say "we spoke"
+    if last_bot_id and current_bot_id and last_bot_id != current_bot_id:
+        if last_duration < 30 or last_turns == 0:
+            has_meaningful_prior_call = False
+
+    # Header — only claim "we spoke" if the prior call was meaningful
+    if has_meaningful_prior_call:
+        parts.append(f"[PREVIOUS INTERACTION — you have spoken with {name} {call_count} time(s) before]")
+    else:
+        parts.append(f"[PREVIOUS INTERACTION — {name} was contacted before but did not have a real conversation. Treat this as a near-first interaction.]")
 
     # Current date/time so the AI knows what "today" is
     now = datetime.now()
@@ -354,41 +389,50 @@ def _format_memory_for_prompt(memory: dict) -> str:
             time_ago = p.replace("Last call: ", "")
             break
 
-    # Instructions for AI — SHORT greeting (1 sentence) so user can interrupt
-    instruction = "CRITICAL INSTRUCTIONS FOR THIS REPEAT CALLER:\n"
+    if has_meaningful_prior_call:
+        # Instructions for AI — SHORT greeting (1 sentence) so user can interrupt
+        instruction = "CRITICAL INSTRUCTIONS FOR THIS REPEAT CALLER:\n"
 
-    # Short greeting — keep it to ONE sentence so it's interruptible
-    # Use {agent_name} and {company_name} placeholders — filled by render_prompt() from API context
-    if objections and "price" in objections:
-        instruction += f"GREETING: \"Hey {name}! {{{{agent_name}}}} here. I had some thoughts about the pricing since we last spoke.\"\n"
+        # Short greeting — keep it to ONE sentence so it's interruptible
+        # Use {agent_name} and {company_name} placeholders — filled by render_prompt() from API context
+        if objections and "price" in objections:
+            instruction += f"GREETING: \"Hey {name}! {{{{agent_name}}}} here. I had some thoughts about the pricing since we last spoke.\"\n"
+        else:
+            instruction += f"GREETING: \"Hey {name}! {{{{agent_name}}}} from {{{{company_name}}}}, good to talk again!\"\n"
+
+        # Context referencing comes AFTER greeting, as a natural follow-up
+        instruction += "AFTER GREETING: "
+        if role and company:
+            instruction += f"They may have mentioned being a {role} at {company} — verify casually (e.g. 'You mentioned you were at {company}, right?') before building on it. "
+        elif role:
+            instruction += f"They may have mentioned being a {role} — verify casually before building on it. "
+        elif company:
+            instruction += f"They may have mentioned {company} — verify casually (e.g. 'You mentioned {company} last time, right?') before building on it. "
+        instruction += (
+            "Then go straight into VALUE — skip discovery questions. "
+            "Use PAIN POINTS and VALUE FRAMING from the persona module to build urgency, "
+            "then move to Solution and Close.\n"
+        )
+
+        instruction += "FLOW: Greet → Reference what you know → Pain points → Urgency → Solution → Close\n"
+
+        if skip_questions:
+            instruction += "DO NOT ask (you already know):\n"
+            for sq in skip_questions:
+                instruction += f"  - {sq}\n"
+        if objections:
+            obj_str = ", ".join(objections)
+            instruction += f"ADDRESS PROACTIVELY: They had concerns about {obj_str} last time. Bring it up yourself and resolve it early.\n"
+
+        instruction += "IMPORTANT: Keep talking naturally. After your greeting, ask a follow-up question to keep the conversation going. Never go silent."
     else:
-        instruction += f"GREETING: \"Hey {name}! {{{{agent_name}}}} from {{{{company_name}}}}, good to talk again!\"\n"
-
-    # Context referencing comes AFTER greeting, as a natural follow-up
-    instruction += "AFTER GREETING: "
-    if role and company:
-        instruction += f"They may have mentioned being a {role} at {company} — verify casually (e.g. 'You mentioned you were at {company}, right?') before building on it. "
-    elif role:
-        instruction += f"They may have mentioned being a {role} — verify casually before building on it. "
-    elif company:
-        instruction += f"They may have mentioned {company} — verify casually (e.g. 'You mentioned {company} last time, right?') before building on it. "
-    instruction += (
-        "Then go straight into VALUE — skip discovery questions. "
-        "Use PAIN POINTS and VALUE FRAMING from the persona module to build urgency, "
-        "then move to Solution and Close.\n"
-    )
-
-    instruction += "FLOW: Greet → Reference what you know → Pain points → Urgency → Solution → Close\n"
-
-    if skip_questions:
-        instruction += "DO NOT ask (you already know):\n"
-        for sq in skip_questions:
-            instruction += f"  - {sq}\n"
-    if objections:
-        obj_str = ", ".join(objections)
-        instruction += f"ADDRESS PROACTIVELY: They had concerns about {obj_str} last time. Bring it up yourself and resolve it early.\n"
-
-    instruction += "IMPORTANT: Keep talking naturally. After your greeting, ask a follow-up question to keep the conversation going. Never go silent."
+        # Dead/short prior call from a different bot — treat as near-first interaction
+        instruction = "NOTE: A previous call attempt was made but no real conversation happened. "
+        instruction += "Treat this as a fresh first call. Introduce yourself normally and begin discovery."
+        if name and name != "this customer":
+            instruction += f" The contact's name is {name}."
+        if company:
+            instruction += f" They may be associated with {company} — verify if relevant."
 
     parts.append(instruction)
 

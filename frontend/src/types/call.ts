@@ -32,6 +32,7 @@ export interface CallEndedData {
   questions_completed: number;
   total_questions: number;
   completion_rate: number;
+  furthest_phase_reached?: string;
   interest_level: string;
   call_summary: string;
   objections_raised: string[];

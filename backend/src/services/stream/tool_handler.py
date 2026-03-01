@@ -112,12 +112,12 @@ class ToolHandler:
 
             # Handle save_user_info tool — saves user details via Gemini's audio understanding
             if tool_name == "save_user_info":
+                t_company = tool_args.get("company")
+                t_role = tool_args.get("role")
+                t_name = tool_args.get("name")
+                t_key_detail = tool_args.get("key_detail")
                 try:
                     from src.cross_call_memory import save_from_tool_call
-                    t_company = tool_args.get("company")
-                    t_role = tool_args.get("role")
-                    t_name = tool_args.get("name")
-                    t_key_detail = tool_args.get("key_detail")
 
                     save_from_tool_call(
                         phone=s.caller_phone,
@@ -161,6 +161,34 @@ class ToolHandler:
                 except Exception as e:
                     logger.error(f"save_user_info error: {e}")
 
+                # Server-side validation: check if saved values appear in actual user speech
+                confidence = "high"
+                unverified_fields = []
+                saved_values = {
+                    "company": t_company, "role": t_role,
+                    "name": t_name, "key_detail": t_key_detail,
+                }
+                if hasattr(s, '_accumulated_user_text') and s._accumulated_user_text:
+                    user_text_lower = s._accumulated_user_text.lower()
+                    for field_name, field_val in saved_values.items():
+                        if field_val and field_val.lower() not in user_text_lower:
+                            unverified_fields.append(f"{field_name}='{field_val}'")
+                    if unverified_fields:
+                        confidence = "low"
+                        self.log.warn(
+                            f"save_user_info confidence LOW: {', '.join(unverified_fields)} "
+                            f"not found in user speech"
+                        )
+                else:
+                    # No accumulated user text yet — cannot verify
+                    confidence = "unverified"
+
+                s._transcript._save_transcript(
+                    "SYSTEM",
+                    f"save_user_info confidence={confidence}"
+                    + (f" unverified=[{', '.join(unverified_fields)}]" if unverified_fields else "")
+                )
+
                 # Send success response so conversation continues
                 try:
                     tool_response = {
@@ -168,7 +196,7 @@ class ToolHandler:
                             "function_responses": [{
                                 "id": call_id,
                                 "name": tool_name,
-                                "response": {"success": True, "message": "Information saved"}
+                                "response": {"success": True, "message": "Information saved", "confidence": confidence}
                             }]
                         }
                     }

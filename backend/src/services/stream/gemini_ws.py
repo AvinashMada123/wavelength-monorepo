@@ -2,7 +2,9 @@
 import asyncio
 import base64
 import json
+import re
 import time
+import unicodedata
 
 import websockets
 from loguru import logger
@@ -18,6 +20,57 @@ class GeminiConnection:
     def __init__(self, state, log):
         self.state = state
         self.log = log
+
+    def _is_garbled(self, text):
+        """Check if text appears garbled (STT noise)."""
+        if not text or len(text.strip()) < 2:
+            return True
+        # Check if any word has 3+ chars with vowels
+        words = re.findall(r'[a-zA-Z]{3,}', text)
+        if not words:
+            return True
+        # At least one word must contain a vowel
+        return not any(re.search(r'[aeiouAEIOU]', w) for w in words)
+
+    def _has_blocked_script(self, text):
+        """Check if text contains blocked scripts (STT hallucinations).
+        Allow: Latin, Devanagari, Telugu, Tamil, Kannada, Malayalam, Bengali, Gujarati, Gurmukhi.
+        Block: Cyrillic, Arabic, Amharic, Thai, CJK, Hiragana, Katakana, Korean Hangul."""
+        blocked_ranges = [
+            (0x0400, 0x04FF),  # Cyrillic
+            (0x0600, 0x06FF),  # Arabic
+            (0x1200, 0x137F),  # Ethiopic/Amharic
+            (0x0E00, 0x0E7F),  # Thai
+            (0x4E00, 0x9FFF),  # CJK Unified
+            (0x3040, 0x309F),  # Hiragana
+            (0x30A0, 0x30FF),  # Katakana
+            (0xAC00, 0xD7AF),  # Korean Hangul
+        ]
+        blocked_count = 0
+        total = 0
+        for ch in text:
+            if ch.isalpha():
+                total += 1
+                cp = ord(ch)
+                for start, end in blocked_ranges:
+                    if start <= cp <= end:
+                        blocked_count += 1
+                        break
+        if total == 0:
+            return False
+        return (blocked_count / total) > 0.3  # >30% blocked chars
+
+    def _is_non_english(self, text):
+        """Check if text is predominantly non-English (>30% non-Latin chars).
+        Detects Hindi, Telugu, Tamil, Kannada, Malayalam, Bengali, Gujarati, Gurmukhi
+        and other regional Indic scripts that indicate a language barrier."""
+        if not text:
+            return False
+        alpha_chars = [c for c in text if c.isalpha()]
+        if not alpha_chars:
+            return False
+        non_latin = sum(1 for c in alpha_chars if ord(c) > 0x024F)  # Beyond Extended Latin
+        return (non_latin / len(alpha_chars)) > 0.3
 
     async def _connect_and_setup_ws(self, is_standby=False):
         """Create a new Gemini WS connection and send setup message.
@@ -584,6 +637,11 @@ class GeminiConnection:
                             full_user = " ".join(s._current_turn_user_text)
                             s._last_user_text = full_user
                             s._current_turn_user_text = []
+
+                        # Accumulate agent text for phase detection (D3c)
+                        if full_agent:
+                            s._accumulated_agent_text += " " + full_agent
+
                         # Track turn exchanges for compact summary
                         if full_agent or full_user:
                             s._turn_exchanges.append({"agent": full_agent, "user": full_user})
@@ -796,31 +854,86 @@ class GeminiConnection:
                         # Filter out noise/silence markers - NOT real speech
                         is_noise = user_text.startswith('<') and user_text.endswith('>')
                         if not is_noise:
-                            s._last_user_speech_time = time.time()  # Track for latency
-                            s._last_user_transcript_time = time.time()
-                            # Micro-moment: capture when user FIRST speaks this turn
-                            if s._user_response_start_time is None:
-                                s._user_response_start_time = time.time()
-                            logger.debug(f"[{s.call_uuid[:8]}] USER fragment: {user_text}")
-                            s._current_turn_user_text.append(user_text)
-                            s._transcript._save_transcript("USER", user_text)
-                            s._transcript._log_conversation("user", user_text)
-                            # Track if user said goodbye
-                            if s._lifecycle._is_goodbye_message(user_text):
-                                logger.debug(f"[{s.call_uuid[:8]}] User goodbye detected")
-                                s.user_said_goodbye = True
-                                s._lifecycle._check_mutual_goodbye()
+                            # D1c: STT script filter — block hallucinated non-Indic scripts
+                            _skip_transcript = False
+                            if self._has_blocked_script(user_text):
+                                self.log.warn(f"Blocked script detected in STT: '{user_text[:30]}'")
+                                _skip_transcript = True
+                                # Don't process this text — it's a hallucination
+                                if s.goog_live_ws:
+                                    try:
+                                        await s.goog_live_ws.send(json.dumps({
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text":
+                                                    "[SYSTEM: Audio was unclear. Say: 'I'm having trouble hearing you clearly. Could you repeat that?']"
+                                                }]}],
+                                                "turn_complete": True
+                                            }
+                                        }))
+                                    except Exception:
+                                        pass
 
-                            # Voicemail detection — STT keyword check in first 2 turns
-                            if s._turn_count <= 2 and not s._closing_call:
-                                vm_text = user_text.lower()
-                                vm_keywords = ["voicemail", "leave a message", "after the tone", "not available",
-                                                "record your message", "after the beep", "mailbox"]
-                                if any(kw in vm_text for kw in vm_keywords):
-                                    self.log.warn(f"Voicemail detected via STT: '{user_text[:50]}'")
-                                    s._transcript._save_transcript("SYSTEM", f"Voicemail detected: {user_text[:80]}")
-                                    s._closing_call = True
-                                    await s._lifecycle._hangup_call_delayed(0.5)
+                            if not _skip_transcript:
+                                # D1b: Garbled audio circuit breaker
+                                if self._is_garbled(user_text):
+                                    s._garbled_turn_count += 1
+                                    self.log.warn(f"Garbled STT text ({s._garbled_turn_count}/3): '{user_text[:40]}'")
+                                    if s._garbled_turn_count >= 3:
+                                        self.log.warn("Garbled audio circuit breaker — 3 consecutive garbled turns")
+                                        s._closing_call = True
+                                        await s._lifecycle._hangup_call_delayed(1.0)
+                                else:
+                                    s._garbled_turn_count = 0  # Reset on good text
+
+                                s._last_user_speech_time = time.time()  # Track for latency
+                                s._last_user_transcript_time = time.time()
+                                # Micro-moment: capture when user FIRST speaks this turn
+                                if s._user_response_start_time is None:
+                                    s._user_response_start_time = time.time()
+                                logger.debug(f"[{s.call_uuid[:8]}] USER fragment: {user_text}")
+                                s._current_turn_user_text.append(user_text)
+                                s._transcript._save_transcript("USER", user_text)
+                                s._transcript._log_conversation("user", user_text)
+                                # Track if user said goodbye
+                                if s._lifecycle._is_goodbye_message(user_text):
+                                    logger.debug(f"[{s.call_uuid[:8]}] User goodbye detected")
+                                    s.user_said_goodbye = True
+                                    s._lifecycle._check_mutual_goodbye()
+
+                                # Voicemail detection — STT keyword check in first 2 turns
+                                if s._turn_count <= 2 and not s._closing_call:
+                                    vm_text = user_text.lower()
+                                    vm_keywords = ["voicemail", "leave a message", "after the tone", "not available",
+                                                    "record your message", "after the beep", "mailbox"]
+                                    if any(kw in vm_text for kw in vm_keywords):
+                                        self.log.warn(f"Voicemail detected via STT: '{user_text[:50]}'")
+                                        s._transcript._save_transcript("SYSTEM", f"Voicemail detected: {user_text[:80]}")
+                                        s._closing_call = True
+                                        await s._lifecycle._hangup_call_delayed(0.5)
+
+                                # D2c: Non-English / regional language detection — graceful exit
+                                if not s._closing_call:
+                                    if self._is_non_english(user_text):
+                                        s._consecutive_non_english += 1
+                                        if s._consecutive_non_english >= 2:
+                                            self.log.warn(f"Language barrier detected — {s._consecutive_non_english} non-English messages")
+                                            s._transcript._save_transcript("SYSTEM", f"Language barrier: {s._consecutive_non_english} consecutive non-English messages")
+                                            if s.goog_live_ws:
+                                                try:
+                                                    await s.goog_live_ws.send(json.dumps({
+                                                        "client_content": {
+                                                            "turns": [{"role": "user", "parts": [{"text":
+                                                                "[SYSTEM: The caller is speaking in a regional language (not English). "
+                                                                "Say: 'I understand you prefer speaking in your language. Let me have someone message you "
+                                                                "in your preferred language on WhatsApp. Take care!' Then call end_call.]"
+                                                            }]}],
+                                                            "turn_complete": True
+                                                        }
+                                                    }))
+                                                except Exception:
+                                                    pass
+                                    else:
+                                        s._consecutive_non_english = 0
 
                 # Handle AI speech transcription (outputTranscription)
                 output_transcription = sc.get("outputTranscription")

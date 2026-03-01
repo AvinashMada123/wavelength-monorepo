@@ -214,6 +214,7 @@ class SessionState:
         self._active_situations = []
         self._previous_situations = []
         self._accumulated_user_text = ""
+        self._garbled_turn_count = 0  # Consecutive garbled STT turns (circuit breaker)
         # Custom persona/situation keyword configs from DB (bypass file-based defaults)
         self._custom_persona_keywords = self.context.pop("_custom_persona_keywords", None)
         self._custom_situation_keywords = self.context.pop("_custom_situation_keywords", None)
@@ -239,6 +240,9 @@ class SessionState:
         else:
             self._active_product_sections = []
         self._previous_product_sections = []
+        # Non-English language detection (graceful exit after consecutive non-English messages)
+        self._consecutive_non_english = 0
+
         # Linguistic Mirror state
         self._linguistic_style = {}
         self._previous_linguistic_style = {}
@@ -272,6 +276,13 @@ class SessionState:
         elif mm_config and not mm_enabled:
             logger.info(f"[{call_uuid[:8]}] │  ├─ Micro-moment detector: OFF (disabled in bot config)")
         self._mm_config_override = mm_config  # Keep reference for session split restoration
+
+        # Watchdog nudge & emergency split tracking (D3b)
+        self._watchdog_nudge_sent = False
+        self._emergency_split_count = 0
+
+        # Accumulated agent text for phase detection (D3c)
+        self._accumulated_agent_text = ""
 
         # ---- Component references (set by session.py after construction) ----
         self._audio = None

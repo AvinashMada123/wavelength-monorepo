@@ -525,6 +525,54 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
     if (updated.length === 0) continue; // already picked up
 
     try {
+      // Cross-campaign dedup: check if this lead was called recently by any campaign
+      const recentCallCheck = await query(
+        `SELECT cl2.campaign_id, c2.bot_config_id
+         FROM campaign_leads cl2
+         JOIN leads l2 ON l2.id = cl2.lead_id
+         JOIN campaigns c2 ON c2.id = cl2.campaign_id
+         WHERE l2.phone_number = $1
+         AND cl2.called_at > NOW() - INTERVAL '24 hours'
+         AND cl2.campaign_id != $2`,
+        [cl.phone_number, campaignId]
+      );
+
+      if (recentCallCheck.length > 0) {
+        // Check cooldown: same bot = 48h, different bot = 12h
+        const sameBotCooldownHours = 48;
+        const diffBotCooldownHours = 12;
+        let skipLead = false;
+
+        for (const recent of recentCallCheck) {
+          const cooldownHours = recent.bot_config_id === botConfigId
+            ? sameBotCooldownHours
+            : diffBotCooldownHours;
+
+          const cooldownCheck = await query(
+            `SELECT 1 FROM campaign_leads cl3
+             JOIN leads l3 ON l3.id = cl3.lead_id
+             WHERE l3.phone_number = $1 AND cl3.campaign_id = $2
+             AND cl3.called_at > NOW() - INTERVAL '${cooldownHours} hours'`,
+            [cl.phone_number, recent.campaign_id]
+          );
+
+          if (cooldownCheck.length > 0) {
+            console.log(`[campaign] Skipping ${cl.phone_number} — called ${cooldownHours}h cooldown by campaign ${recent.campaign_id}`);
+            skipLead = true;
+            break;
+          }
+        }
+
+        if (skipLead) {
+          // Revert to queued so it can be retried later after cooldown
+          await query(
+            "UPDATE campaign_leads SET status = 'queued', called_at = NULL WHERE id = $1",
+            [cl.id]
+          );
+          continue;
+        }
+      }
+
       // Reserve a global concurrency slot
       const slot = await checkConcurrencySlot({
         orgId,

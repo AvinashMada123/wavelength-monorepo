@@ -198,6 +198,36 @@ class AudioPipeline:
             waited_ms = (time.time() - wait_start) * 1000
             self.log.detail(f"Caller speech detected after {waited_ms:.0f}ms — releasing greeting")
 
+        # If greeting is still being generated, wait up to 2s for completion
+        if not s.greeting_audio_complete and s.preloaded_audio:
+            self.log.detail("Greeting still generating — waiting up to 2s for completion")
+            wait_start = time.time()
+            while not s.greeting_audio_complete and (time.time() - wait_start) < 2.0:
+                await asyncio.sleep(0.05)
+                if not s.is_active:
+                    return
+
+            if not s.greeting_audio_complete:
+                # Timeout — skip partial greeting, trigger fresh shorter greeting
+                self.log.warn("Greeting incomplete after 2s — skipping partial, triggering fresh")
+                s.preloaded_audio = []
+                s.greeting_sent = False
+                s._greeting_trigger_time = time.time()
+                # Send fresh greeting trigger to Gemini
+                if s.goog_live_ws:
+                    try:
+                        await s.goog_live_ws.send(json.dumps({
+                            "client_content": {
+                                "turns": [{"role": "user", "parts": [{"text":
+                                    "[SYSTEM: Start the conversation with a brief greeting. Keep it to one sentence.]"
+                                }]}],
+                                "turn_complete": True
+                            }
+                        }))
+                    except Exception:
+                        pass
+                return  # Fresh greeting will come through normal audio pipeline
+
         # Minimal delay for WebSocket buffer to stabilize
         await asyncio.sleep(0.05)
         count = len(s.preloaded_audio)

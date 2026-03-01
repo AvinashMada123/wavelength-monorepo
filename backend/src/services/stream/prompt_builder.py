@@ -170,9 +170,18 @@ class PromptBuilder:
         # Add configurable GHL workflow tools (during_call only — pre/post are handled server-side)
         for wf in s._ghl_workflows:
             if wf.get("timing") == "during_call" and wf.get("enabled") and wf.get("tag"):
+                base_desc = wf.get("description", f"Trigger the '{wf.get('name', 'workflow')}' workflow")
+                # Append strict commitment criteria to prevent false triggers on tentative responses
+                commitment_guard = (
+                    " ONLY call this workflow when the user says explicit words like "
+                    "'yes I'll attend', 'count me in', 'I'll be there', 'I'm coming', "
+                    "'yes definitely', 'sure I'll come'. "
+                    "NEVER call this on tentative responses like 'okay', 'maybe', "
+                    "'let me check', 'send me details', 'I'll think about it', 'hmm'."
+                )
                 tools.append({
                     "name": f"ghl_workflow_{wf['id']}",
-                    "description": wf.get("description", f"Trigger the '{wf.get('name', 'workflow')}' workflow"),
+                    "description": base_desc + commitment_guard,
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -349,13 +358,14 @@ class PromptBuilder:
         full_prompt += f"\n\n[CURRENT DATE/TIME: {_now.strftime('%A, %B %d, %Y at %I:%M %p')}]"
 
         # Minimal universal rules — safety net for prompts that lack their own.
-        # Kept short (~250 chars) to minimize latency impact.
         full_prompt += (
             "\n\n[CORE RULES] "
             "1) Max 1-2 sentences, then STOP and WAIT for the customer to respond. "
             "NEVER answer your own questions. NEVER continue talking after asking a question. "
             "2) If you receive context about a previous conversation, do NOT acknowledge it. "
-            "Just wait for the customer to speak, then respond naturally."
+            "Just wait for the customer to speak, then respond naturally. "
+            "3) Do not repeat the exact same sentence within 3 turns. You may repeat key facts "
+            "(event time, host name, registration link) when confirming details with the caller."
         )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition

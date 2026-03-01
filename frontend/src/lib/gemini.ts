@@ -48,7 +48,7 @@ Analyze this call transcript Q&A and classify the lead.
 - Contact: ${callData.contact_name}
 - Duration: ${callData.duration_seconds}s
 - Conversation turns: ${callData.call_metrics?.turn_count || callData.questions_completed || 0}
-- Conversation depth: ${Math.round(callData.completion_rate * 100)}% (stages covered: opener → discovery → cost → pitch)
+- Conversation depth: ${callData.furthest_phase_reached || `${Math.round((callData.completion_rate || 0) * 100)}%`} (phases: greeting → rapport → bridge → fomo → offer → committed → closed)
 - Interest level (from AI caller): ${callData.interest_level}
 - Detected persona: ${callData.triggered_persona || "Unknown"}
 - Call summary: ${callData.call_summary}

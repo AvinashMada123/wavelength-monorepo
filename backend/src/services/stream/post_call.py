@@ -97,6 +97,7 @@ class PostCallProcessor:
                         interest_level=interest_level,
                         linguistic_style=s._linguistic_style,
                         org_id=s.context.get("_org_id", ""),
+                        bot_config_id=s.context.get("bot_config_id", "") or s.context.get("_bot_id", ""),
                     )
                 except Exception as e:
                     logger.error(f"Cross-call memory save error: {e}")
@@ -236,16 +237,43 @@ class PostCallProcessor:
             if pain_points:
                 collected_responses["pain_points"] = "; ".join(pain_points)
 
-            # Completion rate: proportion of conversation stages reached
-            # Stage 1 = opener, Stage 2 = discovery, Stage 3 = cost/pain, Stage 4 = pitch
-            stages_reached = 1  # Always reach stage 1 (opener)
-            if pain_points or any("Pain point" in f for f in s._key_facts):
-                stages_reached = 2  # Reached discovery
-            if any("Product mentioned" in f for f in s._key_facts):
-                stages_reached = 4  # Reached pitch (implies cost stage passed)
-            elif stages_reached >= 2 and turn_count >= 4:
-                stages_reached = 3  # Likely reached cost stage
-            completion_rate = round(stages_reached / 4, 2)
+            # Determine furthest conversation phase reached
+            def _determine_phase(st):
+                """Walk phases in reverse. First match = furthest phase reached."""
+                # closed: workflow triggered AND graceful end
+                if st._triggered_workflows and st._closing_call:
+                    return "closed", 7
+                # committed: any GHL workflow triggered
+                if st._triggered_workflows:
+                    return "committed", 6
+                # offer: agent discussed specific offerings
+                offer_kw = ["tonight", "session today", "this saturday", "another session", "upcoming"]
+                if any(kw in (m.lower() if isinstance(m, str) else "") for m in st._conversation_milestones for kw in offer_kw):
+                    return "offer", 5
+                # Look in accumulated agent text for offer keywords
+                agent_text = getattr(st, '_accumulated_agent_text', '') or ''
+                if any(kw in agent_text.lower() for kw in offer_kw):
+                    return "offer", 5
+                # fomo: session content discussed
+                fomo_kw = ["covered", "topics", "learned", "missed"]
+                if any(kw in agent_text.lower() for kw in fomo_kw):
+                    return "fomo", 4
+                # bridge: registration referenced
+                bridge_kw = ["registered", "could not make it", "missed", "signed up"]
+                if any(kw in agent_text.lower() for kw in bridge_kw):
+                    return "bridge", 3
+                # rapport: profession/work discussed
+                rapport_kw = ["what do you do", "currently working", "which field", "tell me about yourself"]
+                if any(kw in agent_text.lower() for kw in rapport_kw):
+                    return "rapport", 2
+                # greeting: at least 1 turn happened
+                if st._turn_count >= 1:
+                    return "greeting", 1
+                return "none", 0
+
+            phase_name, phase_index = _determine_phase(s)
+            furthest_phase_reached = phase_name
+            completion_rate = round(phase_index / 7, 2)  # Backward compat float
 
             payload = {
                 "event": "call_ended",
@@ -265,6 +293,7 @@ class PostCallProcessor:
                 "questions_completed": turn_count,
                 "total_questions": max(turn_count, 8),
                 "completion_rate": completion_rate,
+                "furthest_phase_reached": furthest_phase_reached,
                 "interest_level": interest_level,
                 "call_summary": call_summary,
                 "objections_raised": objections,

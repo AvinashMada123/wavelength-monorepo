@@ -1134,7 +1134,7 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
 
         # Step 1: Load cross-call memory (only if enabled)
         if request.memoryRecallEnabled:
-            memory_data = load_memory_context(request.phoneNumber, org_id=request.orgId or "")
+            memory_data = load_memory_context(request.phoneNumber, org_id=request.orgId or "", context=context)
             if memory_data:
                 context["_memory_context"] = memory_data.get("prompt", "")
                 # If memory has a persona, pre-set it so AI skips discovery

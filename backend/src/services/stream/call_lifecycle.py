@@ -379,8 +379,53 @@ class CallLifecycle:
                         and (time.time() - s._last_user_audio_time) < 5.0):
                     self.log.warn("Session watchdog: WS is None but user audio flowing — forcing reconnect")
                     s._transcript._save_transcript("SYSTEM", "Watchdog: WS dead, forcing reconnect")
+
+                    # Try nudge first before full session split
+                    if not s._watchdog_nudge_sent:
+                        s._watchdog_nudge_sent = True
+                        self.log.warn("Watchdog: trying nudge before session split")
+                        if s.goog_live_ws:
+                            try:
+                                await s.goog_live_ws.send(json.dumps({
+                                    "client_content": {
+                                        "turns": [{"role": "user", "parts": [{"text":
+                                            "[SYSTEM: You seem to have paused. Continue the conversation naturally.]"
+                                        }]}],
+                                        "turn_complete": True
+                                    }
+                                }))
+                            except Exception:
+                                pass
+                        await asyncio.sleep(3.0)  # Wait 3s for response
+                        if s._current_turn_audio_chunks > 0:
+                            s._watchdog_nudge_sent = False
+                            continue  # Nudge worked, AI responded
+
                     asyncio.create_task(s._gemini._emergency_session_split())
                     await asyncio.sleep(10.0)  # Cooldown after reconnect
+
+                    # Track emergency split count and graceful exit after 2 failures
+                    s._emergency_split_count += 1
+                    if s._emergency_split_count >= 2:
+                        self.log.warn("Watchdog: 2 failed splits — graceful exit")
+                        s._closing_call = True
+                        if s.goog_live_ws:
+                            try:
+                                await s.goog_live_ws.send(json.dumps({
+                                    "client_content": {
+                                        "turns": [{"role": "user", "parts": [{"text":
+                                            "[SYSTEM: We are having technical difficulties. Say: 'I apologize, we seem to "
+                                            "be having some technical issues. Let me send you the details on WhatsApp instead. "
+                                            "Thank you for your time!' Then call end_call.]"
+                                        }]}],
+                                        "turn_complete": True
+                                    }
+                                }))
+                            except Exception:
+                                pass
+                        return  # Exit watchdog
+
+                    s._watchdog_nudge_sent = False  # Reset for next cycle
                     continue
 
                 # Check: user audio has been flowing but AI has generated
@@ -405,8 +450,53 @@ class CallLifecycle:
                             self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s after greeting "
                                           f"(timeout={post_greeting_timeout:.0f}s, playback={greeting_playback_s:.1f}s) — forcing reconnect")
                             s._transcript._save_transcript("SYSTEM", "Watchdog: AI unresponsive post-greeting, forcing reconnect")
+
+                            # Try nudge first before full session split
+                            if not s._watchdog_nudge_sent:
+                                s._watchdog_nudge_sent = True
+                                self.log.warn("Watchdog: trying nudge before session split")
+                                if s.goog_live_ws:
+                                    try:
+                                        await s.goog_live_ws.send(json.dumps({
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text":
+                                                    "[SYSTEM: You seem to have paused. Continue the conversation naturally.]"
+                                                }]}],
+                                                "turn_complete": True
+                                            }
+                                        }))
+                                    except Exception:
+                                        pass
+                                await asyncio.sleep(3.0)  # Wait 3s for response
+                                if s._current_turn_audio_chunks > 0:
+                                    s._watchdog_nudge_sent = False
+                                    continue  # Nudge worked, AI responded
+
                             asyncio.create_task(s._gemini._emergency_session_split())
                             await asyncio.sleep(10.0)  # Cooldown after reconnect
+
+                            # Track emergency split count and graceful exit after 2 failures
+                            s._emergency_split_count += 1
+                            if s._emergency_split_count >= 2:
+                                self.log.warn("Watchdog: 2 failed splits — graceful exit")
+                                s._closing_call = True
+                                if s.goog_live_ws:
+                                    try:
+                                        await s.goog_live_ws.send(json.dumps({
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text":
+                                                    "[SYSTEM: We are having technical difficulties. Say: 'I apologize, we seem to "
+                                                    "be having some technical issues. Let me send you the details on WhatsApp instead. "
+                                                    "Thank you for your time!' Then call end_call.]"
+                                                }]}],
+                                                "turn_complete": True
+                                            }
+                                        }))
+                                    except Exception:
+                                        pass
+                                return  # Exit watchdog
+
+                            s._watchdog_nudge_sent = False  # Reset for next cycle
                             continue
 
                         # General unresponsive check for mid-call (turn > 1)
@@ -414,8 +504,53 @@ class CallLifecycle:
                             self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s "
                                           f"— forcing reconnect")
                             s._transcript._save_transcript("SYSTEM", "Watchdog: AI unresponsive, forcing reconnect")
+
+                            # Try nudge first before full session split
+                            if not s._watchdog_nudge_sent:
+                                s._watchdog_nudge_sent = True
+                                self.log.warn("Watchdog: trying nudge before session split")
+                                if s.goog_live_ws:
+                                    try:
+                                        await s.goog_live_ws.send(json.dumps({
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text":
+                                                    "[SYSTEM: You seem to have paused. Continue the conversation naturally.]"
+                                                }]}],
+                                                "turn_complete": True
+                                            }
+                                        }))
+                                    except Exception:
+                                        pass
+                                await asyncio.sleep(3.0)  # Wait 3s for response
+                                if s._current_turn_audio_chunks > 0:
+                                    s._watchdog_nudge_sent = False
+                                    continue  # Nudge worked, AI responded
+
                             asyncio.create_task(s._gemini._emergency_session_split())
                             await asyncio.sleep(10.0)  # Cooldown after reconnect
+
+                            # Track emergency split count and graceful exit after 2 failures
+                            s._emergency_split_count += 1
+                            if s._emergency_split_count >= 2:
+                                self.log.warn("Watchdog: 2 failed splits — graceful exit")
+                                s._closing_call = True
+                                if s.goog_live_ws:
+                                    try:
+                                        await s.goog_live_ws.send(json.dumps({
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text":
+                                                    "[SYSTEM: We are having technical difficulties. Say: 'I apologize, we seem to "
+                                                    "be having some technical issues. Let me send you the details on WhatsApp instead. "
+                                                    "Thank you for your time!' Then call end_call.]"
+                                                }]}],
+                                                "turn_complete": True
+                                            }
+                                        }))
+                                    except Exception:
+                                        pass
+                                return  # Exit watchdog
+
+                            s._watchdog_nudge_sent = False  # Reset for next cycle
                             continue
 
                 await asyncio.sleep(2.0)  # Check every 2 seconds

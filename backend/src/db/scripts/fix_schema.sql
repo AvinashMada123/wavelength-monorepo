@@ -17,6 +17,11 @@ ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT '';
 ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS dnd_until TIMESTAMPTZ;
 ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS dnd_reason TEXT;
 
+-- Add cross-bot dead-call detection columns to contact_memory
+ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS last_call_duration INTEGER DEFAULT 0;
+ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS last_call_user_turns INTEGER DEFAULT 0;
+ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS last_call_bot_id TEXT DEFAULT '';
+
 -- Migrate primary key from (phone) to (phone, org_id) for multi-tenant support
 DO $$
 BEGIN
