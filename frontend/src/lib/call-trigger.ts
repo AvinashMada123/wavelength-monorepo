@@ -335,7 +335,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     ...(botNotes ? { botNotes } : {}),
     ...(leadId ? { leadId } : {}),
     ...(jobTitle ? { jobTitle } : {}),
-    maxCallDuration: configDoc.max_call_duration ?? 480,
+    maxCallDuration: configDoc.max_call_duration ?? 300,
     ghlWorkflows: configDoc.ghl_workflows ?? [],
     ...(configDoc.voice || voice ? { voice: configDoc.voice || voice } : {}),
   };

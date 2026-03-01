@@ -144,7 +144,7 @@ def detect_persona(accumulated_text: str, custom_config: dict = None) -> Optiona
             best_score = score
             best_persona = persona_key
 
-    if best_score >= 2:
+    if best_score >= 3:
         return best_persona
     return None
 

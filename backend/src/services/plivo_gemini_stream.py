@@ -216,7 +216,7 @@ class AudioChunk:
 
 
 class PlivoGeminiSession:
-    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, client_name: str = "fwai", max_call_duration: int = 480):
+    def __init__(self, call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, client_name: str = "fwai", max_call_duration: int = 300):
         self.call_uuid = call_uuid  # Internal UUID
         self.plivo_call_uuid = None  # Plivo's actual call UUID (set later)
         self.caller_phone = caller_phone
@@ -273,7 +273,7 @@ class PlivoGeminiSession:
         # Flag to prevent double greeting
         self.greeting_audio_complete = False
 
-        # Call duration management (configurable, default 8 minutes)
+        # Call duration management (configurable, default 5 minutes)
         self.call_start_time = None
         self.max_call_duration = max_call_duration
         self._timeout_task = None
@@ -2278,9 +2278,9 @@ Rules:
                     "automatic_activity_detection": {
                         "disabled": False,
                         "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
-                        "end_of_speech_sensitivity": "END_SENSITIVITY_HIGH",
+                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
                         "prefix_padding_ms": 100,
-                        "silence_duration_ms": 100,
+                        "silence_duration_ms": 800,
                     }
                 },
                 "input_audio_transcription": {},
@@ -3648,7 +3648,7 @@ def set_plivo_uuid(internal_uuid: str, plivo_uuid: str):
         logger.error(f"  _preloading_sessions keys: {list(_preloading_sessions.keys())}")
         logger.error(f"  _sessions keys: {list(_sessions.keys())}")
 
-async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, intelligence_brief: str = "", social_proof_summary: str = "", max_call_duration: int = 480) -> bool:
+async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None, context: dict = None, webhook_url: str = None, intelligence_brief: str = "", social_proof_summary: str = "", max_call_duration: int = 300) -> bool:
     """Preload a session while phone is ringing"""
     async with _sessions_lock:
         total = len(_sessions) + len(_preloading_sessions)
@@ -3718,7 +3718,7 @@ async def _session_reaper():
     """Background task: clean up zombie sessions that were never answered or got stuck.
     Runs every 60s. Removes preloading sessions older than 2 minutes and
     active sessions with no audio activity for 10 minutes."""
-    PRELOAD_TTL = 120   # 2 minutes — if call wasn't answered by now, it won't be
+    PRELOAD_TTL = 45    # 45 seconds — margin for slow Indian carrier routes
     ACTIVE_TTL = 600    # 10 minutes — max call duration safety net
     while True:
         await asyncio.sleep(60)
