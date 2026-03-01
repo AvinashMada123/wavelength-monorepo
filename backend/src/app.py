@@ -882,10 +882,10 @@ async def get_call_status(call_id: str):
 
 
 @app.get("/calls/{call_id}/recording")
-async def get_call_recording(call_id: str):
-    """Download the recording for a call by call_uuid"""
+async def get_call_recording(call_id: str, request: Request):
+    """Download the recording for a call by call_uuid (supports Range requests for seeking)"""
     from pathlib import Path
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, StreamingResponse
 
     recordings_dir = Path(__file__).parent.parent / "recordings"
 
@@ -894,14 +894,58 @@ async def get_call_recording(call_id: str):
     wav_file = recordings_dir / f"{call_id}_mixed.wav"
 
     if mp3_file.exists():
-        return FileResponse(str(mp3_file), media_type="audio/mpeg", filename=f"{call_id}.mp3")
+        file_path = mp3_file
+        media_type = "audio/mpeg"
     elif wav_file.exists():
-        return FileResponse(str(wav_file), media_type="audio/wav", filename=f"{call_id}.wav")
+        file_path = wav_file
+        media_type = "audio/wav"
     else:
         raise HTTPException(
             status_code=404,
             detail=f"Recording not found for call {call_id}. Ensure ENABLE_TRANSCRIPTS=true."
         )
+
+    file_size = file_path.stat().st_size
+    range_header = request.headers.get("range")
+
+    if range_header:
+        # Parse "bytes=start-end"
+        range_spec = range_header.replace("bytes=", "")
+        parts = range_spec.split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if parts[1] else file_size - 1
+        end = min(end, file_size - 1)
+        length = end - start + 1
+
+        def iter_range():
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(8192, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return StreamingResponse(
+            iter_range(),
+            status_code=206,
+            media_type=media_type,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Content-Length": str(length),
+                "Accept-Ranges": "bytes",
+            },
+        )
+
+    # No Range header — return full file with Accept-Ranges
+    return FileResponse(
+        str(file_path),
+        media_type=media_type,
+        filename=f"{call_id}.mp3" if media_type == "audio/mpeg" else f"{call_id}.wav",
+        headers={"Accept-Ranges": "bytes"},
+    )
 
 
 # ============================================================================

@@ -58,14 +58,14 @@ export async function getActiveCallCount(orgId: string): Promise<number> {
   return parseInt(result?.count || "0", 10);
 }
 
-/** Read the org's maxConcurrentCalls setting (default 40). */
+/** Read the org's maxConcurrentCalls setting (default 100). */
 export async function getMaxConcurrentCalls(orgId: string): Promise<number> {
   const row = await queryOne<{ settings: Record<string, unknown> }>(
     "SELECT settings FROM organizations WHERE id = $1",
     [orgId]
   );
   const settings = row?.settings || {};
-  return (settings as Record<string, number>).maxConcurrentCalls || 40;
+  return (settings as Record<string, number>).maxConcurrentCalls || 100;
 }
 
 /**
@@ -103,7 +103,7 @@ export async function checkConcurrencySlot(params: {
       [params.orgId]
     );
     const settings = orgResult.rows[0]?.settings || {};
-    const limit = (settings as Record<string, number>).maxConcurrentCalls || 40;
+    const limit = (settings as Record<string, number>).maxConcurrentCalls || 100;
 
     if (activeCount >= limit) {
       await client.query("ROLLBACK");

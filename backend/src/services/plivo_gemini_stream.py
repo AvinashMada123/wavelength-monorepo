@@ -3600,7 +3600,7 @@ Rules:
 
 
 # Session storage with concurrency protection
-MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", 50))
+MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", 100))
 _sessions: Dict[str, PlivoGeminiSession] = {}
 _preloading_sessions: Dict[str, PlivoGeminiSession] = {}
 _sessions_lock = asyncio.Lock()
