@@ -150,7 +150,7 @@ def detect_voice_from_prompt(prompt: str) -> str:
 TOOL_DECLARATIONS = [
     {
         "name": "end_call",
-        "description": "End the phone call. ONLY call this AFTER you have tried at least 2-3 reframes AND the customer explicitly says stop/no/end. NEVER end just because they said 'not interested' once — that is normal in sales. Try different angles first. Only call this after a firm third rejection or explicit 'please stop'.",
+        "description": "End the phone call gracefully. Call this when: 1) The customer says 'not interested', 'don't call me', 'wrong number', or any clear rejection — say a polite goodbye and end immediately. 2) The conversation has naturally concluded with mutual goodbyes. 3) The customer explicitly asks to stop or hang up. ALWAYS respect the customer's wishes on the FIRST clear rejection. Say a warm one-line goodbye, then call this tool.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -494,7 +494,7 @@ class PlivoGeminiSession:
             self.log.warn(f"Failed to inject situation hint: {e}")
 
     # Minimum turns before goodbye detection activates (prevents premature call end)
-    MIN_TURNS_FOR_GOODBYE = 6
+    MIN_TURNS_FOR_GOODBYE = 2
 
     def _get_tool_declarations(self):
         """Build tool declarations dynamically based on session capabilities."""
@@ -1080,6 +1080,8 @@ Rules:
         self._silence_monitor_task = asyncio.create_task(self._monitor_silence())
         # Start session watchdog — detects dead Gemini sessions
         asyncio.create_task(self._session_watchdog())
+        # Start ghost monologue monitor — ends call if user never speaks
+        asyncio.create_task(self._monitor_ghost_monologue())
 
     async def _send_preloaded_audio(self):
         """Send preloaded audio — waits for caller speech before flushing greeting."""
@@ -1229,6 +1231,59 @@ Rules:
             pass
         except Exception as e:
             logger.error(f"Error in silence monitor: {e}")
+
+    async def _monitor_ghost_monologue(self):
+        """End call gracefully if user never speaks after greeting.
+        Prevents the agent from talking to itself for minutes on a dead line.
+        Waits 15s after call answer — if user has said nothing, sends a check
+        message. If still silent after another 8s, ends the call."""
+        try:
+            # Wait 15s after call answer for user to speak
+            await asyncio.sleep(15.0)
+
+            if not self.is_active or self._closing_call:
+                return
+
+            # Check if user has spoken at all (any speech detected via VAD)
+            if self._last_user_speech_time is not None or self._turn_count > 1:
+                return  # User spoke, not a ghost monologue
+
+            # User hasn't spoken — send a check message
+            self.log.warn("Ghost monologue detected — user silent 15s, sending check")
+            self._save_transcript("SYSTEM", "Ghost monologue: user silent 15s, checking")
+            if self.goog_live_ws:
+                try:
+                    msg = {
+                        "client_content": {
+                            "turns": [{"role": "user", "parts": [{"text":
+                                "[SYSTEM: The caller has not spoken at all for 15 seconds. "
+                                "Say ONLY: 'Hello, can you hear me?' and wait for a response. "
+                                "If they still don't respond, say a brief goodbye and call end_call.]"
+                            }]}],
+                            "turn_complete": True
+                        }
+                    }
+                    await self.goog_live_ws.send(json.dumps(msg))
+                except Exception:
+                    pass
+
+            # Wait another 8s for response
+            await asyncio.sleep(8.0)
+
+            if not self.is_active or self._closing_call:
+                return
+
+            # Still no speech — force graceful hangup
+            if self._last_user_speech_time is None and self._turn_count <= 1:
+                self.log.warn("Ghost monologue — user still silent after check, ending call")
+                self._save_transcript("SYSTEM", "Ghost monologue: ending call — no user speech")
+                self._closing_call = True
+                await self._hangup_call_delayed(1.0)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error in ghost monologue monitor: {e}")
 
     async def _session_watchdog(self):
         """Detect dead Gemini sessions and force reconnection.
@@ -2322,34 +2377,6 @@ Rules:
             if tool_name == "end_call":
                 reason = tool_args.get("reason", "conversation ended")
                 self.log.detail(f"End call: {reason}")
-
-                # PERSEVERANCE GUARD: Block premature end_call before turn 8
-                # This ensures the AI tries multiple reframes before giving up
-                if self._turn_count < 8:
-                    self.log.warn(f"end_call BLOCKED at turn {self._turn_count} (min 8) — telling AI to persist")
-                    self._save_transcript("SYSTEM", f"end_call blocked at turn {self._turn_count}: {reason}")
-                    try:
-                        tool_response = {
-                            "tool_response": {
-                                "function_responses": [{
-                                    "id": call_id,
-                                    "name": tool_name,
-                                    "response": {
-                                        "success": False,
-                                        "message": (
-                                            "REJECTED: Too early to end. You have NOT tried enough reframes. "
-                                            "The customer saying 'don't know' or 'not interested' is NORMAL. "
-                                            "Try a different angle: share a story, use social proof, or flip the frame. "
-                                            "Keep going — do NOT end the call yet."
-                                        )
-                                    }
-                                }]
-                            }
-                        }
-                        await self.goog_live_ws.send(json.dumps(tool_response))
-                    except Exception:
-                        pass
-                    return
 
                 self._save_transcript("SYSTEM", f"Agent requested call end: {reason}")
 
