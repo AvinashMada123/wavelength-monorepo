@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS contact_memory (
     last_call_summary TEXT,
     last_call_outcome TEXT,
     all_call_uuids TEXT DEFAULT '[]',
+    dnd_until TIMESTAMPTZ,
+    dnd_reason TEXT,
     created_at TEXT DEFAULT '',
     updated_at TEXT DEFAULT '',
     PRIMARY KEY (phone, org_id)

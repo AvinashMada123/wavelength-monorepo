@@ -318,7 +318,7 @@ class PlivoGeminiSession:
         # Wait-for-caller-speech: hold preloaded greeting until caller speaks
         self._wait_for_caller_speech = True  # Hold greeting until caller says "hello"
         self._caller_speech_detected = False  # Set True once speech energy detected
-        self._speech_energy_threshold = 300  # RMS threshold for 16-bit PCM (filters line noise)
+        self._speech_energy_threshold = 2000  # RMS threshold for 16-bit PCM (filters line noise)
 
         # Audio buffer for reconnection (store audio if Google WS drops briefly)
         self._reconnect_audio_buffer = []
@@ -1090,7 +1090,7 @@ Rules:
         if self._wait_for_caller_speech:
             self.log.detail("Holding greeting — waiting for caller speech")
             wait_start = time.time()
-            max_wait = 8.0  # Safety: flush after 8s even without speech (call might be silent pickup)
+            max_wait = 5.0  # Safety: flush after 5s even without speech (call might be silent pickup)
             while not self._caller_speech_detected:
                 await asyncio.sleep(0.05)
                 if not self.is_active:
@@ -1158,6 +1158,31 @@ Rules:
                     logger.info(f"[{self.call_uuid[:8]}] Call in progress: {elapsed}s")
                 else:
                     return  # Call ended, stop monitoring
+
+                # No-engagement timeout: if user hasn't engaged after 60s, end call
+                if elapsed > 60 and self._turn_count <= 1 and not self._closing_call:
+                    self.log.warn(f"No engagement after {elapsed:.0f}s — ending call")
+                    self._save_transcript("SYSTEM", "No engagement timeout: user never engaged after 60s")
+                    if self.goog_live_ws:
+                        try:
+                            await self.goog_live_ws.send(json.dumps({
+                                "client_content": {
+                                    "turns": [{"role": "user", "parts": [{"text":
+                                        "[SYSTEM: The caller has not engaged after 60 seconds. "
+                                        "Say: 'It seems like this isn't a good time. I'll send you the details on WhatsApp instead. Take care!' "
+                                        "Then immediately call end_call.]"
+                                    }]}],
+                                    "turn_complete": True
+                                }
+                            }))
+                        except Exception:
+                            pass
+                    # Give 15 seconds for the goodbye message, then force hangup
+                    await asyncio.sleep(15.0)
+                    if self.is_active and not self._closing_call:
+                        self._closing_call = True
+                        await self._hangup_call_delayed(1.0)
+                    return
 
             if self.is_active and not self._closing_call:
                 logger.info(f"Call {self.call_uuid[:8]} reaching {self.max_call_duration}s limit - triggering wrap-up")
@@ -1227,6 +1252,31 @@ Rules:
                     # Reset timer to avoid repeated nudges
                     self._last_user_speech_time = None
 
+                # 90-second mid-call silence guard — catches cases where user
+                # spoke early then went completely silent (ghost monitor already exited)
+                if (self._last_user_speech_time is not None and
+                    self._turn_count > 1 and
+                    (time.time() - self._last_user_speech_time) > 90 and
+                    not self._closing_call and
+                    not hasattr(self, '_silence_guard_fired')):
+                    self._silence_guard_fired = True
+                    self.log.warn("90s silence guard — user went silent mid-call")
+                    self._save_transcript("SYSTEM", "90s silence guard: user went silent")
+                    if self.goog_live_ws:
+                        try:
+                            await self.goog_live_ws.send(json.dumps({
+                                "client_content": {
+                                    "turns": [{"role": "user", "parts": [{"text":
+                                        "[SYSTEM: The caller has been completely silent for 90 seconds. "
+                                        "Say: 'Are you still there?' and wait for a response. "
+                                        "If they don't respond soon, say goodbye and call end_call.]"
+                                    }]}],
+                                    "turn_complete": True
+                                }
+                            }))
+                        except Exception:
+                            pass
+
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1234,49 +1284,62 @@ Rules:
 
     async def _monitor_ghost_monologue(self):
         """End call gracefully if user never speaks after greeting.
-        Prevents the agent from talking to itself for minutes on a dead line.
-        Waits 15s after call answer — if user has said nothing, sends a check
-        message. If still silent after another 8s, ends the call."""
+        3-strike system: check at 15s, 25s, 30s — then end call."""
         try:
-            # Wait 15s after call answer for user to speak
+            # Strike 1: Wait 15s after call answer for user to speak
             await asyncio.sleep(15.0)
-
             if not self.is_active or self._closing_call:
                 return
-
-            # Check if user has spoken at all (any speech detected via VAD)
             if self._last_user_speech_time is not None or self._turn_count > 1:
-                return  # User spoke, not a ghost monologue
+                return  # User spoke, not a ghost
 
-            # User hasn't spoken — send a check message
-            self.log.warn("Ghost monologue detected — user silent 15s, sending check")
-            self._save_transcript("SYSTEM", "Ghost monologue: user silent 15s, checking")
+            # User hasn't spoken — send check
+            self.log.warn("Ghost monologue strike 1 — user silent 15s, sending check")
+            self._save_transcript("SYSTEM", "Ghost monologue: strike 1, checking")
             if self.goog_live_ws:
                 try:
-                    msg = {
+                    await self.goog_live_ws.send(json.dumps({
                         "client_content": {
                             "turns": [{"role": "user", "parts": [{"text":
                                 "[SYSTEM: The caller has not spoken at all for 15 seconds. "
-                                "Say ONLY: 'Hello, can you hear me?' and wait for a response. "
-                                "If they still don't respond, say a brief goodbye and call end_call.]"
+                                "Say ONLY: 'Hello, can you hear me?' and wait for a response.]"
                             }]}],
                             "turn_complete": True
                         }
-                    }
-                    await self.goog_live_ws.send(json.dumps(msg))
+                    }))
                 except Exception:
                     pass
 
-            # Wait another 8s for response
-            await asyncio.sleep(8.0)
-
+            # Strike 2: Wait 10 more seconds
+            await asyncio.sleep(10.0)
             if not self.is_active or self._closing_call:
                 return
+            if self._last_user_speech_time is not None or self._turn_count > 1:
+                return
 
-            # Still no speech — force graceful hangup
+            self.log.warn("Ghost monologue strike 2 — still silent, sending second check")
+            self._save_transcript("SYSTEM", "Ghost monologue: strike 2")
+            if self.goog_live_ws:
+                try:
+                    await self.goog_live_ws.send(json.dumps({
+                        "client_content": {
+                            "turns": [{"role": "user", "parts": [{"text":
+                                "[SYSTEM: The caller STILL has not spoken after 25 seconds. "
+                                "Say ONLY: 'I think we may have a bad connection.' and wait briefly.]"
+                            }]}],
+                            "turn_complete": True
+                        }
+                    }))
+                except Exception:
+                    pass
+
+            # Strike 3: Wait 5 more seconds — then end call
+            await asyncio.sleep(5.0)
+            if not self.is_active or self._closing_call:
+                return
             if self._last_user_speech_time is None and self._turn_count <= 1:
-                self.log.warn("Ghost monologue — user still silent after check, ending call")
-                self._save_transcript("SYSTEM", "Ghost monologue: ending call — no user speech")
+                self.log.warn("Ghost monologue strike 3 — ending call")
+                self._save_transcript("SYSTEM", "Ghost monologue: ending call — no user speech after 30s")
                 self._closing_call = True
                 await self._hangup_call_delayed(1.0)
 
@@ -2375,6 +2438,7 @@ Rules:
 
             # Handle end_call tool
             if tool_name == "end_call":
+                self._closing_call = True  # Immediately prevent further agent speech
                 reason = tool_args.get("reason", "conversation ended")
                 self.log.detail(f"End call: {reason}")
 
@@ -2390,7 +2454,7 @@ Rules:
                             "function_responses": [{
                                 "id": call_id,
                                 "name": tool_name,
-                                "response": {"success": True, "message": "Waiting for mutual goodbye before ending"}
+                                "response": {"success": True, "message": "Call ending now. Do not say anything else."}
                             }]
                         }
                     }
@@ -2401,9 +2465,57 @@ Rules:
                 # Check if user already said goodbye
                 self._check_mutual_goodbye()
 
-                # Fallback: if user doesn't respond within 5 seconds, end anyway
-                if not self._closing_call:
-                    asyncio.create_task(self._fallback_hangup(5.0))
+                # DND detection — check user's actual speech for opt-out signals
+                if hasattr(self, '_accumulated_user_text') and self._accumulated_user_text:
+                    user_speech = self._accumulated_user_text.lower()
+                    # Permanent DND keywords
+                    permanent_dnd = ["don't call", "dont call", "stop calling", "police", "complaint", "block",
+                                     "mat karo call", "band karo"]
+                    # Temporary DND keywords (30 days)
+                    temporary_dnd = ["not interested", "nahi chahiye", "don't need this", "dont need this",
+                                     "remove my number"]
+
+                    dnd_reason = None
+                    dnd_permanent = False
+
+                    for kw in permanent_dnd:
+                        if kw in user_speech:
+                            dnd_reason = f"User said: '{kw}'"
+                            dnd_permanent = True
+                            break
+
+                    if not dnd_reason:
+                        for kw in temporary_dnd:
+                            if kw in user_speech:
+                                dnd_reason = f"User said: '{kw}'"
+                                break
+
+                    # Secondary signal: check LLM's reason (lower confidence)
+                    if not dnd_reason:
+                        llm_reason = tool_args.get("reason", "").lower()
+                        for kw in permanent_dnd + temporary_dnd:
+                            if kw in llm_reason:
+                                dnd_reason = f"LLM inferred: '{kw}' from reason: {tool_args.get('reason', '')}"
+                                dnd_permanent = kw in [k.lower() for k in permanent_dnd]
+                                break
+
+                    if dnd_reason:
+                        confidence = "high" if "User said" in dnd_reason else "llm_inferred"
+                        self.log.warn(f"DND detected [{confidence}]: {dnd_reason}")
+                        self._save_transcript("SYSTEM", f"DND flagged: {dnd_reason}")
+                        # Set DND in background
+                        try:
+                            from datetime import timedelta, timezone as tz
+                            org_id = self.context.get("_org_id", "")
+                            until = None if dnd_permanent else datetime.now(tz.utc) + timedelta(days=30)
+                            session_db.set_contact_dnd(
+                                self.caller_phone, org_id, until=until, reason=dnd_reason, confidence=confidence
+                            )
+                        except Exception as e:
+                            self.log.error(f"Failed to set DND: {e}")
+
+                # Fallback: end call after 2 seconds regardless
+                asyncio.create_task(self._fallback_hangup(2.0))
                 return
 
             # Handle save_user_info tool — saves user details via Gemini's audio understanding
@@ -2669,46 +2781,66 @@ Rules:
             import httpx
             import base64
 
-            t0 = time.time()
+            max_attempts = 2  # Initial attempt + 1 retry
+            for attempt in range(max_attempts):
+                try:
+                    t0 = time.time()
 
-            if self.provider == "twilio":
-                # Twilio: POST to update call status to "completed"
-                account_sid = self.twilio_account_sid or config.twilio_account_sid
-                auth_token = self.twilio_auth_token or config.twilio_auth_token
-                url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{hangup_uuid}.json"
+                    if self.provider == "twilio":
+                        # Twilio: POST to update call status to "completed"
+                        account_sid = self.twilio_account_sid or config.twilio_account_sid
+                        auth_token = self.twilio_auth_token or config.twilio_auth_token
+                        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{hangup_uuid}.json"
 
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        url,
-                        auth=(account_sid, auth_token),
-                        data={"Status": "completed"},
-                    )
-                    api_ms = (time.time() - t0) * 1000
+                        async with httpx.AsyncClient() as client:
+                            response = await client.post(
+                                url,
+                                auth=(account_sid, auth_token),
+                                data={"Status": "completed"},
+                            )
+                            api_ms = (time.time() - t0) * 1000
 
-                    if response.status_code in [200, 204]:
-                        self.log.detail(f"Twilio hangup OK ({api_ms:.0f}ms)")
+                            if response.status_code in [200, 204]:
+                                self.log.detail(f"Twilio hangup OK ({api_ms:.0f}ms)")
+                                break  # Success, no retry needed
+                            else:
+                                self.log.error(f"Twilio hangup failed: {response.status_code} ({api_ms:.0f}ms)")
+                                if attempt < max_attempts - 1:
+                                    self.log.detail("Retrying hangup in 1s...")
+                                    await asyncio.sleep(1.0)
                     else:
-                        self.log.error(f"Twilio hangup failed: {response.status_code} ({api_ms:.0f}ms)")
-            else:
-                # Plivo: DELETE call resource
-                auth_id = self.plivo_auth_id or config.plivo_auth_id
-                auth_token = self.plivo_auth_token or config.plivo_auth_token
-                auth_string = f"{auth_id}:{auth_token}"
-                auth_b64 = base64.b64encode(auth_string.encode()).decode()
+                        # Plivo: DELETE call resource
+                        auth_id = self.plivo_auth_id or config.plivo_auth_id
+                        auth_token = self.plivo_auth_token or config.plivo_auth_token
+                        auth_string = f"{auth_id}:{auth_token}"
+                        auth_b64 = base64.b64encode(auth_string.encode()).decode()
 
-                url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/{hangup_uuid}/"
+                        url = f"https://api.plivo.com/v1/Account/{auth_id}/Call/{hangup_uuid}/"
 
-                async with httpx.AsyncClient() as client:
-                    response = await client.delete(
-                        url,
-                        headers={"Authorization": f"Basic {auth_b64}"}
-                    )
-                    api_ms = (time.time() - t0) * 1000
+                        async with httpx.AsyncClient() as client:
+                            response = await client.delete(
+                                url,
+                                headers={"Authorization": f"Basic {auth_b64}"}
+                            )
+                            api_ms = (time.time() - t0) * 1000
 
-                    if response.status_code in [204, 200]:
-                        self.log.detail(f"Plivo hangup OK ({api_ms:.0f}ms)")
+                            if response.status_code in [204, 200]:
+                                self.log.detail(f"Plivo hangup OK ({api_ms:.0f}ms)")
+                                break  # Success, no retry needed
+                            else:
+                                self.log.error(f"Plivo hangup failed: {response.status_code} ({api_ms:.0f}ms)")
+                                if attempt < max_attempts - 1:
+                                    self.log.detail("Retrying hangup in 1s...")
+                                    await asyncio.sleep(1.0)
+
+                except Exception as e:
+                    logger.error(f"Error hanging up call {self.call_uuid} (attempt {attempt + 1}): {type(e).__name__}: {e}")
+                    if attempt < max_attempts - 1:
+                        self.log.detail("Retrying hangup in 1s...")
+                        await asyncio.sleep(1.0)
                     else:
-                        self.log.error(f"Plivo hangup failed: {response.status_code} ({api_ms:.0f}ms)")
+                        import traceback
+                        traceback.print_exc()
 
         except Exception as e:
             logger.error(f"Error hanging up call {self.call_uuid}: {type(e).__name__}: {e}")
@@ -3034,6 +3166,17 @@ Rules:
                                 logger.debug(f"[{self.call_uuid[:8]}] User goodbye detected")
                                 self.user_said_goodbye = True
                                 self._check_mutual_goodbye()
+
+                            # Voicemail detection — STT keyword check in first 2 turns
+                            if self._turn_count <= 2 and not self._closing_call:
+                                vm_text = user_text.lower()
+                                vm_keywords = ["voicemail", "leave a message", "after the tone", "not available",
+                                                "record your message", "after the beep", "mailbox"]
+                                if any(kw in vm_text for kw in vm_keywords):
+                                    self.log.warn(f"Voicemail detected via STT: '{user_text[:50]}'")
+                                    self._save_transcript("SYSTEM", f"Voicemail detected: {user_text[:80]}")
+                                    self._closing_call = True
+                                    await self._hangup_call_delayed(0.5)
 
                 # Handle AI speech transcription (outputTranscription)
                 output_transcription = sc.get("outputTranscription")

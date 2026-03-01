@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth-helpers";
 import { query, queryOne, getUidAndOrgFromToken } from "@/lib/db";
 import { triggerCall, checkConcurrencySlot, ConcurrencyLimitError } from "@/lib/call-trigger";
+import { isCallableTime, getNextAvailableCallTime } from "@/lib/time-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,6 +61,36 @@ export async function POST(request: NextRequest) {
     const forwardedProto = request.headers.get("x-forwarded-proto");
     const protocol = forwardedProto || (host.includes("localhost") ? "http" : "http");
     const webhookBaseUrl = `${protocol}://${host}`;
+
+    // --- TRAI time-of-day compliance check ---
+    if (payload.phoneNumber && !isCallableTime(payload.phoneNumber)) {
+      const nextTime = getNextAvailableCallTime(payload.phoneNumber);
+      return NextResponse.json(
+        {
+          success: false,
+          call_uuid: "",
+          message: `Outside calling hours for ${payload.phoneNumber}. Next available: ${nextTime?.toISOString() || "unknown"}`,
+        },
+        { status: 403 }
+      );
+    }
+
+    // --- DND check before calling ---
+    if (orgId && payload.phoneNumber) {
+      const dndCheck = await query(
+        `SELECT dnd_until, dnd_reason FROM contact_memory
+         WHERE phone = $1 AND org_id = $2
+         AND (dnd_until IS NULL AND dnd_reason IS NOT NULL AND dnd_reason != ''
+              OR dnd_until > NOW())`,
+        [payload.phoneNumber, orgId]
+      );
+      if (dndCheck.length > 0) {
+        return NextResponse.json(
+          { success: false, call_uuid: "", message: `Contact is in DND: ${dndCheck[0].dnd_reason}` },
+          { status: 403 }
+        );
+      }
+    }
 
     // --- Check concurrency and reserve a slot ---
     let uiCallId: string | undefined;

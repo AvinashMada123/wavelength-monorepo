@@ -1,4 +1,5 @@
 import { query, queryOne, pool } from "@/lib/db";
+import { isCallableTime, getNextAvailableCallTime } from "./time-utils";
 
 /* ------------------------------------------------------------------ */
 /*  Call initiation rate limiter (prevents Gemini API overload)        */
@@ -364,6 +365,26 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     callServerPayload.twilioAuthToken = orgSettings.twilioAuthToken;
   }
   if (orgSettings.twilioPhoneNumber) callServerPayload.twilioPhoneNumber = orgSettings.twilioPhoneNumber;
+
+  // --- TRAI time-of-day compliance check ---
+  if (!isCallableTime(phoneNumber)) {
+    const nextTime = getNextAvailableCallTime(phoneNumber);
+    throw new Error(
+      `Outside calling hours for ${phoneNumber}. Next available: ${nextTime?.toISOString() || "unknown"}`
+    );
+  }
+
+  // --- DND check before calling ---
+  const dndCheck = await query(
+    `SELECT dnd_until, dnd_reason FROM contact_memory
+     WHERE phone = $1 AND org_id = $2
+     AND (dnd_until IS NULL AND dnd_reason IS NOT NULL AND dnd_reason != ''
+          OR dnd_until > NOW())`,
+    [phoneNumber, orgId]
+  );
+  if (dndCheck.length > 0) {
+    throw new Error(`Contact is in DND: ${dndCheck[0].dnd_reason}`);
+  }
 
   // --- Rate-limit call initiation (2 calls/sec default) ---
   await callRateLimiter.acquire();

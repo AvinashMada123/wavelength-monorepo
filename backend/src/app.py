@@ -1212,6 +1212,14 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
 
         logger.info(f"Gemini preload complete for {call_uuid} - now making {provider} call")
 
+        # DND check — blocks ALL call paths (campaign, manual, GHL-triggered)
+        if request.orgId:
+            from src.cross_call_memory import _normalize_phone
+            normalized = _normalize_phone(request.phoneNumber)
+            if session_db.check_contact_dnd(normalized, request.orgId):
+                logger.warning(f"DND blocked: {request.phoneNumber} (org {request.orgId})")
+                raise HTTPException(status_code=403, detail=f"Contact {request.phoneNumber} is on DND list")
+
         # NOW make the call via selected provider (AI is already ready)
         if provider == "twilio":
             result = await twilio_adapter.make_call(

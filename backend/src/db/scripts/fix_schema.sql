@@ -13,6 +13,10 @@ CREATE INDEX IF NOT EXISTS idx_calls_phone ON calls(phone);
 -- Add org_id to contact_memory for tenant isolation
 ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT '';
 
+-- Add DND columns to contact_memory
+ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS dnd_until TIMESTAMPTZ;
+ALTER TABLE contact_memory ADD COLUMN IF NOT EXISTS dnd_reason TEXT;
+
 -- Migrate primary key from (phone) to (phone, org_id) for multi-tenant support
 DO $$
 BEGIN

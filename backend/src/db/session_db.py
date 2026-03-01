@@ -382,6 +382,40 @@ class SessionDB:
             results.append(d)
         return results
 
+    def set_contact_dnd(self, phone: str, org_id: str, until=None, reason: str = "", confidence: str = "high"):
+        """Set DND flag on a contact. until=None means permanent."""
+        self._write_queue.put((
+            """UPDATE contact_memory
+               SET dnd_until = %s, dnd_reason = %s
+               WHERE phone = %s AND org_id = %s""",
+            (until, f"{reason} [confidence:{confidence}]", phone, org_id)
+        ))
+
+    def check_contact_dnd(self, phone: str, org_id: str) -> bool:
+        """Check if contact is in DND. Returns True if should NOT be called."""
+        conn = self._get_read_conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                "SELECT dnd_until, dnd_reason FROM contact_memory WHERE phone = %s AND org_id = %s",
+                (phone, org_id)
+            )
+            row = cur.fetchone()
+            cur.close()
+        finally:
+            self._put_read_conn(conn)
+        if not row:
+            return False
+        # Permanent DND: dnd_until is NULL but dnd_reason is set
+        dnd_reason = row.get('dnd_reason') or ""
+        dnd_until = row.get('dnd_until')
+        if dnd_until is None:
+            return bool(dnd_reason.strip())
+        # Timed DND: still active if dnd_until is in the future
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        return dnd_until > now
+
     def delete_contact_memory(self, phone: str, org_id: str = ""):
         """Delete contact memory for a phone number + org (non-blocking). Also cleans up legacy empty org_id."""
         self._write_queue.put((
