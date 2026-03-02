@@ -91,11 +91,14 @@ class TurnManager:
         # Pre-synthesize canned "One moment please" audio
         asyncio.create_task(self._presynthesize_canned_audio())
 
-        # Run greeting turn
+        # Run greeting turn (handle barge-in gracefully — user may interrupt greeting)
         greeting_trigger = s._prompt_builder.build_greeting_trigger()
         s.greeting_sent = True
         s._greeting_trigger_time = time.time()
-        await self._run_llm_turn(greeting_trigger)
+        try:
+            await self._run_llm_turn(greeting_trigger)
+        except asyncio.CancelledError:
+            self.log.detail("Greeting interrupted by user barge-in")
 
         # Start inject processor loop
         self._inject_processor_task = asyncio.create_task(self._inject_processor_loop())
