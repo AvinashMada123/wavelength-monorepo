@@ -113,8 +113,12 @@ class TurnManager:
 
         # Decode audio
         if isinstance(audio_data, dict):
-            # Twilio format: {'payload': base64_audio, ...}
-            raw = base64.b64decode(audio_data.get("payload", ""))
+            # Twilio format: {"media": {"payload": base64_mulaw}}
+            media = audio_data.get("media", {})
+            payload = media.get("payload", audio_data.get("payload", ""))
+            if not payload:
+                return
+            raw = base64.b64decode(payload)
             # Twilio sends 8kHz mu-law — convert to 16kHz PCM
             audio_bytes = mulaw_to_pcm16k(raw)
         else:
