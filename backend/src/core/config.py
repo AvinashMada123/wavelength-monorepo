@@ -122,6 +122,12 @@ class Config(BaseModel):
     # WhatsApp Phone ID (for Meta API)
     whatsapp_phone_id: str = os.getenv("WHATSAPP_PHONE_ID", "")
 
+    # Deepgram STT settings (for traditional pipeline)
+    deepgram_api_key: str = os.getenv("DEEPGRAM_API_KEY", "")
+
+    # Voice pipeline mode: "live_api" (Gemini Live) or "traditional" (STT+LLM+TTS)
+    voice_pipeline_mode: str = os.getenv("VOICE_PIPELINE_MODE", "live_api")
+
 
     def validate_config(self) -> list[str]:
         """Validate required configuration values based on active provider"""

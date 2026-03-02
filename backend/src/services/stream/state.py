@@ -279,6 +279,17 @@ class SessionState:
         # Accumulated agent text for phase detection (D3c)
         self._accumulated_agent_text = ""
 
+        # ---- Pipeline mode (feature flag for traditional STT+LLM+TTS pipeline) ----
+        self._pipeline_mode = self.context.pop("_pipeline_mode", None) \
+            or config.voice_pipeline_mode  # "live_api" | "traditional"
+
+        # TTS configuration (for traditional pipeline)
+        self._tts_voice = self.context.pop("_tts_voice", None)  # Override voice name
+        self._tts_language = self.context.pop("_tts_language", "en-IN")  # Language/accent
+
+        # AI backend reference (set by session.py after construction)
+        self._ai_backend = None
+
         # ---- Component references (set by session.py after construction) ----
         self._audio = None
         self._gemini = None

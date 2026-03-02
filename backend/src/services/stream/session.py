@@ -63,6 +63,17 @@ class PlivoGeminiSession:
         self.state._detection = self.detection
         self.state._post_call = self.post_call
 
+        # Create AI backend based on pipeline mode
+        if self.state._pipeline_mode == "traditional":
+            from .turn_manager import TurnManager
+            self.ai_backend = TurnManager(self.state, self.log)
+        else:
+            from .live_api_backend import LiveAPIBackend
+            self.ai_backend = LiveAPIBackend(self.state, self.log)
+
+        # Wire backend reference on state
+        self.state._ai_backend = self.ai_backend
+
     # ---- Properties delegated to state (for backward compat with app.py / session_manager) ----
 
     @property
@@ -160,12 +171,16 @@ class PlivoGeminiSession:
         return self.lifecycle.attach_plivo_ws(ws)
 
     async def handle_plivo_audio(self, data):
+        if self.state._pipeline_mode == "traditional":
+            return await self.ai_backend.handle_audio(data)
         return await self.audio.handle_plivo_audio(data)
 
     async def handle_plivo_message(self, data):
         return await self.audio.handle_plivo_message(data)
 
     async def handle_twilio_media(self, data):
+        if self.state._pipeline_mode == "traditional":
+            return await self.ai_backend.handle_audio(data)
         return await self.audio.handle_twilio_media(data)
 
     async def stop(self):

@@ -98,7 +98,7 @@ class CallLifecycle:
             return False
 
     def attach_plivo_ws(self, plivo_ws):
-        """Attach Plivo WebSocket when user answers, then start Gemini."""
+        """Attach Plivo WebSocket when user answers, then start AI backend."""
         s = self.state
         s.plivo_ws = plivo_ws
         s.call_start_time = datetime.now()
@@ -113,15 +113,13 @@ class CallLifecycle:
             wait_ms = (time.time() - s._preload_start_time) * 1000
             self.log.detail(f"Ring duration: {wait_ms:.0f}ms")
 
-        # Start sender worker so audio can flow to caller
-        s._sender_worker_task = asyncio.create_task(s._audio._plivo_sender_worker())
-        # Connect to Gemini NOW — greeting will generate and stream in real-time
-        s._session_task = asyncio.create_task(s._gemini._run_google_live_session())
+        # Start AI backend (handles sender worker + session/pipeline setup)
+        asyncio.create_task(s._ai_backend.start(plivo_ws))
         # Start call duration timer
         s._timeout_task = asyncio.create_task(self._monitor_call_duration())
         # Start silence monitor (5 second SLA)
         s._silence_monitor_task = asyncio.create_task(self._monitor_silence())
-        # Start session watchdog — detects dead Gemini sessions
+        # Start session watchdog — detects dead Gemini sessions (Live API only)
         asyncio.create_task(self._session_watchdog())
         # Start ghost monologue monitor — ends call if user never speaks
         asyncio.create_task(self._monitor_ghost_monologue())
@@ -148,20 +146,14 @@ class CallLifecycle:
                 if elapsed > 60 and s._turn_count <= 1 and not s._closing_call:
                     self.log.warn(f"No engagement after {elapsed:.0f}s — ending call")
                     s._transcript._save_transcript("SYSTEM", "No engagement timeout: user never engaged after 60s")
-                    if s.goog_live_ws:
-                        try:
-                            await s.goog_live_ws.send(json.dumps({
-                                "client_content": {
-                                    "turns": [{"role": "user", "parts": [{"text":
-                                        "[SYSTEM: The caller has not engaged after 60 seconds. "
-                                        "Say: 'It seems like this isn't a good time. I'll send you the details on WhatsApp instead. Take care!' "
-                                        "Then immediately call end_call.]"
-                                    }]}],
-                                    "turn_complete": True
-                                }
-                            }))
-                        except Exception:
-                            pass
+                    try:
+                        await s._ai_backend.inject_text(
+                            "[SYSTEM: The caller has not engaged after 60 seconds. "
+                            "Say: 'It seems like this isn't a good time. I'll send you the details on WhatsApp instead. Take care!' "
+                            "Then immediately call end_call.]"
+                        )
+                    except Exception:
+                        pass
                     # Give 15 seconds for the goodbye message, then force hangup
                     await asyncio.sleep(15.0)
                     if s.is_active and not s._closing_call:
@@ -187,19 +179,11 @@ class CallLifecycle:
     async def _send_wrap_up_message(self):
         """Send a message to AI to wrap up the call"""
         s = self.state
-        if not s.goog_live_ws:
-            return
         try:
-            msg = {
-                "client_content": {
-                    "turns": [{
-                        "role": "user",
-                        "parts": [{"text": "[SYSTEM: Call time limit reached. Please politely wrap up the conversation now. Say a warm goodbye and end the call gracefully.]"}]
-                    }],
-                    "turn_complete": True
-                }
-            }
-            await s.goog_live_ws.send(json.dumps(msg))
+            await s._ai_backend.inject_text(
+                "[SYSTEM: Call time limit reached. Please politely wrap up the conversation now. "
+                "Say a warm goodbye and end the call gracefully.]"
+            )
             logger.info("Sent wrap-up message to AI")
             s._transcript._save_transcript("SYSTEM", "Call time limit - wrapping up")
         except Exception as e:
@@ -235,7 +219,13 @@ class CallLifecycle:
                 # If silence exceeds SLA, nudge the AI to respond
                 if silence_duration >= s._silence_sla_seconds:
                     self.log.warn(f"{silence_duration:.1f}s silence - nudging AI")
-                    await s._gemini._send_silence_nudge()
+                    if s._pipeline_mode == "traditional":
+                        await s._ai_backend.inject_text(
+                            "[SYSTEM: The customer finished speaking but you haven't responded. "
+                            "Continue the conversation naturally.]"
+                        )
+                    else:
+                        await s._gemini._send_silence_nudge()
                     # Reset timer to avoid repeated nudges
                     s._last_user_speech_time = None
 
@@ -249,20 +239,14 @@ class CallLifecycle:
                     s._silence_guard_fired = True
                     self.log.warn("90s silence guard — user went silent mid-call")
                     s._transcript._save_transcript("SYSTEM", "90s silence guard: user went silent")
-                    if s.goog_live_ws:
-                        try:
-                            await s.goog_live_ws.send(json.dumps({
-                                "client_content": {
-                                    "turns": [{"role": "user", "parts": [{"text":
-                                        "[SYSTEM: The caller has been completely silent for 90 seconds. "
-                                        "Say: 'Are you still there?' and wait for a response. "
-                                        "If they don't respond soon, say goodbye and call end_call.]"
-                                    }]}],
-                                    "turn_complete": True
-                                }
-                            }))
-                        except Exception:
-                            pass
+                    try:
+                        await s._ai_backend.inject_text(
+                            "[SYSTEM: The caller has been completely silent for 90 seconds. "
+                            "Say: 'Are you still there?' and wait for a response. "
+                            "If they don't respond soon, say goodbye and call end_call.]"
+                        )
+                    except Exception:
+                        pass
 
         except asyncio.CancelledError:
             pass
@@ -299,19 +283,13 @@ class CallLifecycle:
             # User hasn't spoken — send check
             self.log.warn("Ghost monologue strike 1 — user silent 15s, sending check")
             s._transcript._save_transcript("SYSTEM", "Ghost monologue: strike 1, checking")
-            if s.goog_live_ws:
-                try:
-                    await s.goog_live_ws.send(json.dumps({
-                        "client_content": {
-                            "turns": [{"role": "user", "parts": [{"text":
-                                "[SYSTEM: The caller has not spoken at all for 15 seconds. "
-                                "Say ONLY: 'Hello, can you hear me?' and wait for a response.]"
-                            }]}],
-                            "turn_complete": True
-                        }
-                    }))
-                except Exception:
-                    pass
+            try:
+                await s._ai_backend.inject_text(
+                    "[SYSTEM: The caller has not spoken at all for 15 seconds. "
+                    "Say ONLY: 'Hello, can you hear me?' and wait for a response.]"
+                )
+            except Exception:
+                pass
 
             # Strike 2: Wait 10 more seconds
             await asyncio.sleep(10.0)
@@ -322,19 +300,13 @@ class CallLifecycle:
 
             self.log.warn("Ghost monologue strike 2 — still silent, sending second check")
             s._transcript._save_transcript("SYSTEM", "Ghost monologue: strike 2")
-            if s.goog_live_ws:
-                try:
-                    await s.goog_live_ws.send(json.dumps({
-                        "client_content": {
-                            "turns": [{"role": "user", "parts": [{"text":
-                                "[SYSTEM: The caller STILL has not spoken after 25 seconds. "
-                                "Say ONLY: 'I think we may have a bad connection.' and wait briefly.]"
-                            }]}],
-                            "turn_complete": True
-                        }
-                    }))
-                except Exception:
-                    pass
+            try:
+                await s._ai_backend.inject_text(
+                    "[SYSTEM: The caller STILL has not spoken after 25 seconds. "
+                    "Say ONLY: 'I think we may have a bad connection.' and wait briefly.]"
+                )
+            except Exception:
+                pass
 
             # Strike 3: Wait 5 more seconds — then end call
             await asyncio.sleep(5.0)
@@ -356,6 +328,9 @@ class CallLifecycle:
         Only fires when the session is GENUINELY dead — not when the AI is mid-generation.
         Key guard: if _current_turn_audio_chunks > 0, the AI is actively generating — NOT stuck."""
         s = self.state
+        # Traditional pipeline has explicit health management per-component (STT reconnect, LLM retry, TTS fallback)
+        if s._pipeline_mode == "traditional":
+            return
         try:
             # Short initial delay — just enough for greeting audio to start playing
             await asyncio.sleep(5.0)
@@ -683,6 +658,14 @@ class CallLifecycle:
                 self.log.detail_last(f"Ring duration: {ring_total:.0f}ms")
             s._transcript._save_transcript("SYSTEM", f"Call duration: {duration:.1f}s, turns: {s._turn_count}")
 
+        # Stop AI backend (Traditional pipeline cleanup: STT, TTS tasks)
+        if s._ai_backend:
+            try:
+                await s._ai_backend.stop()
+            except Exception:
+                pass
+
+        # Close Gemini Live WS (Live API cleanup)
         if s.goog_live_ws:
             try:
                 await s.goog_live_ws.close()

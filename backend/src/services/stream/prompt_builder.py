@@ -615,6 +615,57 @@ class PromptBuilder:
         await s.goog_live_ws.send(json.dumps(msg))
         self.log.detail("Greeting trigger sent")
 
+    def build_text_system_prompt(self) -> str:
+        """Build system prompt for text LLM (same content, no Live API wrapper).
+
+        Reuses existing _build_setup_message() prompt composition logic,
+        but returns just the text string (not the setup JSON).
+        """
+        msg = self._build_setup_message()
+        return msg["setup"]["system_instruction"]["parts"][0]["text"]
+
+    def build_greeting_trigger(self) -> str:
+        """Return a short neutral greeting trigger for the text pipeline.
+
+        The greeting instruction is in the system prompt, not the trigger.
+        This trigger stays in history as the first user message, creating a valid
+        alternating sequence: user -> model -> user -> model...
+        Gemini requires first contents message to be role 'user'.
+        """
+        s = self.state
+        # Build the same trigger text as _send_initial_greeting
+        trigger_text = s.context.get("greeting_trigger", "")
+        if not trigger_text:
+            customer_name = s.context.get("customer_name", "")
+            has_memory = bool(s.context.get("_memory_context"))
+            if has_memory and customer_name:
+                trigger_text = (
+                    f"[Start the conversation now. This is a REPEAT CALLER. "
+                    f"Say ONE short sentence greeting {customer_name} — mention your name and reference last time. "
+                    f"Then ask ONE short follow-up question. Keep the ENTIRE greeting under 15 words total. "
+                    f"OVERRIDE: Ignore any longer greeting scripted in your instructions. Be brief.]"
+                )
+            elif customer_name:
+                trigger_text = (
+                    f"[Start the conversation now. OVERRIDE any greeting script in your instructions. "
+                    f"Say ONLY this: 'Hey {customer_name}, {{agent_name}} from {{company_name}}. Is this a bad time?' "
+                    f"Nothing else. Do NOT add context about any event or masterclass. STOP after asking 'Is this a bad time?']"
+                )
+            else:
+                trigger_text = (
+                    "[Start the conversation now. OVERRIDE any greeting script in your instructions. "
+                    "Say ONLY: your name, company, then 'Is this a bad time?' Nothing else. STOP after the question.]"
+                )
+        return trigger_text
+
+    def get_tool_declarations_for_text_api(self) -> list:
+        """Return tool declarations formatted for google.genai text API.
+
+        Same tools as _get_tool_declarations(), adapted for text API format.
+        The text API uses the same structure but wrapped in google.genai types.
+        """
+        return self._get_tool_declarations()
+
     async def _send_reconnection_trigger(self):
         """Send context after fallback reconnection.
         CRITICAL: turn_complete=False so Gemini does NOT generate an immediate response.

@@ -15,10 +15,17 @@ class ToolHandler:
         self.state = state
         self.log = log
 
-    async def _handle_tool_call(self, tool_call):
-        """Execute tool and send response back to Gemini - gracefully handles errors"""
+    async def _handle_tool_call(self, tool_call, send_response=True):
+        """Execute tool and send response back to AI - gracefully handles errors.
+
+        Args:
+            tool_call: The tool call dict from Gemini (functionCalls list).
+            send_response: If True (Live API), sends response via _ai_backend.
+                           If False (Traditional), returns response dict for TurnManager.
+        """
         s = self.state
         func_calls = tool_call.get("functionCalls", [])
+        results = []  # Collect results when send_response=False
         for fc in func_calls:
             tool_name = fc.get("name")
             tool_args = fc.get("args", {})
@@ -39,19 +46,14 @@ class ToolHandler:
                 s.agent_said_goodbye = True
 
                 # Send success response
-                try:
-                    tool_response = {
-                        "tool_response": {
-                            "function_responses": [{
-                                "id": call_id,
-                                "name": tool_name,
-                                "response": {"success": True, "message": "Call ending now. Do not say anything else."}
-                            }]
-                        }
-                    }
-                    await s.goog_live_ws.send(json.dumps(tool_response))
-                except Exception:
-                    pass
+                resp = {"success": True, "message": "Call ending now. Do not say anything else."}
+                if send_response:
+                    try:
+                        await s._ai_backend.send_tool_response(call_id, tool_name, resp)
+                    except Exception:
+                        pass
+                else:
+                    results.append({"id": call_id, "name": tool_name, "response": resp})
 
                 # Check if user already said goodbye
                 s._lifecycle._check_mutual_goodbye()
@@ -108,7 +110,7 @@ class ToolHandler:
 
                 # Hang up after 2 seconds (flush final audio to caller)
                 asyncio.create_task(s._lifecycle._hangup_call_delayed(2.0))
-                return
+                return results if not send_response else None
 
             # Handle save_user_info tool — saves user details via Gemini's audio understanding
             if tool_name == "save_user_info":
@@ -190,20 +192,15 @@ class ToolHandler:
                 )
 
                 # Send success response so conversation continues
-                try:
-                    tool_response = {
-                        "tool_response": {
-                            "function_responses": [{
-                                "id": call_id,
-                                "name": tool_name,
-                                "response": {"success": True, "message": "Information saved", "confidence": confidence}
-                            }]
-                        }
-                    }
-                    await s.goog_live_ws.send(json.dumps(tool_response))
-                except Exception:
-                    pass
-                return
+                resp = {"success": True, "message": "Information saved", "confidence": confidence}
+                if send_response:
+                    try:
+                        await s._ai_backend.send_tool_response(call_id, tool_name, resp)
+                    except Exception:
+                        pass
+                else:
+                    results.append({"id": call_id, "name": tool_name, "response": resp})
+                return results if not send_response else None
 
             # Handle get_social_proof tool — returns enrollment stats for conversation
             if tool_name == "get_social_proof":
@@ -226,21 +223,15 @@ class ToolHandler:
                         logger.error(f"get_social_proof error: {e}")
                         sp_result = {"general_phrase": "We have thousands of enrollees across India.", "instruction": "Use this general stat naturally."}
 
-                # Send tool response back to Gemini
-                try:
-                    tool_response = {
-                        "tool_response": {
-                            "function_responses": [{
-                                "id": call_id,
-                                "name": tool_name,
-                                "response": sp_result
-                            }]
-                        }
-                    }
-                    await s.goog_live_ws.send(json.dumps(tool_response))
-                except Exception:
-                    pass
-                return
+                # Send tool response back
+                if send_response:
+                    try:
+                        await s._ai_backend.send_tool_response(call_id, tool_name, sp_result)
+                    except Exception:
+                        pass
+                else:
+                    results.append({"id": call_id, "name": tool_name, "response": sp_result})
+                return results if not send_response else None
 
             # Handle configurable GHL workflow tools (tag-based) — fire-and-forget
             if tool_name.startswith("ghl_workflow_"):
@@ -258,7 +249,7 @@ class ToolHandler:
                 elif not s.ghl_api_key or not s.ghl_location_id:
                     msg = "GHL API key or Location ID not configured in org settings"
                 else:
-                    # Mark as triggered and send immediate response to unblock Gemini
+                    # Mark as triggered and send immediate response to unblock AI
                     s._triggered_workflows.add(wf_id)
                     msg = f"Workflow '{wf_name}' triggered"
                     # Execute GHL HTTP calls in background (fire-and-forget)
@@ -266,21 +257,16 @@ class ToolHandler:
                         tag=wf["tag"], wf_name=wf_name, wf_id=wf_id,
                     ))
 
-                # Send immediate response to Gemini — don't wait for HTTP
-                try:
-                    tool_response = {
-                        "tool_response": {
-                            "function_responses": [{
-                                "id": call_id,
-                                "name": tool_name,
-                                "response": {"success": wf_id in s._triggered_workflows, "message": msg}
-                            }]
-                        }
-                    }
-                    await s.goog_live_ws.send(json.dumps(tool_response))
-                except Exception:
-                    pass
-                return
+                # Send immediate response — don't wait for HTTP
+                resp = {"success": wf_id in s._triggered_workflows, "message": msg}
+                if send_response:
+                    try:
+                        await s._ai_backend.send_tool_response(call_id, tool_name, resp)
+                    except Exception:
+                        pass
+                else:
+                    results.append({"id": call_id, "name": tool_name, "response": resp})
+                return results if not send_response else None
 
             # Handle send_whatsapp tool - trigger GHL workflow (legacy) — fire-and-forget
             if tool_name == "send_whatsapp":
@@ -305,21 +291,16 @@ class ToolHandler:
                         tag="ai-onboardcall-goldmember", wf_name="send_whatsapp",
                     ))
 
-                # Send immediate response to Gemini — don't wait for HTTP
-                try:
-                    tool_response = {
-                        "tool_response": {
-                            "function_responses": [{
-                                "id": call_id,
-                                "name": tool_name,
-                                "response": {"success": s._whatsapp_sent, "message": msg}
-                            }]
-                        }
-                    }
-                    await s.goog_live_ws.send(json.dumps(tool_response))
-                except Exception:
-                    pass
-                return
+                # Send immediate response — don't wait for HTTP
+                resp = {"success": s._whatsapp_sent, "message": msg}
+                if send_response:
+                    try:
+                        await s._ai_backend.send_tool_response(call_id, tool_name, resp)
+                    except Exception:
+                        pass
+                else:
+                    results.append({"id": call_id, "name": tool_name, "response": resp})
+                return results if not send_response else None
 
             # Execute the tool with context for templates - graceful error handling
             try:
@@ -337,24 +318,18 @@ class ToolHandler:
             logger.debug(f"TOOL RESULT: success={success}, message={message}")
             s._transcript._save_transcript("TOOL_RESULT", f"{tool_name}: {'success' if success else 'failed'}")
 
-            # Always send tool response back to Gemini so conversation continues
-            try:
-                tool_response = {
-                    "tool_response": {
-                        "function_responses": [{
-                            "id": call_id,
-                            "name": tool_name,
-                            "response": {
-                                "success": success,
-                                "message": message
-                            }
-                        }]
-                    }
-                }
-                await s.goog_live_ws.send(json.dumps(tool_response))
-                logger.debug(f"Sent tool response for {tool_name}")
-            except Exception as e:
-                logger.error(f"Error sending tool response: {e} - continuing conversation")
+            # Always send tool response back so conversation continues
+            resp = {"success": success, "message": message}
+            if send_response:
+                try:
+                    await s._ai_backend.send_tool_response(call_id, tool_name, resp)
+                    logger.debug(f"Sent tool response for {tool_name}")
+                except Exception as e:
+                    logger.error(f"Error sending tool response: {e} - continuing conversation")
+            else:
+                results.append({"id": call_id, "name": tool_name, "response": resp})
+
+        return results if not send_response else None
 
     async def _bg_ghl_tag(self, tag: str, wf_name: str, wf_id: str = ""):
         """Execute GHL tagging in background — fire-and-forget, never blocks audio."""
