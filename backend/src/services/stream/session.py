@@ -176,6 +176,14 @@ class PlivoGeminiSession:
         return await self.audio.handle_plivo_audio(data)
 
     async def handle_plivo_message(self, data):
+        if self.state._pipeline_mode == "traditional":
+            # Extract audio payload and route to TurnManager
+            event = data.get("event")
+            if event == "media":
+                payload = data.get("media", {}).get("payload", "")
+                if payload:
+                    return await self.ai_backend.handle_audio(payload)
+            return
         return await self.audio.handle_plivo_message(data)
 
     async def handle_twilio_media(self, data):

@@ -27,6 +27,11 @@ class DeepgramSTTClient:
         self._receive_task: Optional[asyncio.Task] = None
         self._reconnect_count = 0
         self._max_reconnects = 3
+        self._send_count = 0
+
+        # Connection lock — prevents multiple simultaneous connect attempts
+        self._connect_lock = asyncio.Lock()
+        self._connecting = False
 
         # Rolling reconnect buffer (last 2s of audio for replay on reconnect)
         self._reconnect_buffer = bytearray()
@@ -43,43 +48,56 @@ class DeepgramSTTClient:
         await self._connect()
 
     async def _connect(self):
-        """Establish WebSocket connection to Deepgram Nova-3."""
-        api_key = config.deepgram_api_key
-        if not api_key:
-            self.log.error("DEEPGRAM_API_KEY not set — STT disabled")
-            return
+        """Establish WebSocket connection to Deepgram Nova-3.
 
-        # Build URL with query parameters
-        params = {
-            "model": "nova-3",
-            "language": "multi",  # Multi-language (English + Hindi)
-            "encoding": "linear16",
-            "sample_rate": "16000",
-            "channels": "1",
-            "punctuate": "true",
-            "interim_results": "true",
-            "utterance_end_ms": "1000",
-            "vad_events": "true",
-            "endpointing": "300",  # 300ms endpointing for responsive turns
-            "smart_format": "true",
-        }
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"wss://api.deepgram.com/v1/listen?{query}"
+        Uses _connect_lock to prevent multiple simultaneous connections.
+        """
+        async with self._connect_lock:
+            # Double-check after acquiring lock
+            if self._ws is not None:
+                return
 
-        try:
-            self._ws = await websockets.connect(
-                url,
-                additional_headers={"Authorization": f"Token {api_key}"},
-                ping_interval=5,
-                ping_timeout=10,
-                close_timeout=3,
-            )
-            self._reconnect_count = 0
-            self._receive_task = asyncio.create_task(self._receive_loop())
-            self.log.detail("Deepgram STT connected")
-        except Exception as e:
-            self.log.error(f"Deepgram connection failed: {e}")
-            self._ws = None
+            api_key = config.deepgram_api_key
+            if not api_key:
+                self.log.error("DEEPGRAM_API_KEY not set — STT disabled")
+                return
+
+            # Kill old receive task if any
+            if self._receive_task and not self._receive_task.done():
+                self._receive_task.cancel()
+                self._receive_task = None
+
+            # Build URL with query parameters
+            params = {
+                "model": "nova-3",
+                "language": "multi",  # Multi-language (English + Hindi)
+                "encoding": "linear16",
+                "sample_rate": "16000",
+                "channels": "1",
+                "punctuate": "true",
+                "interim_results": "true",
+                "utterance_end_ms": "1000",
+                "vad_events": "true",
+                "endpointing": "300",  # 300ms endpointing for responsive turns
+                "smart_format": "true",
+            }
+            query = "&".join(f"{k}={v}" for k, v in params.items())
+            url = f"wss://api.deepgram.com/v1/listen?{query}"
+
+            try:
+                self._ws = await websockets.connect(
+                    url,
+                    additional_headers={"Authorization": f"Token {api_key}"},
+                    ping_interval=5,
+                    ping_timeout=10,
+                    close_timeout=3,
+                )
+                self._reconnect_count = 0
+                self._receive_task = asyncio.create_task(self._receive_loop())
+                self.log.detail("Deepgram STT connected")
+            except Exception as e:
+                self.log.error(f"Deepgram connection failed: {e}")
+                self._ws = None
 
     async def send_audio(self, audio_bytes: bytes):
         """Forward raw audio chunk to Deepgram.
@@ -93,18 +111,28 @@ class DeepgramSTTClient:
             excess = len(self._reconnect_buffer) - self._max_reconnect_buffer
             del self._reconnect_buffer[:excess]
 
+        # Log first audio send (once)
+        self._send_count += 1
+        if self._send_count == 1:
+            self.log.detail(f"STT: first audio sent to Deepgram ({len(audio_bytes)} bytes, ws={'connected' if self._ws else 'None'})")
+        elif self._send_count == 50:
+            self.log.detail(f"STT: audio flowing, {self._send_count} chunks sent to Deepgram")
+
         if self._ws is None:
-            # WS down — buffer audio, attempt reconnect
-            if self._reconnect_count < self._max_reconnects:
+            # WS down — buffer audio, attempt reconnect (but don't spam)
+            if self._send_count <= 3:
+                self.log.detail(f"STT: ws is None, cannot send audio (reconnect_count={self._reconnect_count})")
+            if self._reconnect_count < self._max_reconnects and not self._connect_lock.locked():
                 asyncio.create_task(self._reconnect())
             return
 
         try:
             await self._ws.send(audio_bytes)
-        except Exception:
+        except Exception as e:
             # WS dropped mid-send
+            self.log.detail(f"STT: send failed: {e}")
             self._ws = None
-            if self._reconnect_count < self._max_reconnects:
+            if self._reconnect_count < self._max_reconnects and not self._connect_lock.locked():
                 asyncio.create_task(self._reconnect())
 
     async def close(self):
@@ -125,12 +153,15 @@ class DeepgramSTTClient:
     async def _reconnect(self):
         """Reconnect to Deepgram on WS drop.
 
-        1. Open new connection
+        1. Open new connection (guarded by _connect_lock)
         2. Replay buffered audio (last 2s) so mid-word speech isn't lost
         3. Resume normal audio forwarding
         """
+        # Skip if already connected or another reconnect is in progress
         if self._ws is not None:
-            return  # Already reconnected
+            return
+        if self._connect_lock.locked():
+            return
 
         self._reconnect_count += 1
         self.log.warn(f"Deepgram reconnect attempt {self._reconnect_count}/{self._max_reconnects}")
@@ -195,9 +226,12 @@ class DeepgramSTTClient:
         transcript = alternatives[0].get("transcript", "").strip()
         confidence = alternatives[0].get("confidence", 0.0)
         is_final = data.get("is_final", False)
+        speech_final = data.get("speech_final", False)
 
         if not transcript:
             return
+
+        self.log.detail(f"STT result: is_final={is_final}, speech_final={speech_final}, conf={confidence:.2f}, text='{transcript[:60]}'")
 
         if is_final:
             if self.on_transcript_final:

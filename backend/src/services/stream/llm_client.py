@@ -43,6 +43,13 @@ class ErrorEvent:
     message: str
 
 
+@dataclass
+class RetryEvent:
+    """LLM generation failed, retrying — caller should reset TTS state."""
+    attempt: int
+    message: str
+
+
 class GeminiTextClient:
     """Streaming text completion via Gemini 2.5 Flash.
 
@@ -83,7 +90,7 @@ class GeminiTextClient:
         """
         self._messages.append(types.Content(
             role="user",
-            parts=[types.Part.from_text(text)],
+            parts=[types.Part.from_text(text=text)],
         ))
 
     async def generate(self, user_text: str = None, tool_result: dict = None) -> AsyncIterator:
@@ -112,12 +119,14 @@ class GeminiTextClient:
         elif user_text is not None:
             self._messages.append(types.Content(
                 role="user",
-                parts=[types.Part.from_text(user_text)],
+                parts=[types.Part.from_text(text=user_text)],
             ))
 
         # Build config
         tool_declarations = None
         if self._tools:
+            tool_names = [t["name"] for t in self._tools]
+            self.log.detail(f"LLM tools ({len(tool_names)}): {tool_names}")
             tool_declarations = [types.Tool(function_declarations=[
                 types.FunctionDeclaration(
                     name=t["name"],
@@ -145,15 +154,17 @@ class GeminiTextClient:
                 t0 = time.time()
                 first_chunk = True
 
-                async for chunk in self._client.aio.models.generate_content_stream(
+                self.log.detail(f"LLM generate_content_stream (attempt {attempt+1}, msgs={len(self._messages)})...")
+                stream = await self._client.aio.models.generate_content_stream(
                     model=self._model,
                     contents=self._messages,
                     config=config,
-                ):
+                )
+                self.log.detail(f"LLM stream opened, iterating...")
+                async for chunk in stream:
                     if first_chunk:
                         ttfb_ms = (time.time() - t0) * 1000
-                        if ttfb_ms > 1000:
-                            self.log.warn(f"LLM TTFB: {ttfb_ms:.0f}ms")
+                        self.log.detail(f"LLM TTFB: {ttfb_ms:.0f}ms")
                         first_chunk = False
 
                     if not chunk.candidates:
@@ -163,7 +174,7 @@ class GeminiTextClient:
                         # Text chunk
                         if part.text:
                             accumulated_model_text += part.text
-                            accumulated_model_parts.append(types.Part.from_text(part.text))
+                            accumulated_model_parts.append(types.Part.from_text(text=part.text))
                             yield TextChunk(text=part.text)
 
                         # Function call — stream stops here
@@ -199,6 +210,10 @@ class GeminiTextClient:
             except Exception as e:
                 logger.error(f"LLM generation error (attempt {attempt + 1}): {e}")
                 if attempt < max_retries:
+                    # Reset accumulated state from failed attempt
+                    accumulated_model_text = ""
+                    accumulated_model_parts = []
+                    yield RetryEvent(attempt=attempt + 1, message=str(e))
                     await asyncio.sleep(1.0)
                 else:
                     yield ErrorEvent(message=str(e))
@@ -220,7 +235,7 @@ class GeminiTextClient:
                 if spoken_text.strip():
                     self._messages[i] = types.Content(
                         role="model",
-                        parts=[types.Part.from_text(spoken_text)],
+                        parts=[types.Part.from_text(text=spoken_text)],
                     )
                 else:
                     # Nothing was spoken — remove the model message entirely
@@ -275,7 +290,7 @@ class GeminiTextClient:
             if summary_text:
                 summary_msg = types.Content(
                     role="user",
-                    parts=[types.Part.from_text(
+                    parts=[types.Part.from_text(text=
                         f"[Conversation summary so far: {summary_text}]"
                     )],
                 )

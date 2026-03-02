@@ -4,6 +4,7 @@ Single responsibility: text in -> audio bytes out (24kHz PCM).
 Sentence buffering is handled by TurnManager._should_flush_tts().
 """
 import asyncio
+import time
 from typing import AsyncIterator
 
 from google import genai
@@ -77,12 +78,21 @@ class GeminiTTSClient:
         )
 
         try:
-            async for chunk in self._client.aio.models.generate_content_stream(
+            # Wrap text with explicit TTS instruction to prevent model from
+            # generating text responses instead of audio (400 error)
+            tts_input = f"Say the following text exactly as written:\n{text}"
+            self.log.detail(f"TTS API call: voice={self._voice}, lang={self._language}, text='{text[:60]}'")
+            t0 = time.time()
+            stream = await self._client.aio.models.generate_content_stream(
                 model=self._model,
-                contents=text,
+                contents=tts_input,
                 config=config,
-            ):
+            )
+            self.log.detail(f"TTS stream opened in {(time.time()-t0)*1000:.0f}ms")
+            chunk_idx = 0
+            async for chunk in stream:
                 if self._cancelled:
+                    self.log.detail("TTS: cancelled flag set, breaking")
                     break
 
                 if (chunk.candidates
@@ -90,10 +100,17 @@ class GeminiTTSClient:
                         and chunk.candidates[0].content.parts):
                     part = chunk.candidates[0].content.parts[0]
                     if part.inline_data and part.inline_data.data:
+                        if chunk_idx == 0:
+                            self.log.detail(f"TTS first audio chunk: {len(part.inline_data.data)} bytes at {(time.time()-t0)*1000:.0f}ms")
+                        chunk_idx += 1
                         yield part.inline_data.data
+                    elif part.text:
+                        self.log.detail(f"TTS WARNING: got text instead of audio: '{part.text[:80]}'")
+
+            self.log.detail(f"TTS complete: {chunk_idx} chunks in {(time.time()-t0)*1000:.0f}ms")
 
         except Exception as e:
-            logger.error(f"TTS synthesis error: {e}")
+            logger.error(f"TTS synthesis error for '{text[:50]}': {e}")
             # Non-fatal — skip this sentence, caller tries next
 
     async def cancel(self):

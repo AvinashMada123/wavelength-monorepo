@@ -183,6 +183,7 @@ class AudioPipeline:
         """Worker: Reads from plivo_send_queue, sends to Plivo WebSocket"""
         s = self.state
         logger.debug(f"[{s.call_uuid[:8]}] Plivo sender worker started")
+        _sender_count = 0
         try:
             while s.is_active:
                 try:
@@ -192,7 +193,15 @@ class AudioPipeline:
                 except asyncio.TimeoutError:
                     continue
 
+                _sender_count += 1
+                if _sender_count == 1:
+                    logger.info(f"[{s.call_uuid[:8]}] Sender: first audio chunk dequeued (sr={chunk.sample_rate}, turn={chunk.turn_id})")
+                elif _sender_count == 10:
+                    logger.info(f"[{s.call_uuid[:8]}] Sender: 10 chunks sent to Plivo so far")
+
                 if not s.plivo_ws:
+                    if _sender_count <= 3:
+                        logger.warning(f"[{s.call_uuid[:8]}] Sender: plivo_ws is None, cannot send audio!")
                     continue
 
                 try:

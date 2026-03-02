@@ -168,8 +168,16 @@ class PromptBuilder:
         tools = [t for t in TOOL_DECLARATIONS if t["name"] != "get_social_proof" or s._social_proof_enabled]
 
         # Add configurable GHL workflow tools (during_call only — pre/post are handled server-side)
+        seen_tool_names = {t["name"] for t in tools}
         for wf in s._ghl_workflows:
+            wf_id = wf.get("id", "")
+            if not wf_id:
+                continue  # Skip workflows with empty/missing ID
             if wf.get("timing") == "during_call" and wf.get("enabled") and wf.get("tag"):
+                tool_name = f"ghl_workflow_{wf_id}"
+                if tool_name in seen_tool_names:
+                    continue  # Skip duplicate tool names
+                seen_tool_names.add(tool_name)
                 base_desc = wf.get("description", f"Trigger the '{wf.get('name', 'workflow')}' workflow")
                 # Append strict commitment criteria to prevent false triggers on tentative responses
                 commitment_guard = (
@@ -180,7 +188,7 @@ class PromptBuilder:
                     "'let me check', 'send me details', 'I'll think about it', 'hmm'."
                 )
                 tools.append({
-                    "name": f"ghl_workflow_{wf['id']}",
+                    "name": tool_name,
                     "description": base_desc + commitment_guard,
                     "parameters": {
                         "type": "object",

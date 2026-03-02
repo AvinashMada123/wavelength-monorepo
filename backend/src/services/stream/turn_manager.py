@@ -15,7 +15,7 @@ from typing import Optional
 from loguru import logger
 
 from .stt_client import DeepgramSTTClient
-from .llm_client import GeminiTextClient, TextChunk, ToolCall, TurnComplete, ErrorEvent
+from .llm_client import GeminiTextClient, TextChunk, ToolCall, TurnComplete, ErrorEvent, RetryEvent
 from .tts_client import GeminiTTSClient
 from .audio_converter import resample_24k_to_16k, mulaw_to_pcm16k
 from .audio_pipeline import AudioChunk
@@ -38,7 +38,13 @@ class TurnManager:
         # Concurrency control
         self._turn_lock = asyncio.Lock()
 
-        # Queue for inject_text messages
+        # Latest-text pattern: replaces FIFO queuing of user turns.
+        # Only the most recent user utterance is processed — stale ones are dropped.
+        self._latest_user_text: Optional[str] = None
+        self._user_turn_pending = asyncio.Event()
+        self._user_turn_loop_task: Optional[asyncio.Task] = None
+
+        # Queue for inject_text messages (system messages — never dropped)
         self._inject_queue: asyncio.Queue = asyncio.Queue()
         self._inject_processor_task: Optional[asyncio.Task] = None
 
@@ -93,15 +99,25 @@ class TurnManager:
 
         # Run greeting turn (handle barge-in gracefully — user may interrupt greeting)
         greeting_trigger = s._prompt_builder.build_greeting_trigger()
+        self.log.detail(f"Greeting trigger: {greeting_trigger[:80]}...")
         s.greeting_sent = True
         s._greeting_trigger_time = time.time()
         try:
+            self.log.detail("Starting greeting LLM turn...")
             await self._run_llm_turn(greeting_trigger)
+            self.log.detail("Greeting LLM turn completed")
         except asyncio.CancelledError:
             self.log.detail("Greeting interrupted by user barge-in")
+        except Exception as e:
+            logger.error(f"Greeting turn failed: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Start inject processor loop
         self._inject_processor_task = asyncio.create_task(self._inject_processor_loop())
+
+        # Start user turn loop (latest-text pattern)
+        self._user_turn_loop_task = asyncio.create_task(self._user_turn_loop())
 
         self.log.detail(f"Traditional pipeline started (voice: {self.tts._voice})")
 
@@ -127,6 +143,15 @@ class TurnManager:
         else:
             # Plivo format: base64 string of 16kHz PCM
             audio_bytes = base64.b64decode(audio_data)
+
+        # Log first audio chunk (once)
+        if not hasattr(self, '_audio_chunk_count'):
+            self._audio_chunk_count = 0
+        self._audio_chunk_count += 1
+        if self._audio_chunk_count == 1:
+            self.log.detail(f"First audio chunk received: {len(audio_bytes)} bytes")
+        elif self._audio_chunk_count == 50:
+            self.log.detail(f"Audio flowing: {self._audio_chunk_count} chunks received so far")
 
         # Record user audio
         s._audio._record_audio("USER", audio_bytes, 16000)
@@ -155,6 +180,10 @@ class TurnManager:
 
     async def stop(self):
         """Close Deepgram WS, cancel TTS tasks, cancel inject processor."""
+        if self._user_turn_loop_task:
+            self._user_turn_loop_task.cancel()
+            self._user_turn_loop_task = None
+
         if self._inject_processor_task:
             self._inject_processor_task.cancel()
             self._inject_processor_task = None
@@ -199,6 +228,37 @@ class TurnManager:
             except Exception as e:
                 logger.error(f"Inject processor error: {e}")
 
+    async def _user_turn_loop(self):
+        """Background task that processes user turns using latest-text pattern.
+
+        Only the most recent user utterance is processed. If multiple utterances
+        arrive while a turn is in progress, stale ones are dropped.
+
+        Each turn is spawned as a separate task so that smart cancellation
+        (from _on_utterance_end) targets the turn, not this loop.
+        """
+        while self.state.is_active:
+            try:
+                await self._user_turn_pending.wait()
+                self._user_turn_pending.clear()
+                text = self._latest_user_text
+                if not text:
+                    continue
+
+                self.log.detail(f"User turn loop: processing '{text[:60]}'")
+
+                # Spawn turn as separate task so cancellation targets the turn,
+                # not this loop
+                task = asyncio.create_task(self._run_llm_turn(text))
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    self.log.detail("User turn loop: turn was cancelled")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"User turn loop error: {e}")
+
     async def _tts_consumer(self, tts_queue: asyncio.Queue):
         """Background task that consumes sentences from tts_queue and synthesizes.
 
@@ -209,22 +269,39 @@ class TurnManager:
             while True:
                 sentence = await tts_queue.get()
                 if sentence is None:
+                    self.log.detail("TTS consumer: received None (turn done)")
                     break  # Signal: turn complete or tool call pause
+
+                self.log.detail(f"TTS consumer: synthesizing '{sentence[:60]}...'")
+                tts_start = time.time()
+                chunk_count = 0
+                first_chunk_logged = False
 
                 try:
                     async for audio_24k in self.tts.synthesize(sentence):
                         if self.tts._cancelled:
+                            self.log.detail("TTS consumer: cancelled mid-synthesis")
                             break
+
+                        if not first_chunk_logged:
+                            ttfb = (time.time() - tts_start) * 1000
+                            self.log.detail(f"TTS TTFB: {ttfb:.0f}ms, chunk={len(audio_24k)} bytes")
+                            first_chunk_logged = True
 
                         # Resample 24k -> 16k BEFORE queuing and recording
                         audio_16k = resample_24k_to_16k(audio_24k)
                         if not audio_16k:
                             continue
 
+                        chunk_count += 1
+
+                        # Mark agent as speaking on FIRST audio chunk queued
+                        # This prevents false barge-in during LLM generation
+                        if not self._is_agent_speaking:
+                            self._is_agent_speaking = True
+                            self.log.detail("Agent now speaking (first TTS audio queued)")
+
                         # Queue to Plivo sender
-                        # NOTE: sender worker handles recording — do NOT record here
-                        # to avoid double-recording and to ensure only audio actually
-                        # sent to caller is recorded (barge-in drains unsent chunks)
                         chunk = AudioChunk(
                             audio_b64=base64.b64encode(audio_16k).decode(),
                             turn_id=s._current_turn_id,
@@ -233,7 +310,7 @@ class TurnManager:
                         try:
                             s._plivo_send_queue.put_nowait(chunk)
                         except asyncio.QueueFull:
-                            pass
+                            self.log.detail("TTS consumer: send queue full, dropping chunk")
 
                         # Track timing
                         if s._first_audio_time is None:
@@ -241,22 +318,36 @@ class TurnManager:
                         s._last_ai_audio_time = time.time()
                         s._current_turn_audio_chunks += 1
 
+                    elapsed = (time.time() - tts_start) * 1000
+                    self.log.detail(f"TTS done: {chunk_count} chunks in {elapsed:.0f}ms for '{sentence[:40]}...'")
                     self._agent_text_spoken += sentence
 
                 except Exception as e:
-                    logger.error(f"TTS consumer error: {e}")
-                    # Skip this sentence, try next
+                    logger.error(f"TTS consumer error for '{sentence[:40]}': {e}")
+                    import traceback
+                    traceback.print_exc()
 
         except asyncio.CancelledError:
+            self.log.detail("TTS consumer: cancelled")
             pass
 
     async def _presynthesize_canned_audio(self):
-        """Pre-synthesize 'One moment please' audio during startup."""
+        """Pre-synthesize 'One moment please' audio during startup.
+
+        Uses a separate TTS client instance to avoid sharing the _cancelled
+        flag with the main TTS client (barge-in could cancel presynthesis).
+        """
         try:
+            from .tts_client import GeminiTTSClient
+            temp_tts = GeminiTTSClient(self.state, self.log)
             audio_chunks = []
-            async for chunk in self.tts.synthesize("One moment please."):
+            async for chunk in temp_tts.synthesize("One moment please."):
                 audio_chunks.append(resample_24k_to_16k(chunk))
-            self._canned_one_moment = b"".join(audio_chunks)
+            if audio_chunks:
+                self._canned_one_moment = b"".join(c for c in audio_chunks if c)
+                self.log.detail(f"Canned audio pre-synthesized: {len(self._canned_one_moment)} bytes")
+            else:
+                self.log.detail("Canned audio presynthesis produced 0 chunks")
         except Exception as e:
             logger.error(f"Failed to pre-synthesize canned audio: {e}")
 
@@ -265,7 +356,14 @@ class TurnManager:
     async def _on_transcript_final(self, text: str, confidence: float):
         """Accumulate final transcript text."""
         s = self.state
+        self.log.detail(f"STT final: '{text}' (confidence={confidence:.2f})")
         if not text.strip():
+            return
+
+        # Echo guard: discard transcripts during agent speech unless barge-in pending.
+        # Phone echo can cause Deepgram to transcribe the agent's own speech.
+        if self._is_agent_speaking and not self._barge_in_pending:
+            self.log.detail(f"STT echo guard: discarding '{text[:40]}' (agent speaking)")
             return
 
         self._pending_user_text.append(text)
@@ -285,6 +383,13 @@ class TurnManager:
         if not text.strip():
             return
 
+        self.log.detail(f"STT interim: '{text}'")
+
+        # Echo guard: discard interim transcripts during agent speech unless
+        # barge-in is pending (barge-in needs interims for substantive check)
+        if self._is_agent_speaking and not self._barge_in_pending:
+            return
+
         self._interim_text_buffer = text
 
         # If barge-in pending: check if text is substantive
@@ -292,8 +397,14 @@ class TurnManager:
             await self._handle_barge_in()
 
     async def _on_utterance_end(self):
-        """User stopped speaking. Collect text and send to LLM."""
+        """User stopped speaking. Overwrite latest text and signal the turn loop.
+
+        Uses latest-text pattern instead of FIFO queuing. If the user says
+        "Hello", then "Am I audible?", then "I'm doing good" while the bot is
+        processing, only "I'm doing good" is processed. Stale turns are dropped.
+        """
         s = self.state
+        self.log.detail(f"STT utterance_end, pending_text={self._pending_user_text}")
         if not self._pending_user_text:
             return
 
@@ -323,12 +434,24 @@ class TurnManager:
         if await self._pre_check_user_text(full_text):
             return  # Handled (e.g., end_call triggered)
 
-        # Send to LLM (bypass inject queue for lower latency)
-        asyncio.create_task(self._run_llm_turn(full_text))
+        # Smart cancellation: if current turn hasn't produced audio yet,
+        # cancel it to prioritize this newer user text
+        if (self._current_turn_task
+                and not self._current_turn_task.done()
+                and not self._is_agent_speaking):
+            self.log.detail("Smart cancel: cancelling silent turn for newer user text")
+            self._current_turn_task.cancel()
+
+        # Overwrite latest user text and signal the turn loop.
+        # If a previous utterance is queued but not yet started, it's dropped.
+        self._latest_user_text = full_text
+        self._user_turn_pending.set()
+        self.log.detail(f"User turn queued (latest-text): '{full_text[:60]}'")
 
     async def _on_speech_started(self):
         """User started speaking. Handle barge-in if agent is talking."""
         s = self.state
+        self.log.detail(f"STT speech_started (agent_speaking={self._is_agent_speaking})")
         s._user_speaking = True
         s._user_speech_start_time = time.time()
 
@@ -359,11 +482,15 @@ class TurnManager:
         async with self._turn_lock:
             # Self-register as the active turn AFTER acquiring lock
             self._current_turn_task = asyncio.current_task()
+            self.log.detail(f"_run_llm_turn acquired lock, text='{(user_text or '')[:60]}'")
 
             try:
                 accumulated_text = ""
                 tts_buffer = ""
-                self._is_agent_speaking = True
+                # DON'T set _is_agent_speaking here — only set it when TTS
+                # actually starts producing audio. This prevents false barge-in
+                # during the LLM generation phase when no audio is playing yet.
+                self._is_agent_speaking = False
                 self._barge_in_pending = False
                 self._agent_text_spoken = ""
                 s._current_turn_audio_chunks = 0
@@ -377,14 +504,18 @@ class TurnManager:
                     self._tts_task = asyncio.create_task(
                         self._tts_consumer(self._tts_queue)
                     )
-                    self._is_agent_speaking = True  # Reset for post-tool continuation
+                    # Don't set _is_agent_speaking here — TTS consumer sets it
+                    # when it queues the first audio chunk to Plivo
 
+                    self.log.detail("Calling llm.generate()...")
                     async for event in self.llm.generate(user_text, tool_result):
+                        self.log.detail(f"LLM event: {type(event).__name__}")
                         if isinstance(event, TextChunk):
                             accumulated_text += event.text
                             tts_buffer += event.text
 
                             if self._should_flush_tts(tts_buffer, is_first_sentence):
+                                self.log.detail(f"TTS flush: '{tts_buffer[:60]}...'")
                                 await self._tts_queue.put(tts_buffer)
                                 tts_buffer = ""
                                 is_first_sentence = False
@@ -422,6 +553,24 @@ class TurnManager:
                                 except asyncio.QueueFull:
                                     pass
 
+                        elif isinstance(event, RetryEvent):
+                            # LLM failed mid-stream, retrying. Reset TTS state
+                            # to avoid double-playing text from failed attempt.
+                            self.log.detail(f"LLM retry (attempt {event.attempt}): resetting TTS state")
+                            await self._tts_queue.put(None)  # Signal current TTS consumer to stop
+                            await self._tts_task  # Wait for it to drain
+                            # Reset accumulated text
+                            accumulated_text = ""
+                            tts_buffer = ""
+                            self._agent_text_spoken = ""
+                            self._is_agent_speaking = False
+                            is_first_sentence = True
+                            # Create new TTS consumer for the retry
+                            self._tts_queue = asyncio.Queue()
+                            self._tts_task = asyncio.create_task(
+                                self._tts_consumer(self._tts_queue)
+                            )
+
                         elif isinstance(event, TurnComplete):
                             if tts_buffer.strip():
                                 await self._tts_queue.put(tts_buffer)
@@ -455,19 +604,26 @@ class TurnManager:
     def _should_flush_tts(self, buffer: str, is_first: bool) -> bool:
         """Determine if TTS buffer should be flushed.
 
-        First sentence: flush at 60+ chars OR sentence boundary.
-        Later sentences: flush at sentence boundary OR 100+ chars.
+        Gemini TTS preview doesn't truly stream — it computes full audio then
+        returns 1 chunk. TTS time scales linearly with text length (~1.5s base
+        + ~30ms/char). So shorter fragments = faster time-to-first-audio.
+
+        First fragment: flush at 25+ chars OR any punctuation boundary.
+        Later fragments: flush at sentence boundary OR 50+ chars.
         """
         if not buffer.strip():
             return False
 
-        # Sentence boundary detection
-        has_boundary = bool(re.search(r'[.!?:]\s*$', buffer))
+        # Sentence boundary (. ! ? :)
+        has_sentence_end = bool(re.search(r'[.!?:]\s*$', buffer))
+        # Phrase boundary (comma, semicolon, dash)
+        has_phrase_break = bool(re.search(r'[,;\u2014—]\s*$', buffer))
 
         if is_first:
-            return has_boundary or len(buffer) >= 60
+            # Flush ASAP for first audio — any boundary or 25+ chars
+            return has_sentence_end or (has_phrase_break and len(buffer) >= 15) or len(buffer) >= 25
         else:
-            return has_boundary or len(buffer) >= 100
+            return has_sentence_end or len(buffer) >= 50
 
     async def _execute_tool(self, tool_call_event: ToolCall) -> dict:
         """Execute a tool call and return the result dict."""
