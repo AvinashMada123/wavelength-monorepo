@@ -38,7 +38,7 @@ class GeminiTTSClient:
         # API client
         self._api_key = gemini_key_pool.get_key()
         self._client = genai.Client(api_key=self._api_key)
-        self._model = "gemini-2.5-flash-tts"
+        self._model = "gemini-2.5-flash-preview-tts"
 
         # Cancellation flag
         self._cancelled = False
@@ -65,6 +65,7 @@ class GeminiTTSClient:
         self._cancelled = False
 
         config = types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
             speech_config=types.SpeechConfig(
                 language_code=self._language,
                 voice_config=types.VoiceConfig(
@@ -73,7 +74,6 @@ class GeminiTTSClient:
                     )
                 ),
             ),
-            temperature=1.0,  # TTS uses higher temperature for natural speech
         )
 
         try:

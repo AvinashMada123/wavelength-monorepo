@@ -219,6 +219,9 @@ class TurnManager:
                             continue
 
                         # Queue to Plivo sender
+                        # NOTE: sender worker handles recording — do NOT record here
+                        # to avoid double-recording and to ensure only audio actually
+                        # sent to caller is recorded (barge-in drains unsent chunks)
                         chunk = AudioChunk(
                             audio_b64=base64.b64encode(audio_16k).decode(),
                             turn_id=s._current_turn_id,
@@ -228,9 +231,6 @@ class TurnManager:
                             s._plivo_send_queue.put_nowait(chunk)
                         except asyncio.QueueFull:
                             pass
-
-                        # Record agent audio at 16kHz
-                        s._audio._record_audio("AI", audio_16k, 16000)
 
                         # Track timing
                         if s._first_audio_time is None:
