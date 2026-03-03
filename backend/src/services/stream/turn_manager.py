@@ -929,7 +929,7 @@ class TurnManager:
             if agent_has_bye and user_has_bye and not s._closing_call:
                 self.log.detail(f"Auto-detected mutual goodbye — ending call")
                 s._closing_call = True
-                asyncio.create_task(s._lifecycle._hangup_call_delayed(2.0))
+                asyncio.create_task(s._lifecycle._hangup_call_delayed(5.0))
 
         # Update timing markers
         s._agent_turn_complete_time = time.time()
