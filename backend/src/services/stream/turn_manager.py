@@ -909,6 +909,18 @@ class TurnManager:
                 full_user, s._accumulated_user_text, full_agent, turn_ms
             ))
 
+        # Auto-detect mutual goodbye — safety net when LLM fails to call end_call
+        if full_agent and full_user and s._turn_count >= 3:
+            _bye_words = {"bye", "goodbye", "take care", "good night", "see you"}
+            agent_lower = full_agent.lower()
+            user_lower = full_user.lower()
+            agent_has_bye = any(w in agent_lower for w in _bye_words)
+            user_has_bye = any(w in user_lower for w in _bye_words)
+            if agent_has_bye and user_has_bye and not s._closing_call:
+                self.log.detail(f"Auto-detected mutual goodbye — ending call")
+                s._closing_call = True
+                asyncio.create_task(s._lifecycle._hangup_call_delayed(2.0))
+
         # Update timing markers
         s._agent_turn_complete_time = time.time()
         s._user_response_start_time = None

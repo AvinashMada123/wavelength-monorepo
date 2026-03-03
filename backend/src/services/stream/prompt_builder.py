@@ -96,7 +96,7 @@ def detect_voice_from_prompt(prompt: str) -> str:
 TOOL_DECLARATIONS = [
     {
         "name": "end_call",
-        "description": "End the phone call gracefully. Call this when: 1) The customer says 'not interested', 'don't call me', 'wrong number', or any clear rejection — say a polite goodbye and end immediately. 2) The conversation has naturally concluded with mutual goodbyes. 3) The customer explicitly asks to stop or hang up. ALWAYS respect the customer's wishes on the FIRST clear rejection. Say a warm one-line goodbye, then call this tool.",
+        "description": "End the phone call. Call this IMMEDIATELY when: 1) The customer says 'not interested', 'don't call me', 'wrong number', or any rejection. 2) Both you AND the customer have said goodbye/bye/take care — call end_call with NO additional text. 3) The customer explicitly asks to hang up. CRITICAL: If you already said 'bye'/'take care'/'goodbye' and the customer responds with 'bye'/'okay bye'/'thanks bye', call end_call IMMEDIATELY without generating ANY text. Do NOT say goodbye twice.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -384,7 +384,9 @@ class PromptBuilder:
             "confirm their intent before acting on it. Say 'Just to confirm, you would like to join?' "
             "before triggering any workflow or pivoting to a rejection fallback. "
             "5) When ending a call, say your closing phrase exactly once. Do not say goodbye or "
-            "'see you tonight' or 'looking forward' more than once."
+            "'see you tonight' or 'looking forward' more than once. "
+            "If you already said 'bye'/'take care' and the customer responds, "
+            "call end_call IMMEDIATELY with zero text — do NOT say another goodbye."
         )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition
