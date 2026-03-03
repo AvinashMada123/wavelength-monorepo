@@ -1,12 +1,13 @@
 """GoogleCloudTTSClient — TTS via Google Cloud Text-to-Speech REST API.
 
-Single responsibility: text in -> audio bytes out (24kHz PCM).
+Single responsibility: text in -> audio bytes out (16kHz PCM).
 Drop-in replacement for GeminiTTSClient with same interface.
 
 Key advantages over Gemini TTS:
 - ~200-400ms latency (vs 4-5s for Gemini TTS)
 - Cheaper: $4-16/1M chars (vs Gemini TTS pricing)
 - All Indian languages: hi-IN, ta-IN, te-IN, en-IN, bn-IN, kn-IN, ml-IN, gu-IN
+- Outputs 16kHz directly (no resampling artifacts)
 """
 import asyncio
 import base64
@@ -136,7 +137,7 @@ class GoogleCloudTTSClient:
                 },
                 "audioConfig": {
                     "audioEncoding": "LINEAR16",
-                    "sampleRateHertz": 24000,
+                    "sampleRateHertz": 16000,
                 },
             }
             headers = {
@@ -150,15 +151,25 @@ class GoogleCloudTTSClient:
         except Exception as e:
             logger.warning(f"Cloud TTS warmup failed (non-fatal): {e}")
 
-    async def synthesize(self, text: str) -> AsyncIterator[bytes]:
-        """Synthesize text to 24kHz PCM audio via Google Cloud TTS REST API.
+    def _wrap_ssml(self, text: str) -> str:
+        """Wrap text in SSML with prosody for natural speech.
 
-        Yields audio bytes (24kHz PCM16) — single chunk since REST returns complete audio.
-        Caller (TurnManager._tts_consumer) handles:
-        - Resampling 24k -> 16k
-        - Queuing to _plivo_send_queue
-        - Recording agent audio
-        - Cancellation via self.cancel()
+        - rate="95%": slightly slower, removes rushed AI feel
+        - pitch="-1st": drops pitch 1 semitone, sounds more grounded
+        """
+        # Escape XML special characters
+        escaped = (text.replace("&", "&amp;").replace("<", "&lt;")
+                   .replace(">", "&gt;").replace('"', "&quot;"))
+        return (
+            f'<speak><prosody rate="95%" pitch="-1st">'
+            f'{escaped}</prosody></speak>'
+        )
+
+    async def synthesize(self, text: str) -> AsyncIterator[bytes]:
+        """Synthesize text to 16kHz PCM audio via Google Cloud TTS REST API.
+
+        Yields audio bytes (16kHz PCM16) — single chunk, ready for Plivo.
+        No resampling needed — Google's internal resampler handles 16kHz natively.
         """
         if not text or not text.strip():
             return
@@ -176,12 +187,15 @@ class GoogleCloudTTSClient:
         if "languageCode" not in voice_params:
             voice_params["languageCode"] = "en-US"
 
+        # Use SSML for natural prosody (slight rate/pitch adjustment)
+        ssml_text = self._wrap_ssml(text.strip())
+
         request_body = {
-            "input": {"text": text},
+            "input": {"ssml": ssml_text},
             "voice": voice_params,
             "audioConfig": {
                 "audioEncoding": "LINEAR16",
-                "sampleRateHertz": 24000,
+                "sampleRateHertz": 16000,
             },
         }
 

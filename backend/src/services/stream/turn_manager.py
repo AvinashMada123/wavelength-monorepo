@@ -117,13 +117,16 @@ class TurnManager:
                 self.log.detail("Preload: LLM produced empty greeting")
                 return
 
-            # Synthesize greeting audio
+            # Synthesize greeting audio (Cloud TTS outputs 16kHz directly)
             greeting_audio_chunks = []
-            from .audio_converter import resample_24k_to_16k
             async for chunk in self.tts.synthesize(greeting_text.strip()):
-                resampled = resample_24k_to_16k(chunk)
-                if resampled:
-                    greeting_audio_chunks.append(resampled)
+                if isinstance(self.tts, GoogleCloudTTSClient):
+                    greeting_audio_chunks.append(chunk)
+                else:
+                    from .audio_converter import resample_24k_to_16k
+                    resampled = resample_24k_to_16k(chunk)
+                    if resampled:
+                        greeting_audio_chunks.append(resampled)
 
             if greeting_audio_chunks:
                 self._preloaded_greeting_audio = b"".join(greeting_audio_chunks)
@@ -383,18 +386,22 @@ class TurnManager:
                 first_chunk_logged = False
 
                 try:
-                    async for audio_24k in self.tts.synthesize(sentence):
+                    async for audio_chunk in self.tts.synthesize(sentence):
                         if self.tts._cancelled:
                             self.log.detail("TTS consumer: cancelled mid-synthesis")
                             break
 
                         if not first_chunk_logged:
                             ttfb = (time.time() - tts_start) * 1000
-                            self.log.detail(f"TTS TTFB: {ttfb:.0f}ms, chunk={len(audio_24k)} bytes")
+                            self.log.detail(f"TTS TTFB: {ttfb:.0f}ms, chunk={len(audio_chunk)} bytes")
                             first_chunk_logged = True
 
-                        # Resample 24k -> 16k BEFORE queuing and recording
-                        audio_16k = resample_24k_to_16k(audio_24k)
+                        # Cloud TTS outputs 16kHz directly (no resampling needed)
+                        # Gemini TTS outputs 24kHz — resample if needed
+                        if isinstance(self.tts, GoogleCloudTTSClient):
+                            audio_16k = audio_chunk
+                        else:
+                            audio_16k = resample_24k_to_16k(audio_chunk)
                         if not audio_16k:
                             continue
 
@@ -461,7 +468,10 @@ class TurnManager:
                 temp_tts = GeminiTTSClient(self.state, self.log)
             audio_chunks = []
             async for chunk in temp_tts.synthesize("One moment please."):
-                audio_chunks.append(resample_24k_to_16k(chunk))
+                if isinstance(temp_tts, GoogleCloudTTSClient):
+                    audio_chunks.append(chunk)
+                else:
+                    audio_chunks.append(resample_24k_to_16k(chunk))
             if audio_chunks:
                 self._canned_one_moment = b"".join(c for c in audio_chunks if c)
                 self.log.detail(f"Canned audio pre-synthesized: {len(self._canned_one_moment)} bytes")
