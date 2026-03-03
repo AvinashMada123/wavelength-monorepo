@@ -70,13 +70,13 @@ class DeepgramSTTClient:
             # Build URL with query parameters
             params = {
                 "model": "nova-3",
-                "language": "multi",  # Multi-language (English + Hindi)
+                # NOTE: nova-3 auto-detects language — no language param needed
                 "encoding": "linear16",
                 "sample_rate": "16000",
                 "channels": "1",
                 "punctuate": "true",
                 "interim_results": "true",
-                "utterance_end_ms": "1000",
+                # utterance_end_ms removed — not available on all Deepgram plans
                 "vad_events": "true",
                 "endpointing": "300",  # 300ms endpointing for responsive turns
                 "smart_format": "true",
@@ -236,6 +236,9 @@ class DeepgramSTTClient:
         if is_final:
             if self.on_transcript_final:
                 await self.on_transcript_final(transcript, confidence)
+            # speech_final=True means end of speech segment (replaces UtteranceEnd)
+            if speech_final and self.on_utterance_end:
+                await self.on_utterance_end()
         else:
             if self.on_transcript_interim:
                 await self.on_transcript_interim(transcript)

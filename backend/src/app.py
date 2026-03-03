@@ -979,6 +979,7 @@ class PlivoMakeCallRequest(BaseModel):
     webhookUrl: Optional[str] = None  # URL to call when call ends (webhook back to frontend)
     n8nWebhookUrl: Optional[str] = None  # URL for n8n transcript processing
     voice: Optional[str] = None  # Voice name from UI (e.g. "Puck", "Kore") — overrides auto-detection
+    language: Optional[str] = None  # TTS language/accent code (e.g. "en-IN", "en-US", "hi-IN")
     preResearchEnabled: Optional[bool] = False  # Gather intelligence about contact before call
     memoryRecallEnabled: Optional[bool] = False  # Load cross-call memory for returning callers
     socialProofEnabled: Optional[bool] = False  # Include social proof stats in conversation
@@ -1003,6 +1004,7 @@ class PlivoMakeCallRequest(BaseModel):
     maxCallDuration: Optional[int] = 480  # Max call duration in seconds (default 8 min)
     ghlWorkflows: Optional[list] = []  # GHL workflow triggers [{id, name, description, tag, timing, enabled}]
     microMomentsConfig: Optional[dict] = None  # Per-bot micro-moments config override
+    ttsProvider: Optional[str] = None  # "gemini" or "google_cloud" (default from env TTS_PROVIDER)
 
 
 @app.post("/plivo/make-call")
@@ -1042,11 +1044,23 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         if request.prompt:
             request.prompt = get_or_cache_prompt(request.prompt)
 
-        # Pass explicit voice selection from UI (overrides auto-detection from prompt)
-        logger.info(f"Voice from request: '{request.voice}' (type={type(request.voice).__name__})")
+        # Voice and language MUST come from API request — no auto-detection
         if request.voice:
-            context["_voice"] = request.voice
-            logger.info(f"Voice override set: {request.voice}")
+            context["_voice"] = request.voice      # Live API path
+            context["_tts_voice"] = request.voice   # Traditional pipeline path
+            logger.info(f"Voice set: {request.voice}")
+        else:
+            logger.warning("No 'voice' in request — TTS will use Gemini default")
+        if request.language:
+            context["_tts_language"] = request.language
+            logger.info(f"Language set: {request.language}")
+        else:
+            logger.warning("No 'language' in request — TTS will use Gemini default")
+
+        # TTS provider selection (per-bot override or env default)
+        if request.ttsProvider:
+            context["_tts_provider"] = request.ttsProvider
+            logger.info(f"TTS provider: {request.ttsProvider}")
 
         # Pass feature flags through context so session can use them
         context["_social_proof_enabled"] = bool(request.socialProofEnabled)

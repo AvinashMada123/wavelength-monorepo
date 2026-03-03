@@ -49,6 +49,8 @@ async def preload_session(call_uuid: str, caller_phone: str, prompt: str = None,
             session.inject_intelligence(intelligence_brief)
         if social_proof_summary:
             session.inject_social_proof(social_proof_summary)
+        # Log voice/language config for traceability
+        logger.info(f"[{call_uuid[:8]}] Preload: voice={session.state._tts_voice}, language={session.state._tts_language}, pipeline={session.state._pipeline_mode}, tts_provider={session.state._tts_provider}")
         _preloading_sessions[call_uuid] = session
     # preload() now just does bookkeeping (no Gemini connection)
     success = await session.preload()

@@ -268,9 +268,9 @@ class GeminiConnection:
                 self._ws_receive_loop(s.goog_live_ws, is_standby=False)
             )
 
-            # 6. Unmute and set post-swap hold (200ms before forwarding user audio)
+            # 6. Unmute and set post-swap hold (100ms before forwarding user audio)
             s._mute_audio = False
-            s._post_swap_hold_until = time.time() + 0.2
+            s._post_swap_hold_until = time.time() + 0.1  # Reduced from 200ms for faster response
 
             # 7. Close old WS in background
             asyncio.create_task(self._close_ws_quietly(old_ws))

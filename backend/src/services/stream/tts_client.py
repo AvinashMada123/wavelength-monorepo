@@ -12,7 +12,6 @@ from google.genai import types
 from loguru import logger
 
 from src.core.config import gemini_key_pool
-from .prompt_builder import detect_voice_from_prompt
 
 
 class GeminiTTSClient:
@@ -26,15 +25,14 @@ class GeminiTTSClient:
         self.state = state
         self.log = log
 
-        # Voice selection (priority: bot config > prompt detection > default)
-        self._voice = (
-            state._tts_voice
-            or state._resolved_voice
-            or detect_voice_from_prompt(state.prompt)
-            or "Puck"
-        )
-        # Language/accent for TTS (e.g., "en-IN", "en-US", "hi-IN")
-        self._language = state._tts_language or "en-IN"
+        # Voice and language MUST be passed via API — no hardcoded defaults
+        self._voice = state._tts_voice or state._resolved_voice
+        self._language = state._tts_language
+
+        if not self._voice:
+            logger.warning(f"[{state.call_uuid[:8]}] TTS: No voice specified — pass 'voice' in API request")
+        if not self._language:
+            logger.warning(f"[{state.call_uuid[:8]}] TTS: No language specified — pass 'language' in API request")
 
         # API client
         self._api_key = gemini_key_pool.get_key()
@@ -65,16 +63,20 @@ class GeminiTTSClient:
 
         self._cancelled = False
 
+        # Build speech config dynamically — only include voice/language if provided via API
+        speech_kwargs = {}
+        if self._language:
+            speech_kwargs["language_code"] = self._language
+        if self._voice:
+            speech_kwargs["voice_config"] = types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=self._voice,
+                )
+            )
+
         config = types.GenerateContentConfig(
             response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                language_code=self._language,
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=self._voice,
-                    )
-                ),
-            ),
+            speech_config=types.SpeechConfig(**speech_kwargs) if speech_kwargs else None,
         )
 
         try:

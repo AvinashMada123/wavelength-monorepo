@@ -227,9 +227,11 @@ class PromptBuilder:
         # On session splits (not first connection), strip greeting instructions from memory
         # to prevent the AI from re-greeting mid-call
         if not s._is_first_connection and s.context.get("_memory_context"):
-            # Use the original memory context (before any stripping) as source
+            # Use the IMMUTABLE original memory context as source — prevents progressive
+            # degradation across multiple session splits (each split was re-stripping the
+            # already-stripped version, losing more context each time)
             if not hasattr(s, "_original_memory_context"):
-                s._original_memory_context = s.context["_memory_context"]
+                s._original_memory_context = str(s.context["_memory_context"])  # Immutable copy
             raw = s._original_memory_context
             # Strip GREETING, AFTER GREETING, and FLOW lines to prevent re-greeting on session splits
             cleaned = "\n".join(
@@ -458,28 +460,36 @@ class PromptBuilder:
         # etc. work inside persona content, situation content, and product sections too
         full_prompt = render_prompt(full_prompt, s.context)
 
-        # Use cached voice (set once on first connection, reused on all splits)
+        # Voice MUST be passed via API — no auto-detection from prompt
         if s._resolved_voice is None:
-            s._resolved_voice = s.context.get("_voice") or detect_voice_from_prompt(s.prompt)
+            s._resolved_voice = s.context.get("_voice") or s._tts_voice
         voice_name = s._resolved_voice
+        if not voice_name:
+            logger.warning(f"[{s.call_uuid[:8]}] Live API: No voice specified — pass 'voice' in API request")
 
         if config.use_vertex_ai:
             model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"
         else:
             model_name = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 
+        # Language/accent for Live API TTS — must be passed via API
+        language_code = s._tts_language
+
+        # Build speech_config dynamically — only include voice/language if provided
+        speech_config = {}
+        if language_code:
+            speech_config["language_code"] = language_code
+        if voice_name:
+            speech_config["voice_config"] = {
+                "prebuilt_voice_config": {"voice_name": voice_name}
+            }
+
         msg = {
             "setup": {
                 "model": model_name,
                 "generation_config": {
                     "response_modalities": ["AUDIO"],
-                    "speech_config": {
-                        "voice_config": {
-                            "prebuilt_voice_config": {
-                                "voice_name": voice_name
-                            }
-                        },
-                    },
+                    "speech_config": speech_config,
                     "thinking_config": {
                         "thinking_budget": 0  # Disable reasoning for fastest responses
                     }
@@ -595,23 +605,15 @@ class PromptBuilder:
             customer_name = s.context.get("customer_name", "")
             has_memory = bool(s.context.get("_memory_context"))
             if has_memory and customer_name:
-                # Repeat caller: short greeting referencing last time, then ask ONE question
                 trigger_text = (
                     f"[Start the conversation now. This is a REPEAT CALLER. "
                     f"Say ONE short sentence greeting {customer_name} — mention your name and reference last time. "
-                    f"Then ask ONE short follow-up question. Keep the ENTIRE greeting under 15 words total. "
-                    f"OVERRIDE: Ignore any longer greeting scripted in your instructions. Be brief.]"
-                )
-            elif customer_name:
-                trigger_text = (
-                    f"[Start the conversation now. OVERRIDE any greeting script in your instructions. "
-                    f"Say ONLY this: 'Hey {customer_name}, {{agent_name}} from {{company_name}}. Is this a bad time?' "
-                    f"Nothing else. Do NOT add context about any event or masterclass. STOP after asking 'Is this a bad time?']"
+                    f"Then ask ONE short follow-up question. Keep the ENTIRE greeting under 15 words total.]"
                 )
             else:
                 trigger_text = (
-                    "[Start the conversation now. OVERRIDE any greeting script in your instructions. "
-                    "Say ONLY: your name, company, then 'Is this a bad time?' Nothing else. STOP after the question.]"
+                    f"[Start the conversation now. Follow your STEP 1 or START instruction exactly. "
+                    f"The customer's name is '{customer_name}'. Say your greeting and STOP. Wait for their response.]"
                 )
 
         msg = {
@@ -633,15 +635,15 @@ class PromptBuilder:
         return msg["setup"]["system_instruction"]["parts"][0]["text"]
 
     def build_greeting_trigger(self) -> str:
-        """Return a short neutral greeting trigger for the text pipeline.
+        """Return greeting trigger for the text pipeline.
 
-        The greeting instruction is in the system prompt, not the trigger.
+        Uses the prompt's own START/greeting instruction — does NOT override it.
         This trigger stays in history as the first user message, creating a valid
         alternating sequence: user -> model -> user -> model...
         Gemini requires first contents message to be role 'user'.
         """
         s = self.state
-        # Build the same trigger text as _send_initial_greeting
+        # Allow API-provided greeting override
         trigger_text = s.context.get("greeting_trigger", "")
         if not trigger_text:
             customer_name = s.context.get("customer_name", "")
@@ -650,19 +652,13 @@ class PromptBuilder:
                 trigger_text = (
                     f"[Start the conversation now. This is a REPEAT CALLER. "
                     f"Say ONE short sentence greeting {customer_name} — mention your name and reference last time. "
-                    f"Then ask ONE short follow-up question. Keep the ENTIRE greeting under 15 words total. "
-                    f"OVERRIDE: Ignore any longer greeting scripted in your instructions. Be brief.]"
-                )
-            elif customer_name:
-                trigger_text = (
-                    f"[Start the conversation now. OVERRIDE any greeting script in your instructions. "
-                    f"Say ONLY this: 'Hey {customer_name}, {{agent_name}} from {{company_name}}. Is this a bad time?' "
-                    f"Nothing else. Do NOT add context about any event or masterclass. STOP after asking 'Is this a bad time?']"
+                    f"Then ask ONE short follow-up question. Keep the ENTIRE greeting under 15 words total.]"
                 )
             else:
+                # Use the prompt's own START/greeting — don't override it
                 trigger_text = (
-                    "[Start the conversation now. OVERRIDE any greeting script in your instructions. "
-                    "Say ONLY: your name, company, then 'Is this a bad time?' Nothing else. STOP after the question.]"
+                    f"[Start the conversation now. Follow your STEP 1 or START instruction exactly. "
+                    f"The customer's name is '{customer_name}'. Say your greeting and STOP. Wait for their response.]"
                 )
         return trigger_text
 

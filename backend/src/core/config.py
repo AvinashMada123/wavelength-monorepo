@@ -56,7 +56,7 @@ class Config(BaseModel):
     # Google Gemini settings
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
     google_api_keys: str = os.getenv("GOOGLE_API_KEYS", "")  # Comma-separated pool
-    tts_voice: str = os.getenv("TTS_VOICE", "Kore")
+    tts_voice: str = os.getenv("TTS_VOICE", "")  # Must be passed via API — no hardcoded default
 
     # Vertex AI settings (for lower latency with regional endpoints)
     use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "false").lower() == "true"
@@ -125,8 +125,14 @@ class Config(BaseModel):
     # Deepgram STT settings (for traditional pipeline)
     deepgram_api_key: str = os.getenv("DEEPGRAM_API_KEY", "")
 
+    # Google Cloud TTS API key (separate from Gemini key; falls back to GOOGLE_API_KEY)
+    google_cloud_tts_api_key: str = os.getenv("GOOGLE_CLOUD_TTS_API_KEY", "")
+
     # Voice pipeline mode: "live_api" (Gemini Live) or "traditional" (STT+LLM+TTS)
     voice_pipeline_mode: str = os.getenv("VOICE_PIPELINE_MODE", "live_api")
+
+    # TTS provider: "gemini" (Gemini 2.5 Flash TTS) or "google_cloud" (Cloud TTS REST API)
+    tts_provider: str = os.getenv("TTS_PROVIDER", "google_cloud")
 
 
     def validate_config(self) -> list[str]:

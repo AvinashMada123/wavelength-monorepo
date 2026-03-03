@@ -65,11 +65,11 @@ class GeminiTextClient:
         self._tools: list[dict] = []  # Tool declarations (raw dicts)
         self._api_key = gemini_key_pool.get_key()
         self._client = genai.Client(api_key=self._api_key)
-        self._model = "gemini-2.5-flash"
+        self._model = "gemini-2.0-flash-lite"
 
         # Summarization state
-        self._summarize_after_turns = 8  # 16 messages
-        self._keep_recent_messages = 12  # 6 turns verbatim
+        self._summarize_after_turns = 10  # 20 messages before triggering summarization
+        self._keep_recent_messages = 20  # 10 turns verbatim (was 12/6 — too aggressive)
 
     def set_system_prompt(self, prompt: str):
         """Set system prompt (called once at start, updated on detection changes)."""
@@ -139,7 +139,7 @@ class GeminiTextClient:
         config = types.GenerateContentConfig(
             system_instruction=self._system_prompt,
             temperature=0.7,
-            max_output_tokens=256,  # Short responses for voice
+            max_output_tokens=512,  # Voice responses (256 was too low, caused mid-sentence truncation)
             tools=tool_declarations,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
@@ -155,10 +155,14 @@ class GeminiTextClient:
                 first_chunk = True
 
                 self.log.detail(f"LLM generate_content_stream (attempt {attempt+1}, msgs={len(self._messages)})...")
-                stream = await self._client.aio.models.generate_content_stream(
-                    model=self._model,
-                    contents=self._messages,
-                    config=config,
+                # 15s wall-clock timeout prevents indefinite hangs
+                stream = await asyncio.wait_for(
+                    self._client.aio.models.generate_content_stream(
+                        model=self._model,
+                        contents=self._messages,
+                        config=config,
+                    ),
+                    timeout=15.0,
                 )
                 self.log.detail(f"LLM stream opened, iterating...")
                 async for chunk in stream:
@@ -170,7 +174,15 @@ class GeminiTextClient:
                     if not chunk.candidates:
                         continue
 
-                    for part in chunk.candidates[0].content.parts:
+                    candidate = chunk.candidates[0]
+                    # Log finish reason for debugging (SAFETY, RECITATION, etc.)
+                    if hasattr(candidate, 'finish_reason') and candidate.finish_reason and candidate.finish_reason.name not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
+                        self.log.detail(f"LLM candidate finish_reason: {candidate.finish_reason.name}")
+                    # Guard: Gemini sometimes returns candidates with no content or empty parts
+                    if not candidate.content or not candidate.content.parts:
+                        continue
+
+                    for part in candidate.content.parts:
                         # Text chunk
                         if part.text:
                             accumulated_model_text += part.text
@@ -207,6 +219,17 @@ class GeminiTextClient:
                 yield TurnComplete()
                 return  # Success
 
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.error(f"LLM generation timed out (attempt {attempt + 1}, 15s wall-clock)")
+                if attempt < max_retries:
+                    accumulated_model_text = ""
+                    accumulated_model_parts = []
+                    yield RetryEvent(attempt=attempt + 1, message="LLM stream timed out after 15s")
+                    await asyncio.sleep(0.5)
+                else:
+                    yield ErrorEvent(message="LLM stream timed out after 15s")
+                    yield TurnComplete()
+                    return
             except Exception as e:
                 logger.error(f"LLM generation error (attempt {attempt + 1}): {e}")
                 if attempt < max_retries:
@@ -272,8 +295,12 @@ class GeminiTextClient:
 
         try:
             summary_prompt = (
-                "Summarize this conversation in 3 sentences. Focus on: "
-                "what was discussed, any agreements made, and the customer's stance.\n\n"
+                "Summarize this conversation in 5 sentences. Focus on: "
+                "1) What the customer's situation/needs are, "
+                "2) Key objections or concerns they raised, "
+                "3) What was pitched/discussed, "
+                "4) Any agreements or commitments made, "
+                "5) The customer's current stance/sentiment.\n\n"
                 + "\n".join(summary_input)
             )
 
@@ -281,7 +308,7 @@ class GeminiTextClient:
                 model=self._model,
                 contents=summary_prompt,
                 config=types.GenerateContentConfig(
-                    max_output_tokens=150,
+                    max_output_tokens=250,  # 5 sentences need more tokens than 150
                     temperature=0.3,
                 ),
             )

@@ -83,7 +83,8 @@ class CallLifecycle:
 
     async def preload(self):
         """Prepare session bookkeeping while phone is ringing.
-        Does NOT connect to Gemini — that happens in attach_plivo_ws() after the call connects."""
+        For traditional pipeline: pre-generates greeting audio (LLM + TTS)
+        so it's ready to play instantly when the user answers."""
         s = self.state
         try:
             s._preload_start_time = time.time()
@@ -91,6 +92,12 @@ class CallLifecycle:
             self.log.phase("PRELOAD")
             self.log.detail(f"Phone: {s.caller_phone} ({s.context.get('customer_name', 'Unknown')})")
             self.log.detail(f"Prompt: {len(s.prompt):,} chars")
+
+            # Traditional pipeline: pre-generate greeting while phone rings
+            if s._pipeline_mode == "traditional" and s._ai_backend:
+                self.log.detail("Preloading greeting (LLM + TTS)...")
+                await s._ai_backend.preload_greeting()
+
             self.log.detail_last("Session prepared (Gemini deferred to connect)")
             return True
         except Exception as e:
