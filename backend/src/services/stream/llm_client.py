@@ -68,8 +68,8 @@ class GeminiTextClient:
         self._model = "gemini-2.5-flash-lite"
 
         # Summarization state
-        self._summarize_after_turns = 10  # 20 messages before triggering summarization
-        self._keep_recent_messages = 20  # 10 turns verbatim (was 12/6 — too aggressive)
+        self._summarize_after_turns = 6   # 12 messages before triggering summarization
+        self._keep_recent_messages = 12   # 6 recent turns verbatim (keeps context tight)
 
     def set_system_prompt(self, prompt: str):
         """Set system prompt (called once at start, updated on detection changes)."""
