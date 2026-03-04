@@ -24,6 +24,8 @@ export function ConversationFlowTab({
   const chartRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const renderCountRef = useRef(0);
+
   const renderMermaid = useCallback(async (code: string) => {
     if (!chartRef.current || !code) return;
     try {
@@ -31,6 +33,7 @@ export function ConversationFlowTab({
       mermaid.initialize({
         startOnLoad: false,
         theme: "dark",
+        securityLevel: "loose",
         themeVariables: {
           primaryColor: "#6366f1",
           primaryTextColor: "#e2e8f0",
@@ -40,13 +43,23 @@ export function ConversationFlowTab({
           tertiaryColor: "#0f172a",
         },
       });
-      // Clear previous render
+
+      // Remove any previous render container to avoid ID collisions
       chartRef.current.innerHTML = "";
-      const { svg } = await mermaid.render("flow-chart", code);
-      chartRef.current.innerHTML = svg;
+      const container = document.createElement("div");
+      chartRef.current.appendChild(container);
+
+      // Use a unique ID for each render
+      renderCountRef.current += 1;
+      const id = `flow-chart-${renderCountRef.current}-${Date.now()}`;
+      const { svg } = await mermaid.render(id, code);
+      container.innerHTML = svg;
     } catch (err) {
       console.error("[mermaid] Render error:", err);
-      chartRef.current.innerHTML = `<p class="text-sm text-destructive">Failed to render flowchart. The generated syntax may be invalid.</p>`;
+      if (chartRef.current) {
+        chartRef.current.innerHTML = `<p class="text-sm text-destructive">Failed to render flowchart. The generated syntax may be invalid.</p>
+          <pre class="mt-2 text-xs text-muted-foreground bg-muted/50 p-2 rounded overflow-x-auto">${String(err)}</pre>`;
+      }
     }
   }, []);
 

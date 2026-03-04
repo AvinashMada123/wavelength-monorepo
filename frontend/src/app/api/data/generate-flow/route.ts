@@ -52,7 +52,23 @@ Respond with ONLY the Mermaid flowchart syntax, nothing else.`;
     // Strip code fences if present
     mermaidCode = mermaidCode
       .replace(/^```mermaid?\n?/, "")
-      .replace(/\n?```$/, "");
+      .replace(/\n?```$/, "")
+      .trim();
+
+    // Ensure it starts with a valid graph directive
+    if (!mermaidCode.match(/^(graph|flowchart)\s+(TD|TB|LR|RL|BT)/)) {
+      // Try to find the graph line within the output
+      const match = mermaidCode.match(/((?:graph|flowchart)\s+(?:TD|TB|LR|RL|BT)[\s\S]*)/);
+      if (match) {
+        mermaidCode = match[1];
+      }
+    }
+
+    // Sanitize: remove problematic characters in node labels
+    // Replace smart quotes with regular quotes
+    mermaidCode = mermaidCode
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'");
 
     return NextResponse.json({ mermaidCode });
   } catch (error) {
