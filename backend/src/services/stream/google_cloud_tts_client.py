@@ -121,11 +121,18 @@ class GoogleCloudTTSClient:
         try:
             t0 = time.time()
             # Synthesize a tiny silent text to establish HTTP/2 connection
+            # Extract language from voice name if not explicitly set
+            warmup_lang = self._language
+            if not warmup_lang and self._voice and "-" in self._voice:
+                parts = self._voice.split("-")
+                if len(parts) >= 2:
+                    warmup_lang = f"{parts[0]}-{parts[1]}"
+            warmup_lang = warmup_lang or "en-US"
             warmup_body = {
                 "input": {"text": "."},
                 "voice": {
-                    "languageCode": self._language or "en-US",
-                    "name": self._voice or f"{self._language or 'en-US'}-Wavenet-A",
+                    "languageCode": warmup_lang,
+                    "name": self._voice or f"{warmup_lang}-Wavenet-A",
                 },
                 "audioConfig": {
                     "audioEncoding": "LINEAR16",
@@ -175,9 +182,16 @@ class GoogleCloudTTSClient:
         if self._voice:
             voice_params["name"] = self._voice
 
-        # Fallback: at minimum languageCode is required
+        # Fallback: extract language from voice name (e.g. "en-IN-Chirp3-HD-Kore" → "en-IN")
         if "languageCode" not in voice_params:
-            voice_params["languageCode"] = "en-US"
+            if self._voice and "-" in self._voice:
+                parts = self._voice.split("-")
+                if len(parts) >= 2:
+                    voice_params["languageCode"] = f"{parts[0]}-{parts[1]}"
+                else:
+                    voice_params["languageCode"] = "en-US"
+            else:
+                voice_params["languageCode"] = "en-US"
 
         # Use SSML for natural prosody (slight rate/pitch adjustment)
         ssml_text = self._wrap_ssml(text.strip())
