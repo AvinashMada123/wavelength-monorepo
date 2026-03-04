@@ -311,5 +311,7 @@ ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'liv
 ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '';
 ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT '';
 
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT '';
+
 -- Fast counting of active calls for concurrency gate
 CREATE INDEX IF NOT EXISTS idx_ui_calls_org_active ON ui_calls(org_id) WHERE status IN ('in-progress', 'initiating');

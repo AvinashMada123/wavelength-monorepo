@@ -87,6 +87,7 @@ export default function BotConfigEditorPage() {
   const [pipelineMode, setPipelineMode] = useState("live_api");
   const [language, setLanguage] = useState("");
   const [ttsProvider, setTtsProvider] = useState("");
+  const [conversationFlowMermaid, setConversationFlowMermaid] = useState("");
   const [microMomentsConfig, setMicroMomentsConfig] = useState<MicroMomentsConfig | null>(null);
   const [retryConfig, setRetryConfig] = useState<RetryConfig | null>(null);
   const hasLoadedRef = useRef(false);
@@ -109,6 +110,7 @@ export default function BotConfigEditorPage() {
     setPipelineMode(found.pipelineMode || "live_api");
     setLanguage(found.language || "");
     setTtsProvider(found.ttsProvider || "");
+    setConversationFlowMermaid(found.conversationFlowMermaid || "");
     setMicroMomentsConfig(found.microMomentsConfig || null);
     setRetryConfig(found.retryConfig || null);
     setLoading(false);
@@ -198,6 +200,7 @@ export default function BotConfigEditorPage() {
         pipelineMode,
         language,
         ttsProvider,
+        conversationFlowMermaid,
         microMomentsConfig,
         retryConfig,
       },
@@ -394,7 +397,13 @@ export default function BotConfigEditorPage() {
           />
         )}
         {activeTab === "conversation-flow" && user && (
-          <ConversationFlowTab user={user} prompt={prompt} />
+          <ConversationFlowTab
+            user={user}
+            prompt={prompt}
+            savedMermaidCode={conversationFlowMermaid}
+            onMermaidCodeChange={setConversationFlowMermaid}
+            onSave={handleSaveQuiet}
+          />
         )}
         {activeTab === "options" && user && (
           <AdditionalOptionsTab

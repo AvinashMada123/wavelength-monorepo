@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
           pipelineMode: "pipeline_mode",
           language: "language",
           ttsProvider: "tts_provider",
+          conversationFlowMermaid: "conversation_flow_mermaid",
           microMomentsConfig: "micro_moments_config",
           retryConfig: "retry_config",
         };

@@ -71,6 +71,7 @@ export interface BotConfig {
   pipelineMode?: string;
   language?: string;
   ttsProvider?: string;
+  conversationFlowMermaid?: string;
   microMomentsConfig?: MicroMomentsConfig | null;
   retryConfig?: RetryConfig | null;
   createdAt: string;

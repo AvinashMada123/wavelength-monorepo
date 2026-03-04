@@ -171,6 +171,7 @@ export async function POST(request: NextRequest) {
     await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'live_api'`);
     await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT ''`);
     await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT ''`);
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT ''`);
 
     // 16. call_queue (webhook calls queued when at concurrency limit)
     await query(`CREATE TABLE IF NOT EXISTS call_queue (

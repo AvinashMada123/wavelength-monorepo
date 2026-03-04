@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Loader2, Upload, RefreshCw, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, Upload, RefreshCw, FileText, ChevronDown, ChevronUp, Save, Check } from "lucide-react";
+import { toast } from "sonner";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
@@ -11,19 +12,25 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 export function ConversationFlowTab({
   user,
   prompt,
+  savedMermaidCode,
+  onMermaidCodeChange,
+  onSave,
 }: {
   user: { getIdToken: () => Promise<string> };
   prompt: string;
+  savedMermaidCode: string;
+  onMermaidCodeChange: (v: string) => void;
+  onSave: () => Promise<void>;
 }) {
-  const [mermaidCode, setMermaidCode] = useState("");
+  const [mermaidCode, setMermaidCode] = useState(savedMermaidCode || "");
   const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [fileContent, setFileContent] = useState("");
   const [fileName, setFileName] = useState("");
   const [showSource, setShowSource] = useState(false);
   const chartRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const renderCountRef = useRef(0);
 
   const renderMermaid = useCallback(async (code: string) => {
@@ -44,12 +51,10 @@ export function ConversationFlowTab({
         },
       });
 
-      // Remove any previous render container to avoid ID collisions
       chartRef.current.innerHTML = "";
       const container = document.createElement("div");
       chartRef.current.appendChild(container);
 
-      // Use a unique ID for each render
       renderCountRef.current += 1;
       const id = `flow-chart-${renderCountRef.current}-${Date.now()}`;
       const { svg } = await mermaid.render(id, code);
@@ -68,6 +73,13 @@ export function ConversationFlowTab({
       renderMermaid(mermaidCode);
     }
   }, [mermaidCode, renderMermaid]);
+
+  // Load saved code on mount
+  useEffect(() => {
+    if (savedMermaidCode && !mermaidCode) {
+      setMermaidCode(savedMermaidCode);
+    }
+  }, [savedMermaidCode, mermaidCode]);
 
   async function handleGenerate() {
     if (!prompt?.trim()) {
@@ -92,10 +104,26 @@ export function ConversationFlowTab({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate");
       setMermaidCode(data.mermaidCode);
+      onMermaidCodeChange(data.mermaidCode);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate flow");
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function handleSaveFlow() {
+    setSaving(true);
+    try {
+      onMermaidCodeChange(mermaidCode);
+      // Small delay so parent state updates before save
+      await new Promise((r) => setTimeout(r, 50));
+      await onSave();
+      toast.success("Conversation flow saved");
+    } catch {
+      toast.error("Failed to save flow");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -130,7 +158,6 @@ export function ConversationFlowTab({
       };
       reader.readAsArrayBuffer(file);
     } else {
-      // Plain text
       const reader = new FileReader();
       reader.onload = (evt) => {
         setFileContent((evt.target?.result as string)?.slice(0, 10000) || "");
@@ -138,7 +165,6 @@ export function ConversationFlowTab({
       reader.readAsText(file);
     }
 
-    // Reset input so the same file can be re-selected
     e.target.value = "";
   }
 
@@ -161,6 +187,17 @@ export function ConversationFlowTab({
               ) : null}
               {mermaidCode ? "Regenerate Flow" : "Generate Flow"}
             </Button>
+
+            {mermaidCode && (
+              <Button variant="outline" onClick={handleSaveFlow} disabled={saving}>
+                {saving ? (
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="size-4 mr-2" />
+                )}
+                Save Flow
+              </Button>
+            )}
 
             <input
               ref={fileInputRef}
