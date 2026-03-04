@@ -65,7 +65,7 @@ class GeminiTextClient:
         self._tools: list[dict] = []  # Tool declarations (raw dicts)
         self._api_key = gemini_key_pool.get_key()
         self._client = genai.Client(api_key=self._api_key)
-        self._model = "gemini-2.0-flash-lite"
+        self._model = "gemini-2.5-flash-lite"
 
         # Summarization state
         self._summarize_after_turns = 10  # 20 messages before triggering summarization
