@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { generateId } from "@/lib/utils";
 import { downloadJson } from "@/lib/bot-config-io";
+import { LANGUAGE_OPTIONS, TTS_PROVIDER_OPTIONS, GOOGLE_CLOUD_VOICES } from "@/lib/constants";
 import type { BotConfig, BotContextVariables, GhlWorkflow, MicroMomentsConfig, RetryConfig } from "@/types/bot-config";
 
 import { Button } from "@/components/ui/button";
@@ -33,8 +34,9 @@ import { Switch } from "@/components/ui/switch";
 import { PersonaTab } from "./persona-tab";
 import { ProductsTab } from "./products-tab";
 import { SocialProofTab } from "./social-proof-tab";
+import { ConversationFlowTab } from "./conversation-flow-tab";
 
-type TabId = "prompt" | "context" | "persona" | "products" | "social-proof" | "ghl-workflows" | "options";
+type TabId = "prompt" | "context" | "persona" | "products" | "social-proof" | "ghl-workflows" | "options" | "conversation-flow";
 
 async function apiBotConfigs(
   user: { getIdToken: () => Promise<string> },
@@ -82,6 +84,9 @@ export default function BotConfigEditorPage() {
   const [ghlWorkflows, setGhlWorkflows] = useState<GhlWorkflow[]>([]);
   const [voice, setVoice] = useState("");
   const [callProvider, setCallProvider] = useState("plivo");
+  const [pipelineMode, setPipelineMode] = useState("live_api");
+  const [language, setLanguage] = useState("");
+  const [ttsProvider, setTtsProvider] = useState("");
   const [microMomentsConfig, setMicroMomentsConfig] = useState<MicroMomentsConfig | null>(null);
   const [retryConfig, setRetryConfig] = useState<RetryConfig | null>(null);
   const hasLoadedRef = useRef(false);
@@ -101,6 +106,9 @@ export default function BotConfigEditorPage() {
     setGhlWorkflows(found.ghlWorkflows || []);
     setVoice(found.voice || "");
     setCallProvider(found.callProvider || "plivo");
+    setPipelineMode(found.pipelineMode || "live_api");
+    setLanguage(found.language || "");
+    setTtsProvider(found.ttsProvider || "");
     setMicroMomentsConfig(found.microMomentsConfig || null);
     setRetryConfig(found.retryConfig || null);
     setLoading(false);
@@ -187,6 +195,9 @@ export default function BotConfigEditorPage() {
         ghlWorkflows,
         voice,
         callProvider,
+        pipelineMode,
+        language,
+        ttsProvider,
         microMomentsConfig,
         retryConfig,
       },
@@ -226,6 +237,7 @@ export default function BotConfigEditorPage() {
     { id: "products", label: "Products" },
     { id: "social-proof", label: "Social Proof" },
     { id: "ghl-workflows", label: "CRM Workflows" },
+    { id: "conversation-flow", label: "Conversation Flow" },
     { id: "options", label: "Additional Options" },
   ];
 
@@ -336,6 +348,12 @@ export default function BotConfigEditorPage() {
             onVoiceChange={setVoice}
             callProvider={callProvider}
             onCallProviderChange={setCallProvider}
+            pipelineMode={pipelineMode}
+            onPipelineModeChange={setPipelineMode}
+            language={language}
+            onLanguageChange={setLanguage}
+            ttsProvider={ttsProvider}
+            onTtsProviderChange={setTtsProvider}
           />
         )}
         {activeTab === "persona" && user && (
@@ -374,6 +392,9 @@ export default function BotConfigEditorPage() {
             onSave={handleSaveQuiet}
             saving={saving}
           />
+        )}
+        {activeTab === "conversation-flow" && user && (
+          <ConversationFlowTab user={user} prompt={prompt} />
         )}
         {activeTab === "options" && user && (
           <AdditionalOptionsTab
@@ -447,7 +468,7 @@ function PromptTab({
 
 /* ========== Context Tab ========== */
 
-const VOICE_OPTIONS = [
+const LIVE_API_VOICE_OPTIONS = [
   { value: "", label: "Auto-detect from prompt" },
   { value: "Puck", label: "Puck (Male)" },
   { value: "Kore", label: "Kore (Female)" },
@@ -460,6 +481,12 @@ function ContextTab({
   onVoiceChange,
   callProvider,
   onCallProviderChange,
+  pipelineMode,
+  onPipelineModeChange,
+  language,
+  onLanguageChange,
+  ttsProvider,
+  onTtsProviderChange,
 }: {
   contextVariables: BotContextVariables;
   onContextChange: (v: BotContextVariables) => void;
@@ -467,6 +494,12 @@ function ContextTab({
   onVoiceChange: (v: string) => void;
   callProvider: string;
   onCallProviderChange: (v: string) => void;
+  pipelineMode: string;
+  onPipelineModeChange: (v: string) => void;
+  language: string;
+  onLanguageChange: (v: string) => void;
+  ttsProvider: string;
+  onTtsProviderChange: (v: string) => void;
 }) {
   const fields: { key: Exclude<keyof BotContextVariables, "customVariables" | "customVariableMappings">; label: string; placeholder: string; variable: string }[] = [
     { key: "agentName", label: "Agent Name", placeholder: "e.g. Priya", variable: "{agent_name}" },
@@ -636,24 +669,109 @@ function ContextTab({
         <CardHeader>
           <CardTitle>Voice & Provider</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Choose the speaking voice and telephony provider for calls made with this bot configuration.
+            Choose the voice pipeline, speaking voice, and telephony provider for calls made with this bot configuration.
           </p>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
+          {/* Pipeline Mode Toggle */}
+          <div className="space-y-2">
+            <Label className="text-sm">Pipeline Mode</Label>
+            <div className="inline-flex rounded-lg border border-input p-1 gap-1">
+              {[
+                { value: "live_api", label: "Live API" },
+                { value: "traditional", label: "Traditional" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => onPipelineModeChange(opt.value)}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    pipelineMode === opt.value
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {pipelineMode === "traditional"
+                ? "Traditional: separate STT + LLM + TTS pipeline. Lower latency with Google Cloud TTS."
+                : "Live API: Gemini multimodal live session. Simpler, single-model approach."}
+            </p>
+          </div>
+
+          {/* TTS Provider + Language (Traditional only) */}
+          {pipelineMode === "traditional" && (
+            <div className="grid gap-6 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-sm">TTS Provider</Label>
+                <select
+                  value={ttsProvider}
+                  onChange={(e) => onTtsProviderChange(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value="">Default (from server config)</option>
+                  {TTS_PROVIDER_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm">Language</Label>
+                <select
+                  value={language}
+                  onChange={(e) => onLanguageChange(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value="">Default (en-IN)</option>
+                  {LANGUAGE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Voice Selection */}
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-sm">Voice</Label>
-              <select
-                value={voice}
-                onChange={(e) => onVoiceChange(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                {VOICE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              {pipelineMode === "traditional" && (ttsProvider === "google_cloud" || !ttsProvider) ? (
+                <select
+                  value={voice}
+                  onChange={(e) => onVoiceChange(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value="">Auto-detect from prompt</option>
+                  <optgroup label="Female">
+                    {GOOGLE_CLOUD_VOICES.female.map((v) => (
+                      <option key={v.value} value={v.value}>{v.label}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Male">
+                    {GOOGLE_CLOUD_VOICES.male.map((v) => (
+                      <option key={v.value} value={v.value}>{v.label}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Neutral">
+                    {GOOGLE_CLOUD_VOICES.neutral.map((v) => (
+                      <option key={v.value} value={v.value}>{v.label}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              ) : (
+                <select
+                  value={voice}
+                  onChange={(e) => onVoiceChange(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  {LIVE_API_VOICE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm">Call Provider</Label>

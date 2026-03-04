@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
       case "create": {
         const { config } = body;
         await query(
-          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, voice, created_by, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $19)`,
+          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, voice, pipeline_mode, language, tts_provider, created_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22)`,
           [
             config.id,
             orgId,
@@ -48,6 +48,9 @@ export async function POST(request: NextRequest) {
             config.preResearchEnabled ?? false,
             config.memoryRecallEnabled ?? false,
             config.voice || "",
+            config.pipelineMode || "live_api",
+            config.language || "",
+            config.ttsProvider || "",
             config.createdBy || null,
             config.createdAt || new Date().toISOString(),
           ]
@@ -80,6 +83,9 @@ export async function POST(request: NextRequest) {
           ghlWorkflows: "ghl_workflows",
           voice: "voice",
           callProvider: "call_provider",
+          pipelineMode: "pipeline_mode",
+          language: "language",
+          ttsProvider: "tts_provider",
           microMomentsConfig: "micro_moments_config",
           retryConfig: "retry_config",
         };
@@ -171,6 +177,9 @@ export async function POST(request: NextRequest) {
           maxCallDuration: cfg.max_call_duration,
           ghlWorkflows: cfg.ghl_workflows,
           voice: cfg.voice,
+          pipelineMode: cfg.pipeline_mode,
+          language: cfg.language,
+          ttsProvider: cfg.tts_provider,
           personas: personas.map((p: Record<string, unknown>) => ({ name: p.name, content: p.content, keywords: p.keywords })),
           situations: situations.map((s: Record<string, unknown>) => ({ name: s.name, content: s.content, keywords: s.keywords })),
           productSections: productSections.map((s: Record<string, unknown>) => ({ name: s.name, content: s.content, keywords: s.keywords })),
@@ -189,8 +198,8 @@ export async function POST(request: NextRequest) {
 
         // Create the bot config
         await query(
-          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, created_by, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $21)`,
+          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, pipeline_mode, language, tts_provider, created_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24)`,
           [
             newConfigId,
             orgId,
@@ -211,6 +220,9 @@ export async function POST(request: NextRequest) {
             importConfig.maxCallDuration ?? 480,
             JSON.stringify(importConfig.ghlWorkflows || []),
             importConfig.voice || "",
+            importConfig.pipelineMode || "live_api",
+            importConfig.language || "",
+            importConfig.ttsProvider || "",
             importConfig.createdBy || null,
             now,
           ]
@@ -286,8 +298,8 @@ export async function POST(request: NextRequest) {
 
         // Create duplicate config (inactive, with "(Copy)" suffix)
         await query(
-          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, call_provider, micro_moments_config, retry_config, created_by, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24)`,
+          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, call_provider, pipeline_mode, language, tts_provider, micro_moments_config, retry_config, created_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $27)`,
           [
             newId, orgId, (src.name || "") + " (Copy)", false,
             src.prompt || "", JSON.stringify(src.questions || []),
@@ -298,6 +310,7 @@ export async function POST(request: NextRequest) {
             src.pre_research_enabled ?? false, src.memory_recall_enabled ?? false,
             src.max_call_duration ?? 480, JSON.stringify(src.ghl_workflows || []),
             src.voice || "", src.call_provider || "plivo",
+            src.pipeline_mode || "live_api", src.language || "", src.tts_provider || "",
             JSON.stringify(src.micro_moments_config || null),
             JSON.stringify(src.retry_config || null),
             src.created_by || null, now,

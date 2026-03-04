@@ -1005,6 +1005,7 @@ class PlivoMakeCallRequest(BaseModel):
     ghlWorkflows: Optional[list] = []  # GHL workflow triggers [{id, name, description, tag, timing, enabled}]
     microMomentsConfig: Optional[dict] = None  # Per-bot micro-moments config override
     ttsProvider: Optional[str] = None  # "gemini" or "google_cloud" (default from env TTS_PROVIDER)
+    pipelineMode: Optional[str] = None  # "live_api" or "traditional" (default from env VOICE_PIPELINE_MODE)
 
 
 @app.post("/plivo/make-call")
@@ -1061,6 +1062,11 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         if request.ttsProvider:
             context["_tts_provider"] = request.ttsProvider
             logger.info(f"TTS provider: {request.ttsProvider}")
+
+        # Pipeline mode selection (per-bot override or env default)
+        if request.pipelineMode:
+            context["_pipeline_mode"] = request.pipelineMode
+            logger.info(f"Pipeline mode: {request.pipelineMode}")
 
         # Pass feature flags through context so session can use them
         context["_social_proof_enabled"] = bool(request.socialProofEnabled)

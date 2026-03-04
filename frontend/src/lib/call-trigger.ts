@@ -340,6 +340,9 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     maxCallDuration: configDoc.max_call_duration ?? 300,
     ghlWorkflows: configDoc.ghl_workflows ?? [],
     ...(configDoc.voice || voice ? { voice: configDoc.voice || voice } : {}),
+    ...(configDoc.pipeline_mode ? { pipelineMode: configDoc.pipeline_mode } : {}),
+    ...(configDoc.language ? { language: configDoc.language } : {}),
+    ...(configDoc.tts_provider ? { ttsProvider: configDoc.tts_provider } : {}),
   };
 
   if (configDoc.micro_moments_config) {

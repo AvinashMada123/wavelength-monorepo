@@ -27,35 +27,28 @@ class GoogleCloudTTSClient:
     Uses REST API with API key auth — no SDK dependency needed.
 
     Voice selection strategy:
-    - Short Gemini names (Kore, Puck, etc.) → Wavenet voices (warmest prosody)
+    - Short Gemini names (Kore, Puck, etc.) → Chirp3-HD voices (most natural)
     - Full Cloud TTS voice names → used as-is
-    - Wavenet: ~600-700ms, $16/1M chars, warm natural prosody
-    - Neural2: ~400-900ms, $16/1M chars, faster but more robotic
-    - Chirp3-HD: ~600-1500ms, $30/1M chars, robotic on telephony
+    - Chirp3-HD: generative model, most natural prosody ($30/1M chars)
+    - SSML prosody wrapping: rate=95%, pitch=-1st for grounded, natural feel
+    - 16kHz PCM output (no resampling needed)
     """
 
     ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 
-    # Gemini voice names → Cloud TTS Wavenet voice mapping
-    # Wavenet has the warmest, most natural prosody for telephony
-    _GEMINI_TO_WAVENET = {
-        # Female voices → Wavenet-A (female)
-        "Kore": "A", "Aoede": "A", "Leda": "A", "Despina": "A",
-        "Callirrhoe": "A", "Erinome": "A", "Laomedeia": "A",
-        "Pulcherrima": "A", "Vindemiatrix": "A",
-        # Male voices → Wavenet-B (male)
-        "Puck": "B", "Charon": "B", "Fenrir": "B", "Orus": "B",
-        "Zephyr": "B", "Achernar": "B", "Achird": "B",
-        "Enceladus": "B", "Iapetus": "B", "Umbriel": "B",
-        # Additional voices (alternate Wavenet variants)
-        "Algenib": "C", "Algieba": "C", "Alnilam": "C",
-        "Autonoe": "D", "Gacrux": "D", "Rasalgethi": "D",
-        "Sadachbia": "D", "Sadaltager": "D", "Schedar": "D",
-        "Sulafat": "E", "Zubenelgenubi": "F",
+    # Gemini voice names → Cloud TTS Chirp3-HD voice mapping
+    # Chirp3-HD: highest-tier generative voices, most natural prosody
+    # Maps directly using Gemini voice names (e.g. Kore → en-IN-Chirp3-HD-Kore)
+    _GEMINI_VOICE_NAMES = {
+        "Kore", "Aoede", "Leda", "Despina", "Callirrhoe", "Erinome",
+        "Laomedeia", "Pulcherrima", "Vindemiatrix",
+        "Puck", "Charon", "Fenrir", "Orus", "Zephyr", "Achernar", "Achird",
+        "Enceladus", "Iapetus", "Umbriel",
+        "Algenib", "Algieba", "Alnilam",
+        "Autonoe", "Gacrux", "Rasalgethi",
+        "Sadachbia", "Sadaltager", "Schedar",
+        "Sulafat", "Zubenelgenubi",
     }
-
-    # All known Gemini voice names (for detection)
-    _GEMINI_VOICE_NAMES = set(_GEMINI_TO_WAVENET.keys())
 
     def __init__(self, state, log):
         self.state = state
@@ -107,13 +100,12 @@ class GoogleCloudTTSClient:
         if "-" in voice and len(voice) > 10:
             return voice
 
-        # Short Gemini name — map to Wavenet variant (warmest prosody)
+        # Short Gemini name → Chirp3-HD (e.g. "Kore" → "en-IN-Chirp3-HD-Kore")
         voice_cap = voice[0].upper() + voice[1:] if voice else voice
-        wavenet_variant = self._GEMINI_TO_WAVENET.get(voice_cap)
-        if wavenet_variant:
+        if voice_cap in self._GEMINI_VOICE_NAMES:
             lang = language or "en-IN"
-            expanded = f"{lang}-Wavenet-{wavenet_variant}"
-            logger.info(f"Cloud TTS: mapped '{voice}' → '{expanded}' (Wavenet, warm prosody)")
+            expanded = f"{lang}-Chirp3-HD-{voice_cap}"
+            logger.info(f"Cloud TTS: mapped '{voice}' → '{expanded}' (Chirp3-HD)")
             return expanded
 
         return voice

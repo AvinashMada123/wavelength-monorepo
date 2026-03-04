@@ -68,6 +68,9 @@ export interface BotConfig {
   ghlWorkflows?: GhlWorkflow[];
   voice?: string;
   callProvider?: string;
+  pipelineMode?: string;
+  language?: string;
+  ttsProvider?: string;
   microMomentsConfig?: MicroMomentsConfig | null;
   retryConfig?: RetryConfig | null;
   createdAt: string;

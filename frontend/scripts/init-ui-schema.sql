@@ -110,6 +110,9 @@ CREATE INDEX IF NOT EXISTS idx_bot_configs_active ON bot_configs(org_id, is_acti
 ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS micro_moments_config JSONB DEFAULT NULL;
 -- Migration: add social_proof_min_turn column if missing (minimum turns before social proof tool fires)
 ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS social_proof_min_turn INTEGER DEFAULT 0;
+-- Migration: add pre_research and memory_recall flags
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS pre_research_enabled BOOLEAN DEFAULT false;
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS memory_recall_enabled BOOLEAN DEFAULT false;
 
 -- 6. personas
 CREATE TABLE IF NOT EXISTS personas (
@@ -267,6 +270,9 @@ CREATE INDEX IF NOT EXISTS idx_cl_campaign ON campaign_leads(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_cl_campaign_status ON campaign_leads(campaign_id, status);
 CREATE INDEX IF NOT EXISTS idx_cl_call_uuid ON campaign_leads(call_uuid);
 
+-- Migration: add bot_notes column to leads
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS bot_notes TEXT DEFAULT '';
+
 -- Migrations: add bot config tracking to ui_calls
 ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS bot_config_id TEXT;
 ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS bot_config_name TEXT;
@@ -296,6 +302,14 @@ CREATE TABLE IF NOT EXISTS call_queue (
     call_uuid TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_call_queue_org_status ON call_queue(org_id, status, created_at);
+
+-- Migration: add voice and call_provider if missing (were in CREATE TABLE but not as ALTER)
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS voice TEXT DEFAULT '';
+
+-- Migration: add pipeline mode, language, TTS provider to bot configs
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'live_api';
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '';
+ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT '';
 
 -- Fast counting of active calls for concurrency gate
 CREATE INDEX IF NOT EXISTS idx_ui_calls_org_active ON ui_calls(org_id) WHERE status IN ('in-progress', 'initiating');

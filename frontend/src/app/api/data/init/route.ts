@@ -165,6 +165,13 @@ export async function POST(request: NextRequest) {
     await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
     await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
 
+    // Migrations: voice, call_provider, pipeline_mode, language, tts_provider
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS voice TEXT DEFAULT ''`);
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS call_provider TEXT DEFAULT 'plivo'`);
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'live_api'`);
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT ''`);
+    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT ''`);
+
     // 16. call_queue (webhook calls queued when at concurrency limit)
     await query(`CREATE TABLE IF NOT EXISTS call_queue (
       id TEXT PRIMARY KEY,

@@ -9,6 +9,63 @@ export const VOICE_OPTIONS = [
   { value: "Onyx", label: "Onyx", description: "Deep and authoritative" },
 ] as const;
 
+export const LANGUAGE_OPTIONS = [
+  { value: "en-IN", label: "English (India)" },
+  { value: "en-US", label: "English (US)" },
+  { value: "en-GB", label: "English (UK)" },
+  { value: "hi-IN", label: "Hindi" },
+  { value: "ta-IN", label: "Tamil" },
+  { value: "te-IN", label: "Telugu" },
+  { value: "bn-IN", label: "Bengali" },
+  { value: "kn-IN", label: "Kannada" },
+  { value: "ml-IN", label: "Malayalam" },
+  { value: "gu-IN", label: "Gujarati" },
+] as const;
+
+export const TTS_PROVIDER_OPTIONS = [
+  { value: "gemini", label: "Gemini TTS" },
+  { value: "google_cloud", label: "Google Cloud TTS (Chirp3-HD)" },
+] as const;
+
+export const GOOGLE_CLOUD_VOICES = {
+  female: [
+    { value: "Kore", label: "Kore" },
+    { value: "Aoede", label: "Aoede" },
+    { value: "Leda", label: "Leda" },
+    { value: "Despina", label: "Despina" },
+    { value: "Callirrhoe", label: "Callirrhoe" },
+    { value: "Erinome", label: "Erinome" },
+    { value: "Laomedeia", label: "Laomedeia" },
+    { value: "Pulcherrima", label: "Pulcherrima" },
+    { value: "Vindemiatrix", label: "Vindemiatrix" },
+  ],
+  male: [
+    { value: "Puck", label: "Puck" },
+    { value: "Charon", label: "Charon" },
+    { value: "Fenrir", label: "Fenrir" },
+    { value: "Orus", label: "Orus" },
+    { value: "Zephyr", label: "Zephyr" },
+    { value: "Achernar", label: "Achernar" },
+    { value: "Achird", label: "Achird" },
+    { value: "Enceladus", label: "Enceladus" },
+    { value: "Iapetus", label: "Iapetus" },
+    { value: "Umbriel", label: "Umbriel" },
+  ],
+  neutral: [
+    { value: "Algenib", label: "Algenib" },
+    { value: "Algieba", label: "Algieba" },
+    { value: "Alnilam", label: "Alnilam" },
+    { value: "Autonoe", label: "Autonoe" },
+    { value: "Gacrux", label: "Gacrux" },
+    { value: "Rasalgethi", label: "Rasalgethi" },
+    { value: "Sadachbia", label: "Sadachbia" },
+    { value: "Sadaltager", label: "Sadaltager" },
+    { value: "Schedar", label: "Schedar" },
+    { value: "Sulafat", label: "Sulafat" },
+    { value: "Zubenelgenubi", label: "Zubenelgenubi" },
+  ],
+} as const;
+
 export const LEAD_STATUS_CONFIG = {
   new: {
     label: "New",
