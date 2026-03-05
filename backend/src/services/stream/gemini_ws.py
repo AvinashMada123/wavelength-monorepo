@@ -739,24 +739,15 @@ class GeminiConnection:
                                 if m not in s._conversation_milestones:
                                     s._conversation_milestones.append(m)
 
-                        # Step manager: advance step after each completed turn
+                        # Step manager: silently advance step counter for session-split tracking.
+                        # Do NOT inject step guidance during first session — the AI already has the
+                        # full prompt and follows its natural flow. Injection only happens on reconnect
+                        # (via build_reconnect_prompt in prompt_builder).
                         if s._step_manager and s._step_manager.enabled and full_user:
                             prev_step = s._step_manager.current_step
                             next_step = s._step_manager.advance_step()
                             if next_step:
                                 self.log.detail(f"Step {prev_step.id} → {next_step.id}: {next_step.goal}")
-                                # Inject next step guidance via client_content
-                                advance_msg = s._step_manager.build_step_advance_message()
-                                if advance_msg and s.goog_live_ws:
-                                    try:
-                                        await s.goog_live_ws.send(json.dumps({
-                                            "client_content": {
-                                                "turns": [{"role": "user", "parts": [{"text": advance_msg}]}],
-                                                "turn_complete": False
-                                            }
-                                        }))
-                                    except Exception:
-                                        pass
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
