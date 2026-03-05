@@ -26,8 +26,15 @@ function sanitizeMermaid(raw: string): string {
   // Fix edges pointing to subgraph: "S6 --> subgraph P3[...]" -> split into separate lines
   code = code.replace(/^(\s*\S+\s+-->[^\n]*?)\s+subgraph\s+/gm, "$1\n    subgraph ");
 
-  // Fix "end" on same line as an edge: "S1 --> S2 end"
-  code = code.replace(/^(\s*\S+\s+-->.*?)\s+end\s*$/gm, "$1\n    end");
+  // Fix "end" on same line as anything: "S1 --> S2 end", "D7 -->|No| S31 end"
+  code = code.replace(/^(.+?)\s+end\s*$/gm, (_, before) => {
+    const b = before.trim();
+    // Only split if "before" looks like a real statement (has node IDs or arrows)
+    if (b && !b.match(/^subgraph\b/) && !b.match(/^%%/)) {
+      return `${before}\n    end`;
+    }
+    return `${before} end`;
+  });
 
   const lines = code.split("\n");
   const cleanedLines: string[] = [];
