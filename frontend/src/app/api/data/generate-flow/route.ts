@@ -23,37 +23,61 @@ function sanitizeMermaid(raw: string): string {
   code = code.replace(/[\u2013\u2014]/g, "-");
   code = code.replace(/\u2026/g, "...");
 
-  // Fix edges pointing to subgraph: "S6 --> subgraph P3[...]" → split into separate lines
+  // Fix edges pointing to subgraph: "S6 --> subgraph P3[...]" -> split into separate lines
   code = code.replace(/^(\s*\S+\s+-->[^\n]*?)\s+subgraph\s+/gm, "$1\n    subgraph ");
 
-  code = code.split("\n").map((line) => {
+  // Fix "end" on same line as an edge: "S1 --> S2 end"
+  code = code.replace(/^(\s*\S+\s+-->.*?)\s+end\s*$/gm, "$1\n    end");
+
+  const lines = code.split("\n");
+  const cleanedLines: string[] = [];
+  let subgraphDepth = 0;
+
+  for (let line of lines) {
     const trimmed = line.trim();
 
-    // Skip graph directive and end statements
-    if (trimmed.match(/^(graph|flowchart)\s+(TD|TB|LR|RL|BT)/)) return line;
-    if (trimmed === "end") return line;
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith("%%")) {
+      cleanedLines.push(line);
+      continue;
+    }
+
+    // Skip graph directive
+    if (trimmed.match(/^(graph|flowchart)\s+(TD|TB|LR|RL|BT)/)) {
+      cleanedLines.push(line);
+      continue;
+    }
+
+    // Handle "end" - track subgraph depth
+    if (trimmed === "end") {
+      if (subgraphDepth > 0) subgraphDepth--;
+      cleanedLines.push("    end");
+      continue;
+    }
 
     // Fix subgraph lines: ensure they use ID[Label] format
-    // "subgraph Phase 1 - Greeting" → "subgraph P_1[Phase 1 - Greeting]"
     const subMatch = trimmed.match(/^subgraph\s+([A-Za-z0-9_]+)\[(.+)\]$/);
     if (subMatch) {
-      // Already in correct format — clean the label
       const label = subMatch[2].replace(/[()'"#&<>@$%]/g, "");
-      return `    subgraph ${subMatch[1]}[${label}]`;
+      cleanedLines.push(`    subgraph ${subMatch[1]}[${label}]`);
+      subgraphDepth++;
+      continue;
     }
     const subNoIdMatch = trimmed.match(/^subgraph\s+(.+)$/);
     if (subNoIdMatch) {
       const label = subNoIdMatch[1].replace(/[()'"#&<>@$%]/g, "").trim();
       const id = "SG_" + label.replace(/[^A-Za-z0-9]/g, "_").slice(0, 20);
-      return `    subgraph ${id}[${label}]`;
+      cleanedLines.push(`    subgraph ${id}[${label}]`);
+      subgraphDepth++;
+      continue;
     }
 
-    // Clean labels inside [...] — remove all special chars including curly braces
+    // Clean labels inside [...] - remove all special chars including curly braces
     line = line.replace(/\[([^\]]+)\]/g, (_match, label: string) => {
       const clean = label.replace(/[()'"#&<>@$%{}]/g, "").replace(/\s+/g, " ").trim();
       return `[${clean}]`;
     });
-    // Clean labels inside {...} (decision nodes) — remove special chars but keep the content
+    // Clean labels inside {...} (decision nodes)
     line = line.replace(/\{([^}]+)\}/g, (_match, label: string) => {
       const clean = label.replace(/[()'"#&<>@$%]/g, "").replace(/\s+/g, " ").trim();
       return `{${clean}}`;
@@ -62,10 +86,21 @@ function sanitizeMermaid(raw: string): string {
     // Remove any # not part of HTML entities
     line = line.replace(/#(?![a-zA-Z]+;)/g, "");
 
-    return line;
-  }).join("\n");
+    // Fix arrow syntax: ensure proper format
+    line = line.replace(/--\s*>/g, "-->");
+    // Fix "-- text -->" to "-->|text|"
+    line = line.replace(/--\s*([^>|][^-]*?)\s*-->/g, "-->|$1|");
 
-  return code;
+    cleanedLines.push(line);
+  }
+
+  // Close any unclosed subgraphs
+  while (subgraphDepth > 0) {
+    cleanedLines.push("    end");
+    subgraphDepth--;
+  }
+
+  return cleanedLines.join("\n");
 }
 
 const FLOW_PROMPT = `You are an expert at generating DETAILED Mermaid.js flowcharts from AI voice bot system prompts.
@@ -88,10 +123,12 @@ Analyze the system prompt and generate a comprehensive Mermaid flowchart showing
 5. Arrows: S1 --> S2 or S1 -->|Yes| S2
 6. Subgraphs MUST use ID format: subgraph P1[Phase 1 - Greeting]
 7. Every subgraph must have matching: end
-8. FORBIDDEN in labels: parentheses () curly braces {} quotes "" '' hash # ampersand & angle brackets <> at @ dollar $ percent %. Use plain text only - write customer_name NOT {customer_name}
-9. ASCII only — no unicode, no emojis
-10. Every node ID in an edge must be defined somewhere with a label
-11. No duplicate node definitions — define each node ID only ONCE
+8. Edges MUST connect node IDs, NEVER connect to subgraph keywords
+9. FORBIDDEN in labels: parentheses () curly braces {} quotes "" '' hash # ampersand & angle brackets <> at @ dollar $ percent %. Use plain text only - write customer_name NOT {customer_name}
+10. ASCII only - no unicode, no emojis
+11. Every node ID in an edge must be defined somewhere with a label
+12. No duplicate node definitions - define each node ID only ONCE
+13. Each line should contain ONLY ONE statement - never combine edges with subgraph or end
 
 ## VALID example:
 graph TD
@@ -179,6 +216,7 @@ ${fileContent ? `\n## Supplementary File Content:\n${fileContent.slice(0, 8000)}
       );
     }
 
+    console.log("[generate-flow] Mermaid output:\n" + mermaidCode);
     return NextResponse.json({ mermaidCode });
   } catch (error) {
     console.error("[generate-flow] Error:", error);
