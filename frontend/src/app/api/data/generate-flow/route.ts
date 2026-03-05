@@ -98,6 +98,15 @@ function sanitizeMermaid(raw: string): string {
     // Fix "-- text -->" to "-->|text|"
     line = line.replace(/--\s*([^>|][^-]*?)\s*-->/g, "-->|$1|");
 
+    // Final safety: if line ends with standalone "end" after content, split it
+    const endSuffix = line.match(/^(.+\S)\s+end\s*$/);
+    if (endSuffix) {
+      cleanedLines.push(endSuffix[1]);
+      cleanedLines.push("    end");
+      subgraphDepth = Math.max(0, subgraphDepth - 1);
+      continue;
+    }
+
     cleanedLines.push(line);
   }
 
