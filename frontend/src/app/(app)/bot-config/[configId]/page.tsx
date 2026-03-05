@@ -341,7 +341,7 @@ export default function BotConfigEditorPage() {
         transition={{ duration: 0.2 }}
       >
         {activeTab === "prompt" && (
-          <PromptTab prompt={prompt} onPromptChange={setPrompt} />
+          <PromptTab prompt={prompt} onPromptChange={setPrompt} user={user} />
         )}
         {activeTab === "context" && (
           <ContextTab
@@ -429,10 +429,48 @@ export default function BotConfigEditorPage() {
 function PromptTab({
   prompt,
   onPromptChange,
+  user,
 }: {
   prompt: string;
   onPromptChange: (v: string) => void;
+  user: { getIdToken: () => Promise<string> } | null;
 }) {
+  const [converting, setConverting] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewPrompt, setPreviewPrompt] = useState("");
+
+  const handleConvert = async () => {
+    if (!prompt?.trim() || !user) return;
+    setConverting(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/data/convert-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ systemPrompt: prompt }),
+      });
+      const data = await res.json();
+      if (data.convertedPrompt) {
+        setPreviewPrompt(data.convertedPrompt);
+        setShowPreview(true);
+        toast.success("Prompt converted! Review and apply below.");
+      } else {
+        toast.error(data.error || "Conversion failed");
+      }
+    } catch {
+      toast.error("Failed to convert prompt");
+    } finally {
+      setConverting(false);
+    }
+  };
+
+  const applyConverted = () => {
+    onPromptChange(previewPrompt);
+    setShowPreview(false);
+    setPreviewPrompt("");
+    toast.success("Converted prompt applied! Remember to save.");
+  };
+
   const variables = [
     { name: "{agent_name}", desc: "The AI agent's name" },
     { name: "{customer_name}", desc: "The customer's name" },
@@ -444,7 +482,27 @@ function PromptTab({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Bot System Prompt</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle>Bot System Prompt</CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleConvert}
+            disabled={converting || !prompt?.trim()}
+          >
+            {converting ? (
+              <>
+                <Loader2 className="size-4 mr-2 animate-spin" />
+                Converting...
+              </>
+            ) : (
+              <>
+                <Workflow className="size-4 mr-2" />
+                Convert to NEPQ
+              </>
+            )}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <Textarea
@@ -454,6 +512,29 @@ function PromptTab({
           className="font-mono text-sm"
           placeholder="Enter the bot system prompt..."
         />
+
+        {showPreview && (
+          <div className="rounded-lg border-2 border-primary/50 bg-primary/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Converted Prompt Preview</span>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setShowPreview(false)}>
+                  <X className="size-4 mr-1" /> Dismiss
+                </Button>
+                <Button size="sm" onClick={applyConverted}>
+                  <Check className="size-4 mr-1" /> Apply
+                </Button>
+              </div>
+            </div>
+            <Textarea
+              value={previewPrompt}
+              onChange={(e) => setPreviewPrompt(e.target.value)}
+              rows={14}
+              className="font-mono text-sm"
+            />
+          </div>
+        )}
+
         <div className="rounded-lg border bg-muted/50 p-4">
           <div className="flex items-center gap-2 mb-3">
             <Info className="size-4 text-muted-foreground" />
