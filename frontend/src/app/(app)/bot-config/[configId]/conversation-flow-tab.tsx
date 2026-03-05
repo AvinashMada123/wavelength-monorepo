@@ -75,9 +75,21 @@ export function ConversationFlowTab({
       const container = document.createElement("div");
       chartInnerRef.current.appendChild(container);
 
+      // Client-side sanitize: fix "end" on same line as edges (common LLM mistake)
+      const sanitized = code
+        .split("\n")
+        .flatMap((line) => {
+          const m = line.match(/^(.+\S)\s+end\s*$/);
+          if (m && !line.trim().startsWith("subgraph") && !line.trim().startsWith("%%")) {
+            return [m[1], "    end"];
+          }
+          return [line];
+        })
+        .join("\n");
+
       renderCountRef.current += 1;
       const id = `flow-chart-${renderCountRef.current}-${Date.now()}`;
-      const { svg } = await mermaid.render(id, code);
+      const { svg } = await mermaid.render(id, sanitized);
       container.innerHTML = svg;
     } catch (err) {
       console.error("[mermaid] Render error:", err);
