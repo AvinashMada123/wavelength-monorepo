@@ -460,13 +460,14 @@ class PromptBuilder:
         else:
             model_name = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 
-        # Language/accent for Live API TTS — must be passed via API
+        # Native audio models auto-detect language — language_code in speech_config
+        # is NOT supported and causes 1007 errors. Control accent via system instruction.
         language_code = s._tts_language
-
-        # Build speech_config dynamically — only include voice/language if provided
-        speech_config = {}
         if language_code:
-            speech_config["language_code"] = language_code
+            full_prompt += f"\n\n[VOICE LANGUAGE: Speak in {language_code} accent/language throughout the call.]"
+
+        # Build speech_config — voice only (no language_code for native audio)
+        speech_config = {}
         if voice_name:
             speech_config["voice_config"] = {
                 "prebuilt_voice_config": {"voice_name": voice_name}
