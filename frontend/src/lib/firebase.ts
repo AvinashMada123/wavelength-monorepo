@@ -2,12 +2,12 @@ import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth, setPersistence, browserLocalPersistence } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "",
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyAQIqWTCaTVbUynpkHnOHLh2NVRY1-AKes",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "ai-calling-9238e.firebaseapp.com",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "ai-calling-9238e",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "ai-calling-9238e.firebasestorage.app",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "664021114212",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:664021114212:web:fcbb6ad789d2cc914cae71",
 };
 
 let _app: FirebaseApp | null = null;
