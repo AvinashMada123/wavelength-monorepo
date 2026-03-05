@@ -63,17 +63,21 @@ class StepManager:
         """Extract steps from a prompt with NEPQ-style flow sections.
         Returns True if steps were successfully extracted (>= 3 steps)."""
 
-        # Look for NEPQ Flow section
-        nepq_match = re.search(r'#\s*NEPQ\s+Flow', prompt, re.IGNORECASE)
+        # Look for NEPQ section — supports multiple formats:
+        # "# NEPQ Flow", "NEPQ FRAMEWORK:", "NEPQ Flow (one question...)"
+        nepq_match = re.search(
+            r'(?:#\s*NEPQ\s+Flow|NEPQ\s+FRAMEWORK\s*:|NEPQ\s+Flow)',
+            prompt, re.IGNORECASE
+        )
         if not nepq_match:
             return False
 
-        # Extract persona block (everything before NEPQ Flow)
+        # Extract persona block (everything before NEPQ section)
         self.persona_block = prompt[:nepq_match.start()].strip()
 
-        # Extract objection block
+        # Extract objection block — supports "# Objections", "OBJECTIONS (Brief):", etc.
         obj_match = re.search(
-            r'#\s*Objections?\s*[^\n]*\n(.*?)(?=\n#|\Z)',
+            r'(?:#\s*)?OBJECTIONS?\s*[^\n]*[:\n](.*?)(?=\n(?:#|[A-Z]{3,}\s+CALL|END\s+CALL)|\Z)',
             prompt, re.DOTALL | re.IGNORECASE
         )
         if obj_match:
@@ -87,9 +91,9 @@ class StepManager:
         if rules_match:
             self.rules_block = rules_match.group(1).strip()
 
-        # Extract NEPQ section content
+        # Extract NEPQ section content — stop at Objections, Qualify, Rules, END CALL, etc.
         nepq_section = re.search(
-            r'#\s*NEPQ\s+Flow[^\n]*\n(.*?)(?=\n#\s*Objection|\n#\s*Qualify|\n#\s*Rules|\Z)',
+            r'(?:#\s*NEPQ\s+Flow|NEPQ\s+FRAMEWORK\s*:|NEPQ\s+Flow)[^\n]*\n(.*?)(?=\n(?:#\s*)?(?:OBJECTION|Qualify|Rules|END\s+CALL)|\Z)',
             prompt, re.DOTALL | re.IGNORECASE
         )
         if not nepq_section:
@@ -105,15 +109,16 @@ class StepManager:
                 continue
 
             # Match "PHASE: content" or "PHASE (qualifier): content"
-            phase_match = re.match(r'^([A-Z][A-Z_ &]+)(?:\s*\([^)]*\))?\s*:\s*(.+)', line)
+            # Supports both UPPERCASE and Title Case phase names
+            phase_match = re.match(r'^([A-Za-z][A-Za-z_ &]+)(?:\s*\([^)]*\))?\s*:\s*(.+)', line)
             if not phase_match:
                 continue
 
             phase = phase_match.group(1).strip()
             content = phase_match.group(2).strip()
 
-            # Split on <wait> to create sub-steps
-            parts = re.split(r'\s*<wait>\s*', content)
+            # Split on <wait> or → to create sub-steps
+            parts = re.split(r'\s*(?:<wait>|→)\s*', content)
 
             for part in parts:
                 part = part.strip()
@@ -134,7 +139,6 @@ class StepManager:
                 # HOT=/WARM=/COLD= lines are closing strategies, keep them as a single CLOSE step
                 hot_match = re.match(r'^HOT\s*=\s*(.+)', part, re.IGNORECASE)
                 if hot_match:
-                    # Combine all closing variants into one step
                     close_script = hot_match.group(1).strip()
                     step = Step(
                         id=len(self.steps) + 1,
@@ -147,6 +151,12 @@ class StepManager:
                     continue
                 if re.match(r'^(?:WARM|COLD)\s*=', part, re.IGNORECASE):
                     continue  # Already captured via HOT line
+
+                # Handle "script1" OR "script2" — common in Close phases
+                or_parts = re.split(r'\s+OR\s+', part)
+                if len(or_parts) > 1:
+                    # Use first variant as main script, others as branches
+                    part = or_parts[0].strip()
                 # Skip short text without quotes or question marks (likely instructions)
                 if not any(c in part for c in ['"', "'", '?', '!']):
                     if len(part) < 60:
