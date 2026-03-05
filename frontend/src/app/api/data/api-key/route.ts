@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
   try {
     const { orgId } = await requireUidAndOrg(request);
     const row = await queryOne<{ settings: Record<string, unknown> }>(
-      "SELECT settings FROM organizations WHERE id = $1",
+      "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
       [orgId]
     );
     const apiKey = (row?.settings as Record<string, string>)?.apiKey || "";
@@ -27,14 +27,14 @@ export async function POST(request: NextRequest) {
 
     // Merge into existing settings
     const row = await queryOne<{ settings: Record<string, unknown> }>(
-      "SELECT settings FROM organizations WHERE id = $1",
+      "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
       [orgId]
     );
     const current = row?.settings || {};
     const merged = { ...current, apiKey: newKey };
 
     await query(
-      "UPDATE organizations SET settings = $1, updated_at = NOW() WHERE id = $2",
+      "UPDATE fwai_aicall_organizations SET settings = $1, updated_at = NOW() WHERE id = $2",
       [JSON.stringify(merged), orgId]
     );
 

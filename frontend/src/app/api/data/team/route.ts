@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     const { orgId } = result;
 
     const rows = await query(
-      "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at FROM users WHERE org_id = $1",
+      "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at FROM fwai_aicall_users WHERE org_id = $1",
       [orgId]
     );
     return NextResponse.json({ members: toCamelRows(rows) });
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
         const { email, role } = body;
         // Get org name
         const orgRow = await queryOne<{ name: string }>(
-          "SELECT name FROM organizations WHERE id = $1",
+          "SELECT name FROM fwai_aicall_organizations WHERE id = $1",
           [orgId]
         );
         const orgName = orgRow?.name ?? "Organization";
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
         const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
         await query(
-          `INSERT INTO invites (id, email, org_id, org_name, role, invited_by, status, created_at, expires_at)
+          `INSERT INTO fwai_aicall_invites (id, email, org_id, org_name, role, invited_by, status, created_at, expires_at)
            VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)`,
           [
             inviteId,

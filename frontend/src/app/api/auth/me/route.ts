@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     const decoded = await getAdminAuth().verifyIdToken(idToken);
 
     const row = await queryOne(
-      "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by FROM users WHERE uid = $1",
+      "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by FROM fwai_aicall_users WHERE uid = $1",
       [decoded.uid]
     );
 

@@ -19,7 +19,7 @@ export async function enqueueCall(params: {
 }): Promise<string> {
   const id = crypto.randomUUID();
   await query(
-    `INSERT INTO call_queue (id, org_id, payload, source, status, lead_id, bot_config_id)
+    `INSERT INTO fwai_aicall_call_queue (id, org_id, payload, source, status, lead_id, bot_config_id)
      VALUES ($1, $2, $3, $4, 'queued', $5, $6)`,
     [
       id,
@@ -71,10 +71,10 @@ export async function drainQueue(orgId: string): Promise<number> {
           lead_id: string | null;
           bot_config_id: string | null;
         }>(
-          `UPDATE call_queue
+          `UPDATE fwai_aicall_call_queue
            SET status = 'processing', attempts = attempts + 1
            WHERE id = (
-             SELECT id FROM call_queue
+             SELECT id FROM fwai_aicall_call_queue
              WHERE org_id = $1 AND status = 'queued' AND attempts < max_attempts
              ORDER BY created_at ASC
              LIMIT 1
@@ -93,7 +93,7 @@ export async function drainQueue(orgId: string): Promise<number> {
         const cfgId = next.bot_config_id || payload.botConfigId;
         if (cfgId) {
           const cfg = await queryOne<{ name: string }>(
-            "SELECT name FROM bot_configs WHERE id = $1",
+            "SELECT name FROM fwai_aicall_bot_configs WHERE id = $1",
             [cfgId]
           );
           botConfigName = cfg?.name;
@@ -117,7 +117,7 @@ export async function drainQueue(orgId: string): Promise<number> {
 
           // Update the reserved ui_calls row
           await query(
-            "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
+            "UPDATE fwai_aicall_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
             [
               result.callUuid,
               JSON.stringify(result.rawResponse),
@@ -127,7 +127,7 @@ export async function drainQueue(orgId: string): Promise<number> {
 
           // Mark queue entry as completed
           await query(
-            "UPDATE call_queue SET status = 'completed', processed_at = NOW(), call_uuid = $1 WHERE id = $2",
+            "UPDATE fwai_aicall_call_queue SET status = 'completed', processed_at = NOW(), call_uuid = $1 WHERE id = $2",
             [result.callUuid, next.id]
           );
 
@@ -139,14 +139,14 @@ export async function drainQueue(orgId: string): Promise<number> {
           if (err instanceof ConcurrencyLimitError) {
             // Still at capacity — put it back and stop trying
             await query(
-              "UPDATE call_queue SET status = 'queued', attempts = attempts - 1 WHERE id = $1",
+              "UPDATE fwai_aicall_call_queue SET status = 'queued', attempts = attempts - 1 WHERE id = $1",
               [next.id]
             );
             break;
           }
           // Other error — mark as failed
           await query(
-            "UPDATE call_queue SET status = 'failed', error_message = $1, processed_at = NOW() WHERE id = $2",
+            "UPDATE fwai_aicall_call_queue SET status = 'failed', error_message = $1, processed_at = NOW() WHERE id = $2",
             [err instanceof Error ? err.message : String(err), next.id]
           );
           console.error(

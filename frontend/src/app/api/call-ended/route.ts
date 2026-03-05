@@ -81,13 +81,13 @@ export async function POST(request: NextRequest) {
       try {
         // Find the call by call_uuid
         const callRow = await queryOne<{ id: string; lead_id: string }>(
-          "SELECT id, lead_id FROM ui_calls WHERE org_id = $1 AND call_uuid = $2 LIMIT 1",
+          "SELECT id, lead_id FROM fwai_aicall_calls WHERE org_id = $1 AND call_uuid = $2 LIMIT 1",
           [orgId, data.call_uuid]
         );
 
         if (callRow) {
           await query(
-            `UPDATE ui_calls SET
+            `UPDATE fwai_aicall_calls SET
               status = $1,
               ended_data = $2,
               duration_seconds = $3,
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
               if (noteParts.length > 1) {
                 const noteBlock = noteParts.join("\n");
                 await query(
-                  `UPDATE leads SET bot_notes = CASE
+                  `UPDATE fwai_aicall_leads SET bot_notes = CASE
                     WHEN bot_notes IS NULL OR bot_notes = '' THEN $1
                     ELSE bot_notes || E'\n\n' || $1
                   END WHERE id = $2`,
@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
         // Increment usage counters on the organization (JSONB update)
         const minutes = Math.ceil((data.duration_seconds || 0) / 60);
         await query(
-          `UPDATE organizations SET
+          `UPDATE fwai_aicall_organizations SET
             usage = jsonb_set(
               jsonb_set(
                 jsonb_set(
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
     if (data.call_uuid) {
       try {
         const campaignLead = await queryOne<{ id: string; campaign_id: string; retry_count: number }>(
-          "SELECT id, campaign_id, retry_count FROM campaign_leads WHERE call_uuid = $1 AND status = 'calling'",
+          "SELECT id, campaign_id, retry_count FROM fwai_aicall_campaign_leads WHERE call_uuid = $1 AND status = 'calling'",
           [data.call_uuid]
         );
 
@@ -193,12 +193,12 @@ export async function POST(request: NextRequest) {
           if (isNoAnswer || isCallFailed) {
             try {
               const campaignRow = await queryOne<{ bot_config_id: string }>(
-                "SELECT bot_config_id FROM campaigns WHERE id = $1",
+                "SELECT bot_config_id FROM fwai_aicall_campaigns WHERE id = $1",
                 [campaignLead.campaign_id]
               );
               if (campaignRow) {
                 const botConfigRow = await queryOne<{ retry_config: { enabled: boolean; intervals: number[] } | null }>(
-                  "SELECT retry_config FROM bot_configs WHERE id = $1",
+                  "SELECT retry_config FROM fwai_aicall_bot_configs WHERE id = $1",
                   [campaignRow.bot_config_id]
                 );
                 const retryConfig = botConfigRow?.retry_config;
@@ -208,7 +208,7 @@ export async function POST(request: NextRequest) {
                   const delayMinutes = retryConfig.intervals[retryCount];
                   const nextRetryAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
                   await query(
-                    "UPDATE campaign_leads SET status = 'retry_pending', retry_count = retry_count + 1, next_retry_at = $1, completed_at = NOW() WHERE id = $2",
+                    "UPDATE fwai_aicall_campaign_leads SET status = 'retry_pending', retry_count = retry_count + 1, next_retry_at = $1, completed_at = NOW() WHERE id = $2",
                     [nextRetryAt, campaignLead.id]
                   );
                   retryScheduled = true;
@@ -223,7 +223,7 @@ export async function POST(request: NextRequest) {
           if (!retryScheduled) {
             const clStatus = isNoAnswer ? "no_answer" : isCallFailed ? "failed" : "completed";
             await query(
-              "UPDATE campaign_leads SET status = $1, completed_at = NOW() WHERE id = $2",
+              "UPDATE fwai_aicall_campaign_leads SET status = $1, completed_at = NOW() WHERE id = $2",
               [clStatus, campaignLead.id]
             );
           }
@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
           // Update campaign counters
           const counterCol = isNoAnswer ? "no_answer_calls" : isCallFailed ? "failed_calls" : "completed_calls";
           await query(
-            `UPDATE campaigns SET ${counterCol} = ${counterCol} + 1 WHERE id = $1`,
+            `UPDATE fwai_aicall_campaigns SET ${counterCol} = ${counterCol} + 1 WHERE id = $1`,
             [campaignLead.campaign_id]
           );
 

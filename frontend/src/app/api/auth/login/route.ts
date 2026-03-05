@@ -22,14 +22,14 @@ export async function POST(request: NextRequest) {
     // Fetch profile + create session cookie in parallel
     const [row, sessionCookie] = await Promise.all([
       queryOne(
-        "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by FROM users WHERE uid = $1",
+        "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by FROM fwai_aicall_users WHERE uid = $1",
         [decoded.uid]
       ),
       adminAuth.createSessionCookie(idToken, { expiresIn: SESSION_EXPIRY }),
     ]);
 
     // Update last login (fire-and-forget)
-    query("UPDATE users SET last_login_at = NOW() WHERE uid = $1", [decoded.uid]).catch(() => {});
+    query("UPDATE fwai_aicall_users SET last_login_at = NOW() WHERE uid = $1", [decoded.uid]).catch(() => {});
 
     const profile = row ? toCamel(row) : null;
 

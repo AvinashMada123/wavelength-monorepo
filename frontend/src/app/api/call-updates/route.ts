@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
         // Build parameterized IN clause
         const placeholders = batch.map((_, i) => `$${i + 2}`).join(", ");
         const rows = await query(
-          `SELECT call_uuid, ended_data FROM ui_calls WHERE org_id = $1 AND call_uuid IN (${placeholders})`,
+          `SELECT call_uuid, ended_data FROM fwai_aicall_calls WHERE org_id = $1 AND call_uuid IN (${placeholders})`,
           [orgId, ...batch]
         );
 
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       const batch = stillUnresolved.slice(0, 30);
       const placeholders = batch.map((_, i) => `$${i + 2}`).join(", ");
       const staleRows = await query(
-        `SELECT call_uuid FROM ui_calls WHERE org_id = $1 AND call_uuid IN (${placeholders}) AND initiated_at < NOW() - INTERVAL '1 minute' AND ended_data IS NULL`,
+        `SELECT call_uuid FROM fwai_aicall_calls WHERE org_id = $1 AND call_uuid IN (${placeholders}) AND initiated_at < NOW() - INTERVAL '1 minute' AND ended_data IS NULL`,
         [orgId, ...batch]
       );
       const staleUuids = new Set(staleRows.map((r) => r.call_uuid as string));

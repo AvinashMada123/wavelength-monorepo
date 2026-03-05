@@ -5,7 +5,7 @@ export async function GET(request: NextRequest) {
   try {
     const { orgId } = await requireUidAndOrg(request);
     const row = await queryOne<{ settings: Record<string, unknown> }>(
-      "SELECT settings FROM organizations WHERE id = $1",
+      "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
       [orgId]
     );
     const settings = row?.settings || {};
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
     // Read current settings and merge to avoid overwriting existing fields
     const row = await queryOne<{ settings: Record<string, unknown> }>(
-      "SELECT settings FROM organizations WHERE id = $1",
+      "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
       [orgId]
     );
     const current = (row?.settings || {}) as Record<string, Record<string, unknown>>;
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     };
 
     await query(
-      "UPDATE organizations SET settings = $1, updated_at = NOW() WHERE id = $2",
+      "UPDATE fwai_aicall_organizations SET settings = $1, updated_at = NOW() WHERE id = $2",
       [JSON.stringify(merged), orgId]
     );
     return NextResponse.json({ success: true });

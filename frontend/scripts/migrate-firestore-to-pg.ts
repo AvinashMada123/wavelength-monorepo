@@ -94,7 +94,7 @@ async function migrateUsers() {
     }
 
     await upsert(
-      `INSERT INTO users (uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by)
+      `INSERT INTO fwai_aicall_users (uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (uid) DO UPDATE SET
          email = EXCLUDED.email, display_name = EXCLUDED.display_name,
@@ -122,7 +122,7 @@ async function migrateUsers() {
     console.log(`  Found ${listResult.users.length} users in Firebase Auth`);
     for (const user of listResult.users) {
       await upsert(
-        `INSERT INTO users (uid, email, display_name, role, org_id, status, created_at, last_login_at)
+        `INSERT INTO fwai_aicall_users (uid, email, display_name, role, org_id, status, created_at, last_login_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (uid) DO NOTHING`,
         [
@@ -156,7 +156,7 @@ async function migrateOrganizations() {
     const orgId = doc.id;
 
     await upsert(
-      `INSERT INTO organizations (id, name, slug, plan, status, webhook_url, settings, usage, created_by, created_at, updated_at)
+      `INSERT INTO fwai_aicall_organizations (id, name, slug, plan, status, webhook_url, settings, usage, created_by, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, slug = EXCLUDED.slug, plan = EXCLUDED.plan,
@@ -202,7 +202,7 @@ async function migrateBotConfigs(orgId: string) {
   for (const doc of snap.docs) {
     const d = doc.data();
     await upsert(
-      `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, pre_research_enabled, memory_recall_enabled, created_by, created_at, updated_at)
+      `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, pre_research_enabled, memory_recall_enabled, created_by, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        ON CONFLICT (id) DO UPDATE SET
          name=EXCLUDED.name, is_active=EXCLUDED.is_active, prompt=EXCLUDED.prompt,
@@ -239,7 +239,7 @@ async function migrateLeads(orgId: string) {
   for (const doc of snap.docs) {
     const d = doc.data();
     await upsert(
-      `INSERT INTO leads (id, org_id, phone_number, contact_name, email, company, location, tags, status, call_count, last_call_date, source, ghl_contact_id, qualification_level, qualification_confidence, last_qualified_at, bot_notes, created_by, created_at, updated_at)
+      `INSERT INTO fwai_aicall_leads (id, org_id, phone_number, contact_name, email, company, location, tags, status, call_count, last_call_date, source, ghl_contact_id, qualification_level, qualification_confidence, last_qualified_at, bot_notes, created_by, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (id) DO UPDATE SET
          phone_number=EXCLUDED.phone_number, contact_name=EXCLUDED.contact_name,
@@ -278,7 +278,7 @@ async function migrateCalls(orgId: string) {
   for (const doc of snap.docs) {
     const d = doc.data();
     await upsert(
-      `INSERT INTO ui_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, ended_data, duration_seconds, interest_level, completion_rate, call_summary, qualification, completed_at)
+      `INSERT INTO fwai_aicall_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, ended_data, duration_seconds, interest_level, completion_rate, call_summary, qualification, completed_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (id) DO UPDATE SET
          status=EXCLUDED.status, ended_data=EXCLUDED.ended_data,
@@ -313,7 +313,7 @@ async function migratePersonas(orgId: string) {
   for (const doc of snap.docs) {
     const d = doc.data();
     await upsert(
-      `INSERT INTO personas (id, org_id, name, content, keywords, phrases, created_at, updated_at)
+      `INSERT INTO fwai_aicall_personas (id, org_id, name, content, keywords, phrases, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (id) DO UPDATE SET
          name=EXCLUDED.name, content=EXCLUDED.content, keywords=EXCLUDED.keywords,
@@ -339,7 +339,7 @@ async function migrateSituations(orgId: string) {
   for (const doc of snap.docs) {
     const d = doc.data();
     await upsert(
-      `INSERT INTO situations (id, org_id, name, content, keywords, hint, created_at, updated_at)
+      `INSERT INTO fwai_aicall_situations (id, org_id, name, content, keywords, hint, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (id) DO UPDATE SET
          name=EXCLUDED.name, content=EXCLUDED.content, keywords=EXCLUDED.keywords,
@@ -365,7 +365,7 @@ async function migrateProductSections(orgId: string) {
   for (const doc of snap.docs) {
     const d = doc.data();
     await upsert(
-      `INSERT INTO product_sections (id, org_id, name, content, keywords, created_at, updated_at)
+      `INSERT INTO fwai_aicall_product_sections (id, org_id, name, content, keywords, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (id) DO UPDATE SET
          name=EXCLUDED.name, content=EXCLUDED.content, keywords=EXCLUDED.keywords,
@@ -390,7 +390,7 @@ async function migrateSocialProof(orgId: string) {
     for (const doc of companiesSnap.docs) {
       const d = doc.data();
       await upsert(
-        `INSERT INTO ui_social_proof_companies (id, org_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
+        `INSERT INTO fwai_aicall_social_proof_companies (id, org_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
          ON CONFLICT (id) DO UPDATE SET
            company_name=EXCLUDED.company_name, enrollments_count=EXCLUDED.enrollments_count,
@@ -414,7 +414,7 @@ async function migrateSocialProof(orgId: string) {
     for (const doc of citiesSnap.docs) {
       const d = doc.data();
       await upsert(
-        `INSERT INTO ui_social_proof_cities (id, org_id, city_name, enrollments_count, trending, updated_at)
+        `INSERT INTO fwai_aicall_social_proof_cities (id, org_id, city_name, enrollments_count, trending, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (id) DO UPDATE SET
            city_name=EXCLUDED.city_name, enrollments_count=EXCLUDED.enrollments_count,
@@ -437,7 +437,7 @@ async function migrateSocialProof(orgId: string) {
     for (const doc of rolesSnap.docs) {
       const d = doc.data();
       await upsert(
-        `INSERT INTO ui_social_proof_roles (id, org_id, role_name, enrollments_count, success_stories, updated_at)
+        `INSERT INTO fwai_aicall_social_proof_roles (id, org_id, role_name, enrollments_count, success_stories, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (id) DO UPDATE SET
            role_name=EXCLUDED.role_name, enrollments_count=EXCLUDED.enrollments_count,
@@ -462,7 +462,7 @@ async function migrateUsage(orgId: string) {
   for (const doc of snap.docs) {
     const d = doc.data();
     await upsert(
-      `INSERT INTO usage (org_id, period, total_calls, completed_calls, failed_calls, total_seconds, total_minutes, hot_leads, warm_leads, cold_leads, daily_breakdown, updated_at)
+      `INSERT INTO fwai_aicall_usage (org_id, period, total_calls, completed_calls, failed_calls, total_seconds, total_minutes, hot_leads, warm_leads, cold_leads, daily_breakdown, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (org_id, period) DO UPDATE SET
          total_calls=EXCLUDED.total_calls, completed_calls=EXCLUDED.completed_calls,
@@ -501,14 +501,14 @@ async function main() {
     await migrateOrganizations();
 
     // Fix: if users have empty org_id, try to link them
-    const orphanUsers = await pool.query("SELECT uid FROM users WHERE org_id = '' OR org_id IS NULL");
+    const orphanUsers = await pool.query("SELECT uid FROM fwai_aicall_users WHERE org_id = '' OR org_id IS NULL");
     if (orphanUsers.rows.length > 0) {
-      const orgs = await pool.query("SELECT id, created_by FROM organizations LIMIT 1");
+      const orgs = await pool.query("SELECT id, created_by FROM fwai_aicall_organizations LIMIT 1");
       if (orgs.rows.length > 0) {
         const defaultOrgId = orgs.rows[0].id;
         console.log(`\n  Linking ${orphanUsers.rows.length} orphan user(s) to org ${defaultOrgId}`);
         for (const row of orphanUsers.rows) {
-          await pool.query("UPDATE users SET org_id = $1 WHERE uid = $2", [defaultOrgId, row.uid]);
+          await pool.query("UPDATE fwai_aicall_users SET org_id = $1 WHERE uid = $2", [defaultOrgId, row.uid]);
         }
       }
     }
@@ -516,10 +516,10 @@ async function main() {
     // Final counts
     console.log("\n=== Migration Complete — Row Counts ===");
     const tables = [
-      "users", "organizations", "bot_configs", "leads", "ui_calls",
-      "personas", "situations", "product_sections",
-      "ui_social_proof_companies", "ui_social_proof_cities", "ui_social_proof_roles",
-      "usage",
+      "fwai_aicall_users", "fwai_aicall_organizations", "fwai_aicall_bot_configs", "fwai_aicall_leads", "fwai_aicall_calls",
+      "fwai_aicall_personas", "fwai_aicall_situations", "fwai_aicall_product_sections",
+      "fwai_aicall_social_proof_companies", "fwai_aicall_social_proof_cities", "fwai_aicall_social_proof_roles",
+      "fwai_aicall_usage",
     ];
     for (const t of tables) {
       const { rows } = await pool.query(`SELECT count(*) FROM ${t}`);

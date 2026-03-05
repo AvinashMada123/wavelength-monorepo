@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     let botConfigName = "";
     if (orgId && !botConfigId) {
       const activeConfig = await queryOne<{ id: string; name: string }>(
-        "SELECT id, name FROM bot_configs WHERE org_id = $1 AND is_active = true LIMIT 1",
+        "SELECT id, name FROM fwai_aicall_bot_configs WHERE org_id = $1 AND is_active = true LIMIT 1",
         [orgId]
       );
       if (activeConfig) {
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       }
     } else if (botConfigId && orgId) {
       const config = await queryOne<{ name: string }>(
-        "SELECT name FROM bot_configs WHERE id = $1 AND org_id = $2",
+        "SELECT name FROM fwai_aicall_bot_configs WHERE id = $1 AND org_id = $2",
         [botConfigId, orgId]
       );
       if (config) botConfigName = config.name;
@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
       // Update the reserved ui_calls row with call_uuid and tech config
       if (uiCallId) {
         await query(
-          "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress', tech_config = $3 WHERE id = $4",
+          "UPDATE fwai_aicall_calls SET call_uuid = $1, response = $2, status = 'in-progress', tech_config = $3 WHERE id = $4",
           [result.callUuid, JSON.stringify(result.rawResponse), JSON.stringify(result.techConfig), uiCallId]
         ).catch(() => {});
       }
@@ -170,7 +170,7 @@ export async function POST(request: NextRequest) {
     } catch (callErr) {
       // Mark the reserved slot as failed
       if (uiCallId) {
-        await query("UPDATE ui_calls SET status = 'failed' WHERE id = $1", [uiCallId]).catch(() => {});
+        await query("UPDATE fwai_aicall_calls SET status = 'failed' WHERE id = $1", [uiCallId]).catch(() => {});
       }
       throw callErr;
     }

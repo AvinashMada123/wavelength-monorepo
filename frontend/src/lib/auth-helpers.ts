@@ -21,7 +21,7 @@ export async function getAuthenticatedUser(
 
     const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
     const row = await queryOne<{ email: string; org_id: string; role: string }>(
-      "SELECT email, org_id, role FROM users WHERE uid = $1",
+      "SELECT email, org_id, role FROM fwai_aicall_users WHERE uid = $1",
       [decoded.uid]
     );
     if (!row) return null;

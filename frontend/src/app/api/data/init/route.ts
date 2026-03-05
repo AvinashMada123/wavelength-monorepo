@@ -21,18 +21,18 @@ export async function GET(request: NextRequest) {
 
     const [userRow, orgRow, leads, calls, botConfigs, team] = await Promise.all([
       safeQueryOne(
-        "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by FROM users WHERE uid = $1",
+        "SELECT uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by FROM fwai_aicall_users WHERE uid = $1",
         [uid]
       ),
       safeQueryOne<{ settings: Record<string, unknown> }>(
-        "SELECT settings FROM organizations WHERE id = $1",
+        "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
         [orgId]
       ),
-      safeQuery("SELECT * FROM leads WHERE org_id = $1 ORDER BY created_at DESC", [orgId]),
-      safeQuery("SELECT * FROM ui_calls WHERE org_id = $1 ORDER BY initiated_at DESC LIMIT 200", [orgId]),
-      safeQuery("SELECT * FROM bot_configs WHERE org_id = $1 ORDER BY created_at DESC", [orgId]),
+      safeQuery("SELECT * FROM fwai_aicall_leads WHERE org_id = $1 ORDER BY created_at DESC", [orgId]),
+      safeQuery("SELECT * FROM fwai_aicall_calls WHERE org_id = $1 ORDER BY initiated_at DESC LIMIT 200", [orgId]),
+      safeQuery("SELECT * FROM fwai_aicall_bot_configs WHERE org_id = $1 ORDER BY created_at DESC", [orgId]),
       safeQuery(
-        "SELECT uid, email, display_name, role, org_id, status, created_at, invited_by FROM users WHERE org_id = $1",
+        "SELECT uid, email, display_name, role, org_id, status, created_at, invited_by FROM fwai_aicall_users WHERE org_id = $1",
         [orgId]
       ),
     ]);
@@ -65,9 +65,9 @@ export async function POST(request: NextRequest) {
 
     // Create leads table with all columns including bot_notes
     await query(`
-      CREATE TABLE IF NOT EXISTS leads (
+      CREATE TABLE IF NOT EXISTS fwai_aicall_leads (
         id TEXT PRIMARY KEY,
-        org_id TEXT REFERENCES organizations(id),
+        org_id TEXT REFERENCES fwai_aicall_organizations(id),
         phone_number TEXT NOT NULL,
         contact_name TEXT,
         email TEXT,
@@ -91,36 +91,36 @@ export async function POST(request: NextRequest) {
     `);
 
     // Add bot_notes column if it does not exist
-    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS bot_notes TEXT`);
+    await query(`ALTER TABLE fwai_aicall_leads ADD COLUMN IF NOT EXISTS bot_notes TEXT`);
 
     // Add custom_fields JSONB column for GHL custom field values
-    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`);
+    await query(`ALTER TABLE fwai_aicall_leads ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`);
 
     // Add bot_config_id to data tables so each bot config has independent data
     const tablesNeedingBotConfigId = [
-      "personas", "situations", "product_sections",
-      "ui_social_proof_companies", "ui_social_proof_cities", "ui_social_proof_roles",
+      "fwai_aicall_personas", "fwai_aicall_situations", "fwai_aicall_product_sections",
+      "fwai_aicall_social_proof_companies", "fwai_aicall_social_proof_cities", "fwai_aicall_social_proof_roles",
     ];
     for (const table of tablesNeedingBotConfigId) {
       await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS bot_config_id TEXT`);
     }
 
     // Add max_call_duration and ghl_workflows columns to bot_configs
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS max_call_duration INTEGER DEFAULT 480`);
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS ghl_workflows JSONB DEFAULT '[]'`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS max_call_duration INTEGER DEFAULT 480`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS ghl_workflows JSONB DEFAULT '[]'`);
 
     // Migrate existing rows: assign to the org's active bot config
     for (const table of tablesNeedingBotConfigId) {
       await query(
         `UPDATE ${table} t SET bot_config_id = (
-          SELECT id FROM bot_configs WHERE org_id = t.org_id AND is_active = true LIMIT 1
+          SELECT id FROM fwai_aicall_bot_configs WHERE org_id = t.org_id AND is_active = true LIMIT 1
         ) WHERE t.bot_config_id IS NULL`
       );
     }
 
     // Campaign tables
     await query(`
-      CREATE TABLE IF NOT EXISTS campaigns (
+      CREATE TABLE IF NOT EXISTS fwai_aicall_campaigns (
         id TEXT PRIMARY KEY,
         org_id TEXT NOT NULL,
         name TEXT NOT NULL,
@@ -141,9 +141,9 @@ export async function POST(request: NextRequest) {
       )
     `);
     await query(`
-      CREATE TABLE IF NOT EXISTS campaign_leads (
+      CREATE TABLE IF NOT EXISTS fwai_aicall_campaign_leads (
         id TEXT PRIMARY KEY,
-        campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+        campaign_id TEXT NOT NULL REFERENCES fwai_aicall_campaigns(id) ON DELETE CASCADE,
         lead_id TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'queued',
         call_uuid TEXT,
@@ -154,30 +154,30 @@ export async function POST(request: NextRequest) {
         error_message TEXT
       )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_campaigns_org ON campaigns(org_id)`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_campaigns_org_status ON campaigns(org_id, status)`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_cl_campaign ON campaign_leads(campaign_id)`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_cl_campaign_status ON campaign_leads(campaign_id, status)`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_cl_call_uuid ON campaign_leads(call_uuid)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_fwai_aicall_campaigns_org ON fwai_aicall_campaigns(org_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_fwai_aicall_campaigns_org_status ON fwai_aicall_campaigns(org_id, status)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_fwai_aicall_cl_campaign ON fwai_aicall_campaign_leads(campaign_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_fwai_aicall_cl_campaign_status ON fwai_aicall_campaign_leads(campaign_id, status)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_fwai_aicall_cl_call_uuid ON fwai_aicall_campaign_leads(call_uuid)`);
 
     // Migrations: retry support
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS retry_config JSONB`);
-    await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
-    await query(`ALTER TABLE campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS retry_config JSONB`);
+    await query(`ALTER TABLE fwai_aicall_campaign_leads ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`);
+    await query(`ALTER TABLE fwai_aicall_campaign_leads ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ`);
 
     // Migrations: voice, call_provider, pipeline_mode, language, tts_provider
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS voice TEXT DEFAULT ''`);
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS call_provider TEXT DEFAULT 'plivo'`);
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'live_api'`);
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT ''`);
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT ''`);
-    await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT ''`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS voice TEXT DEFAULT ''`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS call_provider TEXT DEFAULT 'plivo'`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'live_api'`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT ''`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT ''`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT ''`);
 
     // Migrations: tech_config on ui_calls (approach, voice, STT, TTS, LLM, prompt length)
-    await query(`ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS tech_config JSONB`);
+    await query(`ALTER TABLE fwai_aicall_calls ADD COLUMN IF NOT EXISTS tech_config JSONB`);
 
     // 16. call_queue (webhook calls queued when at concurrency limit)
-    await query(`CREATE TABLE IF NOT EXISTS call_queue (
+    await query(`CREATE TABLE IF NOT EXISTS fwai_aicall_call_queue (
       id TEXT PRIMARY KEY,
       org_id TEXT NOT NULL,
       payload JSONB NOT NULL,
@@ -192,8 +192,8 @@ export async function POST(request: NextRequest) {
       error_message TEXT,
       call_uuid TEXT
     )`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_call_queue_org_status ON call_queue(org_id, status, created_at)`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_ui_calls_org_active ON ui_calls(org_id) WHERE status IN ('in-progress', 'initiating')`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_fwai_aicall_call_queue_org_status ON fwai_aicall_call_queue(org_id, status, created_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_fwai_aicall_calls_org_active ON fwai_aicall_calls(org_id) WHERE status IN ('in-progress', 'initiating')`);
 
     return NextResponse.json({ success: true, message: "Database initialized" });
   } catch (error) {

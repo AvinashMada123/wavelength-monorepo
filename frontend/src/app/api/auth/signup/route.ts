@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
         status: string;
         invited_by: string;
       }>(
-        "SELECT org_id, email, role, status, invited_by FROM invites WHERE id = $1",
+        "SELECT org_id, email, role, status, invited_by FROM fwai_aicall_invites WHERE id = $1",
         [inviteId]
       );
       if (!invite) {
@@ -61,13 +61,13 @@ export async function POST(request: NextRequest) {
 
       // Mark invite as accepted
       await query(
-        "UPDATE invites SET status = 'accepted', accepted_at = $1 WHERE id = $2",
+        "UPDATE fwai_aicall_invites SET status = 'accepted', accepted_at = $1 WHERE id = $2",
         [now, inviteId]
       );
 
       // Create user profile
       await query(
-        `INSERT INTO users (uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by)
+        `INSERT INTO fwai_aicall_users (uid, email, display_name, role, org_id, status, created_at, last_login_at, invited_by)
          VALUES ($1, $2, $3, $4, $5, 'active', $6, $6, $7)`,
         [uid, email, displayName, role, orgId, now, invite.invited_by]
       );
@@ -107,14 +107,14 @@ export async function POST(request: NextRequest) {
       };
 
       await query(
-        `INSERT INTO organizations (id, name, slug, plan, status, webhook_url, created_by, created_at, updated_at, settings)
+        `INSERT INTO fwai_aicall_organizations (id, name, slug, plan, status, webhook_url, created_by, created_at, updated_at, settings)
          VALUES ($1, $2, $3, 'free', 'active', '', $4, $5, $5, $6)`,
         [orgId, orgName, orgSlug, uid, now, JSON.stringify(settings)]
       );
 
       // Create user profile
       await query(
-        `INSERT INTO users (uid, email, display_name, role, org_id, status, created_at, last_login_at)
+        `INSERT INTO fwai_aicall_users (uid, email, display_name, role, org_id, status, created_at, last_login_at)
          VALUES ($1, $2, $3, $4, $5, 'active', $6, $6)`,
         [uid, email, displayName, role, orgId, now]
       );
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
       // Seed default bot config
       const botConfigId = crypto.randomUUID();
       await query(
-        `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, created_by, created_at, updated_at)
+        `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, created_by, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)`,
         [
           botConfigId,

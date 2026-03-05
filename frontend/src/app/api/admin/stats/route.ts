@@ -8,14 +8,14 @@ export async function GET(request: NextRequest) {
 
     // Fetch users, orgs, and recent calls in parallel
     const [usersRows, orgsRows, recentCallsRows] = await Promise.all([
-      query("SELECT uid, email, display_name, org_id, role, status, created_at FROM users ORDER BY created_at DESC"),
-      query("SELECT id, name FROM organizations"),
+      query("SELECT uid, email, display_name, org_id, role, status, created_at FROM fwai_aicall_users ORDER BY created_at DESC"),
+      query("SELECT id, name FROM fwai_aicall_organizations"),
       query(
         `SELECT c.id, c.org_id, c.call_uuid, c.request, c.status, c.initiated_at, c.duration_seconds,
                 c.ended_data, c.interest_level, c.call_summary,
                 o.name as org_name
-         FROM ui_calls c
-         LEFT JOIN organizations o ON o.id = c.org_id
+         FROM fwai_aicall_calls c
+         LEFT JOIN fwai_aicall_organizations o ON o.id = c.org_id
          ORDER BY c.initiated_at DESC
          LIMIT 20`
       ),

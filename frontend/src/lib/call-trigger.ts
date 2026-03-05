@@ -53,7 +53,7 @@ export class ConcurrencyLimitError extends Error {
 /** Count currently active calls for an org. */
 export async function getActiveCallCount(orgId: string): Promise<number> {
   const result = await queryOne<{ count: string }>(
-    "SELECT COUNT(*) as count FROM ui_calls WHERE org_id = $1 AND status IN ('in-progress', 'initiating')",
+    "SELECT COUNT(*) as count FROM fwai_aicall_calls WHERE org_id = $1 AND status IN ('in-progress', 'initiating')",
     [orgId]
   );
   return parseInt(result?.count || "0", 10);
@@ -62,7 +62,7 @@ export async function getActiveCallCount(orgId: string): Promise<number> {
 /** Read the org's maxConcurrentCalls setting (default 100). */
 export async function getMaxConcurrentCalls(orgId: string): Promise<number> {
   const row = await queryOne<{ settings: Record<string, unknown> }>(
-    "SELECT settings FROM organizations WHERE id = $1",
+    "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
     [orgId]
   );
   const settings = row?.settings || {};
@@ -93,14 +93,14 @@ export async function checkConcurrencySlot(params: {
 
     // Count active calls
     const countResult = await client.query<{ count: string }>(
-      "SELECT COUNT(*) as count FROM ui_calls WHERE org_id = $1 AND status IN ('in-progress', 'initiating')",
+      "SELECT COUNT(*) as count FROM fwai_aicall_calls WHERE org_id = $1 AND status IN ('in-progress', 'initiating')",
       [params.orgId]
     );
     const activeCount = parseInt(countResult.rows[0]?.count || "0", 10);
 
     // Get limit from org settings
     const orgResult = await client.query<{ settings: Record<string, unknown> }>(
-      "SELECT settings FROM organizations WHERE id = $1",
+      "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
       [params.orgId]
     );
     const settings = orgResult.rows[0]?.settings || {};
@@ -114,7 +114,7 @@ export async function checkConcurrencySlot(params: {
     // Reserve the slot
     const uiCallId = crypto.randomUUID();
     await client.query(
-      `INSERT INTO ui_calls (id, org_id, lead_id, request, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
+      `INSERT INTO fwai_aicall_calls (id, org_id, lead_id, request, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
        VALUES ($1, $2, $3, $4, 'initiating', NOW(), $5, $6, $7)`,
       [
         uiCallId,
@@ -221,7 +221,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
   // --- Load bot config ---
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const configDoc: any = await queryOne(
-    "SELECT * FROM bot_configs WHERE id = $1 AND org_id = $2",
+    "SELECT * FROM fwai_aicall_bot_configs WHERE id = $1 AND org_id = $2",
     [botConfigId, orgId]
   );
 
@@ -239,8 +239,8 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
 
   if (configDoc.persona_engine_enabled) {
     const [personas, situations] = await Promise.all([
-      query("SELECT * FROM personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
-      query("SELECT * FROM situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+      query("SELECT * FROM fwai_aicall_personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+      query("SELECT * FROM fwai_aicall_situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
     ]);
     personaPayload = {
       personas,
@@ -258,7 +258,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
 
   if (configDoc.product_intelligence_enabled) {
     const productSections = await query(
-      "SELECT * FROM product_sections WHERE org_id = $1 AND bot_config_id = $2",
+      "SELECT * FROM fwai_aicall_product_sections WHERE org_id = $1 AND bot_config_id = $2",
       [orgId, cfgId]
     );
     productPayload = {
@@ -272,9 +272,9 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
 
   if (configDoc.social_proof_enabled) {
     const [companies, cities, roles] = await Promise.all([
-      query("SELECT * FROM ui_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
-      query("SELECT * FROM ui_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
-      query("SELECT * FROM ui_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+      query("SELECT * FROM fwai_aicall_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+      query("SELECT * FROM fwai_aicall_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
+      query("SELECT * FROM fwai_aicall_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, cfgId]),
     ]);
     socialProofPayload = { socialProofCompanies: companies, socialProofCities: cities, socialProofRoles: roles };
   }
@@ -283,7 +283,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
   let botNotes = "";
   if (configDoc.memory_recall_enabled && leadId) {
     const leadRow = await queryOne<{ bot_notes: string }>(
-      "SELECT bot_notes FROM leads WHERE id = $1",
+      "SELECT bot_notes FROM fwai_aicall_leads WHERE id = $1",
       [leadId]
     );
     if (leadRow?.bot_notes) botNotes = leadRow.bot_notes;
@@ -316,7 +316,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
 
   // --- Load org settings (GHL + Plivo) ---
   const orgRow = await queryOne<{ settings: Record<string, unknown> }>(
-    "SELECT settings FROM organizations WHERE id = $1",
+    "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
     [orgId]
   );
   const orgSettings = (orgRow?.settings || {}) as Record<string, string>;
@@ -459,7 +459,7 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
   // Load campaign
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const campaign: any = await queryOne(
-    "SELECT * FROM campaigns WHERE id = $1 AND status = 'running'",
+    "SELECT * FROM fwai_aicall_campaigns WHERE id = $1 AND status = 'running'",
     [campaignId]
   );
   if (!campaign) return 0;
@@ -468,7 +468,7 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
 
   // Count currently active calls (campaign-level)
   const activeResult = await queryOne<{ count: string }>(
-    "SELECT COUNT(*) as count FROM campaign_leads WHERE campaign_id = $1 AND status = 'calling'",
+    "SELECT COUNT(*) as count FROM fwai_aicall_campaign_leads WHERE campaign_id = $1 AND status = 'calling'",
     [campaignId]
   );
   const activeCalls = parseInt(activeResult?.count || "0", 10);
@@ -491,8 +491,8 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
   // Fetch next N queued leads
   const nextLeads = await query(
     `SELECT cl.id, cl.lead_id, l.phone_number, l.contact_name, l.email, l.company, l.location
-     FROM campaign_leads cl
-     JOIN leads l ON l.id = cl.lead_id
+     FROM fwai_aicall_campaign_leads cl
+     JOIN fwai_aicall_leads l ON l.id = cl.lead_id
      WHERE cl.campaign_id = $1 AND cl.status = 'queued'
      ORDER BY cl.position
      LIMIT $2`,
@@ -503,8 +503,8 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
   const retrySlots = Math.max(0, slotsAvailable - nextLeads.length);
   const retryLeads = retrySlots > 0 ? await query(
     `SELECT cl.id, cl.lead_id, l.phone_number, l.contact_name, l.email, l.company, l.location
-     FROM campaign_leads cl
-     JOIN leads l ON l.id = cl.lead_id
+     FROM fwai_aicall_campaign_leads cl
+     JOIN fwai_aicall_leads l ON l.id = cl.lead_id
      WHERE cl.campaign_id = $1 AND cl.status = 'retry_pending' AND cl.next_retry_at <= NOW()
      ORDER BY cl.next_retry_at
      LIMIT $2`,
@@ -517,12 +517,12 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
   if (allLeads.length === 0) {
     // Check if all are done (no calling, no queued, no retry_pending)
     const remaining = await queryOne<{ count: string }>(
-      "SELECT COUNT(*) as count FROM campaign_leads WHERE campaign_id = $1 AND status IN ('queued', 'calling', 'retry_pending')",
+      "SELECT COUNT(*) as count FROM fwai_aicall_campaign_leads WHERE campaign_id = $1 AND status IN ('queued', 'calling', 'retry_pending')",
       [campaignId]
     );
     if (parseInt(remaining?.count || "0", 10) === 0) {
       await query(
-        "UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1",
+        "UPDATE fwai_aicall_campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1",
         [campaignId]
       );
       console.log(`[call-trigger] Campaign ${campaignId} completed — all leads processed.`);
@@ -540,7 +540,7 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
   for (const cl of allLeads) {
     // Mark as calling BEFORE triggering (prevents double-trigger race)
     const updated = await query(
-      "UPDATE campaign_leads SET status = 'calling', called_at = NOW() WHERE id = $1 AND status IN ('queued', 'retry_pending') RETURNING id",
+      "UPDATE fwai_aicall_campaign_leads SET status = 'calling', called_at = NOW() WHERE id = $1 AND status IN ('queued', 'retry_pending') RETURNING id",
       [cl.id]
     );
     if (updated.length === 0) continue; // already picked up
@@ -549,9 +549,9 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
       // Cross-campaign dedup: check if this lead was called recently by any campaign
       const recentCallCheck = await query(
         `SELECT cl2.campaign_id, c2.bot_config_id
-         FROM campaign_leads cl2
-         JOIN leads l2 ON l2.id = cl2.lead_id
-         JOIN campaigns c2 ON c2.id = cl2.campaign_id
+         FROM fwai_aicall_campaign_leads cl2
+         JOIN fwai_aicall_leads l2 ON l2.id = cl2.lead_id
+         JOIN fwai_aicall_campaigns c2 ON c2.id = cl2.campaign_id
          WHERE l2.phone_number = $1
          AND cl2.called_at > NOW() - INTERVAL '24 hours'
          AND cl2.campaign_id != $2`,
@@ -570,8 +570,8 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
             : diffBotCooldownHours;
 
           const cooldownCheck = await query(
-            `SELECT 1 FROM campaign_leads cl3
-             JOIN leads l3 ON l3.id = cl3.lead_id
+            `SELECT 1 FROM fwai_aicall_campaign_leads cl3
+             JOIN fwai_aicall_leads l3 ON l3.id = cl3.lead_id
              WHERE l3.phone_number = $1 AND cl3.campaign_id = $2
              AND cl3.called_at > NOW() - INTERVAL '${cooldownHours} hours'`,
             [cl.phone_number, recent.campaign_id]
@@ -587,7 +587,7 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
         if (skipLead) {
           // Revert to queued so it can be retried later after cooldown
           await query(
-            "UPDATE campaign_leads SET status = 'queued', called_at = NULL WHERE id = $1",
+            "UPDATE fwai_aicall_campaign_leads SET status = 'queued', called_at = NULL WHERE id = $1",
             [cl.id]
           );
           continue;
@@ -618,13 +618,13 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
 
       // Update the reserved ui_calls row with call_uuid and tech config
       await query(
-        "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress', tech_config = $3 WHERE id = $4",
+        "UPDATE fwai_aicall_calls SET call_uuid = $1, response = $2, status = 'in-progress', tech_config = $3 WHERE id = $4",
         [result.callUuid, JSON.stringify(result.rawResponse), JSON.stringify(result.techConfig), slot.uiCallId]
       );
 
       // Store call_uuid in campaign_lead
       await query(
-        "UPDATE campaign_leads SET call_uuid = $1 WHERE id = $2",
+        "UPDATE fwai_aicall_campaign_leads SET call_uuid = $1 WHERE id = $2",
         [result.callUuid, cl.id]
       );
 
@@ -634,7 +634,7 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
       if (err instanceof ConcurrencyLimitError) {
         // Revert to queued — global limit hit, stop triggering more
         await query(
-          "UPDATE campaign_leads SET status = 'queued', called_at = NULL WHERE id = $1",
+          "UPDATE fwai_aicall_campaign_leads SET status = 'queued', called_at = NULL WHERE id = $1",
           [cl.id]
         );
         console.log(`[call-trigger] Campaign ${campaignId}: global concurrency limit reached, stopping.`);
@@ -642,16 +642,16 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
       }
       // Mark as failed
       await query(
-        "UPDATE campaign_leads SET status = 'failed', completed_at = NOW(), error_message = $1 WHERE id = $2",
+        "UPDATE fwai_aicall_campaign_leads SET status = 'failed', completed_at = NOW(), error_message = $1 WHERE id = $2",
         [err instanceof Error ? err.message : String(err), cl.id]
       );
       await query(
-        "UPDATE campaigns SET failed_calls = failed_calls + 1 WHERE id = $1",
+        "UPDATE fwai_aicall_campaigns SET failed_calls = failed_calls + 1 WHERE id = $1",
         [campaignId]
       );
       // Clean up the reserved ui_calls row on failure
       await query(
-        "UPDATE ui_calls SET status = 'failed' WHERE org_id = $1 AND lead_id = $2 AND status = 'initiating'",
+        "UPDATE fwai_aicall_calls SET status = 'failed' WHERE org_id = $1 AND lead_id = $2 AND status = 'initiating'",
         [orgId, cl.lead_id]
       ).catch(() => {});
       console.error(`[call-trigger] Campaign ${campaignId}: failed to trigger lead ${cl.lead_id}:`, err);

@@ -136,7 +136,7 @@ async function upsertGHLContacts(
   const ghlIds = contacts.map((c) => c.id);
   const placeholders = ghlIds.map((_, i) => `$${i + 2}`).join(", ");
   const existingRows = await query<{ id: string; ghl_contact_id: string }>(
-    `SELECT id, ghl_contact_id FROM leads WHERE org_id = $1 AND ghl_contact_id IN (${placeholders})`,
+    `SELECT id, ghl_contact_id FROM fwai_aicall_leads WHERE org_id = $1 AND ghl_contact_id IN (${placeholders})`,
     [orgId, ...ghlIds]
   );
   const existingByGhlId = new Map<string, string>();
@@ -162,14 +162,14 @@ async function upsertGHLContacts(
 
     if (existingDocId) {
       await query(
-        `UPDATE leads SET contact_name = $1, phone_number = $2, email = $3, company = $4, location = $5, tags = $6, custom_fields = $7, updated_at = NOW()
+        `UPDATE fwai_aicall_leads SET contact_name = $1, phone_number = $2, email = $3, company = $4, location = $5, tags = $6, custom_fields = $7, updated_at = NOW()
          WHERE id = $8 AND org_id = $9`,
         [contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), customFieldsJson, existingDocId, orgId]
       );
     } else {
       const id = crypto.randomUUID();
       await query(
-        `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, custom_fields, status, call_count, source, ghl_contact_id, created_at, updated_at)
+        `INSERT INTO fwai_aicall_leads (id, org_id, contact_name, phone_number, email, company, location, tags, custom_fields, status, call_count, source, ghl_contact_id, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new', 0, 'ghl', $10, NOW(), NOW())`,
         [id, orgId, contactName, contact.phone || "", contact.email || null, contact.companyName || null, contact.city || null, JSON.stringify(contact.tags || []), customFieldsJson, contact.id]
       );
@@ -206,7 +206,7 @@ async function fetchGHLTags(apiKey: string, locationId: string, orgId: string): 
   console.log("[GHL Tags] Reading tags from local DB...");
   try {
     const rows = await query<{ tags: string }>(
-      "SELECT DISTINCT tags FROM leads WHERE org_id = $1 AND source = 'ghl' AND tags IS NOT NULL AND tags != '[]'",
+      "SELECT DISTINCT tags FROM fwai_aicall_leads WHERE org_id = $1 AND source = 'ghl' AND tags IS NOT NULL AND tags != '[]'",
       [orgId]
     );
     for (const row of rows) {
@@ -256,7 +256,7 @@ export async function POST(request: NextRequest) {
 
     // Read GHL credentials from org settings
     const orgRow = await queryOne<{ settings: Record<string, string> }>(
-      "SELECT settings FROM organizations WHERE id = $1",
+      "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
       [orgId]
     );
     if (!orgRow) {
@@ -321,7 +321,7 @@ export async function POST(request: NextRequest) {
     if (body.action === "saveCustomFieldSelection") {
       const selectedFields: GHLCustomFieldDef[] = body.fields || [];
       await query(
-        `UPDATE organizations SET settings = jsonb_set(
+        `UPDATE fwai_aicall_organizations SET settings = jsonb_set(
           COALESCE(settings, '{}'::jsonb),
           '{ghlCustomFields}',
           $1::jsonb
@@ -386,7 +386,7 @@ export async function POST(request: NextRequest) {
         // Update last sync time
         const nowIso = new Date().toISOString();
         await query(
-          `UPDATE organizations SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{ghlLastSyncAt}', to_jsonb($1::text)), updated_at = NOW() WHERE id = $2`,
+          `UPDATE fwai_aicall_organizations SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{ghlLastSyncAt}', to_jsonb($1::text)), updated_at = NOW() WHERE id = $2`,
           [nowIso, orgId]
         );
 
@@ -433,7 +433,7 @@ export async function POST(request: NextRequest) {
     // Update last sync time
     const nowIso = new Date().toISOString();
     await query(
-      `UPDATE organizations SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{ghlLastSyncAt}', to_jsonb($1::text)), updated_at = NOW() WHERE id = $2`,
+      `UPDATE fwai_aicall_organizations SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{ghlLastSyncAt}', to_jsonb($1::text)), updated_at = NOW() WHERE id = $2`,
       [nowIso, orgId]
     );
 
@@ -454,7 +454,7 @@ export async function GET(request: NextRequest) {
   try {
     const { orgId } = await requireUidAndOrg(request);
     const orgRow = await queryOne<{ settings: Record<string, string> }>(
-      "SELECT settings FROM organizations WHERE id = $1",
+      "SELECT settings FROM fwai_aicall_organizations WHERE id = $1",
       [orgId]
     );
     const settings = orgRow?.settings ?? {};

@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
     const auth = await requireSuperAdmin(request);
     if ("error" in auth) return auth.error;
 
-    const rows = await query("SELECT * FROM organizations ORDER BY created_at DESC");
+    const rows = await query("SELECT * FROM fwai_aicall_organizations ORDER BY created_at DESC");
     return NextResponse.json({ organizations: toCamelRows(rows) });
   } catch (error) {
     console.error("[Admin Org API] GET Error:", error);
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
         };
 
         await query(
-          `INSERT INTO organizations (id, name, slug, plan, status, webhook_url, created_by, created_at, updated_at, settings)
+          `INSERT INTO fwai_aicall_organizations (id, name, slug, plan, status, webhook_url, created_by, created_at, updated_at, settings)
            VALUES ($1, $2, $3, $4, 'active', '', $5, $6, $6, $7)`,
           [orgId, orgName.trim(), orgSlug, plan || "free", uid, now, JSON.stringify(settings)]
         );
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
         // Seed default bot config
         const botConfigId = crypto.randomUUID();
         await query(
-          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, created_by, created_at, updated_at)
+          `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, created_by, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)`,
           [
             botConfigId, orgId,
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
           inviteId = crypto.randomUUID();
           const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
           await query(
-            `INSERT INTO invites (id, email, org_id, org_name, role, invited_by, status, created_at, expires_at)
+            `INSERT INTO fwai_aicall_invites (id, email, org_id, org_name, role, invited_by, status, created_at, expires_at)
              VALUES ($1, $2, $3, $4, 'client_admin', $5, 'pending', $6, $7)`,
             [inviteId, adminEmail.trim().toLowerCase(), orgId, orgName.trim(), uid, now, expiresAt.toISOString()]
           );
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
         vals.push(orgId);
 
         await query(
-          `UPDATE organizations SET ${sets.join(", ")} WHERE id = $${idx}`,
+          `UPDATE fwai_aicall_organizations SET ${sets.join(", ")} WHERE id = $${idx}`,
           vals
         );
 
@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
         }
 
         const orgRow = await queryOne<{ name: string }>(
-          "SELECT name FROM organizations WHERE id = $1",
+          "SELECT name FROM fwai_aicall_organizations WHERE id = $1",
           [orgId]
         );
         const orgName = orgRow?.name ?? "Organization";
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
         const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
         await query(
-          `INSERT INTO invites (id, email, org_id, org_name, role, invited_by, status, created_at, expires_at)
+          `INSERT INTO fwai_aicall_invites (id, email, org_id, org_name, role, invited_by, status, created_at, expires_at)
            VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)`,
           [inviteId, email.trim().toLowerCase(), orgId, orgName, role || "client_user", uid, now.toISOString(), expiresAt.toISOString()]
         );

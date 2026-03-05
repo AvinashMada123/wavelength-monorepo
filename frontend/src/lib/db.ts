@@ -83,7 +83,7 @@ export async function getUidAndOrgFromToken(
   const decoded = await getAdminAuth().verifyIdToken(idToken);
 
   const row = await queryOne<{ org_id: string }>(
-    "SELECT org_id FROM users WHERE uid = $1",
+    "SELECT org_id FROM fwai_aicall_users WHERE uid = $1",
     [decoded.uid]
   );
   if (!row) {
@@ -105,7 +105,7 @@ export async function requireUidAndOrg(
   const decoded = await getAdminAuth().verifyIdToken(idToken);
 
   const row = await queryOne<{ org_id: string }>(
-    "SELECT org_id FROM users WHERE uid = $1",
+    "SELECT org_id FROM fwai_aicall_users WHERE uid = $1",
     [decoded.uid]
   );
   if (!row) throw new Error("User not found");
@@ -126,7 +126,7 @@ export async function requireSuperAdmin(
   const decoded = await getAdminAuth().verifyIdToken(idToken);
 
   const row = await queryOne<{ role: string }>(
-    "SELECT role FROM users WHERE uid = $1",
+    "SELECT role FROM fwai_aicall_users WHERE uid = $1",
     [decoded.uid]
   );
   if (!row || row.role !== "super_admin") {

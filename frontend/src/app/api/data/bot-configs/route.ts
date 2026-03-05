@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     if (result instanceof NextResponse) return result;
     const { orgId } = result;
 
-    const rows = await query("SELECT * FROM bot_configs WHERE org_id = $1", [orgId]);
+    const rows = await query("SELECT * FROM fwai_aicall_bot_configs WHERE org_id = $1", [orgId]);
     return NextResponse.json({ configs: toCamelRows(rows) });
   } catch (error) {
     console.error("[Bot Configs API] GET error:", error);
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       case "create": {
         const { config } = body;
         await query(
-          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, voice, pipeline_mode, language, tts_provider, created_by, created_at, updated_at)
+          `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, voice, pipeline_mode, language, tts_provider, created_by, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22)`,
           [
             config.id,
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
         vals.push(orgId);
 
         await query(
-          `UPDATE bot_configs SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
+          `UPDATE fwai_aicall_bot_configs SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
           vals
         );
         return NextResponse.json({ success: true });
@@ -118,27 +118,27 @@ export async function POST(request: NextRequest) {
 
       case "delete": {
         const { configId } = body;
-        await query("DELETE FROM bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]);
+        await query("DELETE FROM fwai_aicall_bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]);
         return NextResponse.json({ success: true });
       }
 
       case "setActive": {
         const { configId } = body;
-        await query("UPDATE bot_configs SET is_active = true WHERE id = $1 AND org_id = $2", [configId, orgId]);
+        await query("UPDATE fwai_aicall_bot_configs SET is_active = true WHERE id = $1 AND org_id = $2", [configId, orgId]);
         return NextResponse.json({ success: true });
       }
 
       case "toggleActive": {
         const { configId } = body;
         // Check current state
-        const current = await query("SELECT is_active FROM bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]);
+        const current = await query("SELECT is_active FROM fwai_aicall_bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]);
         if (current.length === 0) {
           return NextResponse.json({ error: "Config not found" }, { status: 404 });
         }
         const isCurrentlyActive = current[0].is_active;
         // Simply toggle this config — multiple configs can be active simultaneously
         await query(
-          "UPDATE bot_configs SET is_active = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3",
+          "UPDATE fwai_aicall_bot_configs SET is_active = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3",
           [!isCurrentlyActive, configId, orgId]
         );
         return NextResponse.json({ success: true });
@@ -148,13 +148,13 @@ export async function POST(request: NextRequest) {
         // Export a bot config with all related data (personas, situations, products, social proof)
         const { configId } = body;
         const [configRows, personas, situations, productSections, companies, cities, roles] = await Promise.all([
-          query("SELECT * FROM bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]),
-          query("SELECT name, content, keywords FROM personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT name, content, keywords FROM situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT name, content, keywords FROM product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT company_name, enrollments_count FROM ui_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT city_name, enrollments_count FROM ui_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT role_name, enrollments_count FROM ui_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT * FROM fwai_aicall_bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]),
+          query("SELECT name, content, keywords FROM fwai_aicall_personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT name, content, keywords FROM fwai_aicall_situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT name, content, keywords FROM fwai_aicall_product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT company_name, enrollments_count FROM fwai_aicall_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT city_name, enrollments_count FROM fwai_aicall_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT role_name, enrollments_count FROM fwai_aicall_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
         ]);
         if (configRows.length === 0) {
           return NextResponse.json({ error: "Config not found" }, { status: 404 });
@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
 
         // Create the bot config
         await query(
-          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, pipeline_mode, language, tts_provider, created_by, created_at, updated_at)
+          `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, pipeline_mode, language, tts_provider, created_by, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24)`,
           [
             newConfigId,
@@ -232,7 +232,7 @@ export async function POST(request: NextRequest) {
         // Import personas
         for (const p of importConfig.personas || []) {
           await query(
-            "INSERT INTO personas (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            "INSERT INTO fwai_aicall_personas (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
             [`imp_p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newConfigId, p.name, p.content, JSON.stringify(p.keywords || []), now]
           );
         }
@@ -240,7 +240,7 @@ export async function POST(request: NextRequest) {
         // Import situations
         for (const s of importConfig.situations || []) {
           await query(
-            "INSERT INTO situations (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            "INSERT INTO fwai_aicall_situations (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
             [`imp_s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newConfigId, s.name, s.content, JSON.stringify(s.keywords || []), now]
           );
         }
@@ -248,7 +248,7 @@ export async function POST(request: NextRequest) {
         // Import product sections
         for (const ps of importConfig.productSections || []) {
           await query(
-            "INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            "INSERT INTO fwai_aicall_product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
             [`imp_ps_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newConfigId, ps.name, ps.content, JSON.stringify(ps.keywords || []), now]
           );
         }
@@ -257,19 +257,19 @@ export async function POST(request: NextRequest) {
         const sp = importConfig.socialProof || {};
         for (const c of sp.companies || []) {
           await query(
-            "INSERT INTO ui_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fwai_aicall_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
             [`imp_c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newConfigId, c.name, c.count ?? 0]
           );
         }
         for (const c of sp.cities || []) {
           await query(
-            "INSERT INTO ui_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fwai_aicall_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
             [`imp_ci_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newConfigId, c.name, c.count ?? 0]
           );
         }
         for (const r of sp.roles || []) {
           await query(
-            "INSERT INTO ui_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fwai_aicall_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
             [`imp_r_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newConfigId, r.name, r.count ?? 0]
           );
         }
@@ -284,13 +284,13 @@ export async function POST(request: NextRequest) {
 
         // Fetch original config and all related data
         const [configRows, personas, situations, productSections, companies, cities, roles] = await Promise.all([
-          query("SELECT * FROM bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]),
-          query("SELECT name, content, keywords FROM personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT name, content, keywords FROM situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT name, content, keywords FROM product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT company_name, enrollments_count FROM ui_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT city_name, enrollments_count FROM ui_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
-          query("SELECT role_name, enrollments_count FROM ui_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT * FROM fwai_aicall_bot_configs WHERE id = $1 AND org_id = $2", [configId, orgId]),
+          query("SELECT name, content, keywords FROM fwai_aicall_personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT name, content, keywords FROM fwai_aicall_situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT name, content, keywords FROM fwai_aicall_product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT company_name, enrollments_count FROM fwai_aicall_social_proof_companies WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT city_name, enrollments_count FROM fwai_aicall_social_proof_cities WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
+          query("SELECT role_name, enrollments_count FROM fwai_aicall_social_proof_roles WHERE org_id = $1 AND bot_config_id = $2", [orgId, configId]),
         ]);
         if (configRows.length === 0) {
           return NextResponse.json({ error: "Config not found" }, { status: 404 });
@@ -299,7 +299,7 @@ export async function POST(request: NextRequest) {
 
         // Create duplicate config (inactive, with "(Copy)" suffix)
         await query(
-          `INSERT INTO bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, call_provider, pipeline_mode, language, tts_provider, micro_moments_config, retry_config, created_by, created_at, updated_at)
+          `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, call_provider, pipeline_mode, language, tts_provider, micro_moments_config, retry_config, created_by, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $27)`,
           [
             newId, orgId, (src.name || "") + " (Copy)", false,
@@ -321,37 +321,37 @@ export async function POST(request: NextRequest) {
         // Duplicate related data
         for (const p of personas) {
           await query(
-            "INSERT INTO personas (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            "INSERT INTO fwai_aicall_personas (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
             [`dup_p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, p.name, p.content, JSON.stringify(p.keywords || []), now]
           );
         }
         for (const s of situations) {
           await query(
-            "INSERT INTO situations (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            "INSERT INTO fwai_aicall_situations (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
             [`dup_s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, s.name, s.content, JSON.stringify(s.keywords || []), now]
           );
         }
         for (const ps of productSections) {
           await query(
-            "INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
+            "INSERT INTO fwai_aicall_product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
             [`dup_ps_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, ps.name, ps.content, JSON.stringify(ps.keywords || []), now]
           );
         }
         for (const c of companies) {
           await query(
-            "INSERT INTO ui_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fwai_aicall_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
             [`dup_c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, c.company_name, c.enrollments_count ?? 0]
           );
         }
         for (const c of cities) {
           await query(
-            "INSERT INTO ui_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fwai_aicall_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
             [`dup_ci_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, c.city_name, c.enrollments_count ?? 0]
           );
         }
         for (const r of roles) {
           await query(
-            "INSERT INTO ui_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fwai_aicall_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count) VALUES ($1, $2, $3, $4, $5)",
             [`dup_r_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, orgId, newId, r.role_name, r.enrollments_count ?? 0]
           );
         }

@@ -5,7 +5,7 @@ export async function GET(request: NextRequest) {
   try {
     const { orgId } = await requireUidAndOrg(request);
     const rows = await query(
-      "SELECT * FROM ui_calls WHERE org_id = $1 ORDER BY initiated_at DESC",
+      "SELECT * FROM fwai_aicall_calls WHERE org_id = $1 ORDER BY initiated_at DESC",
       [orgId]
     );
     return NextResponse.json({ calls: toCamelRows(rows) });
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
       const call = data.call;
       const id = call.id || crypto.randomUUID();
       await query(
-        `INSERT INTO ui_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
+        `INSERT INTO fwai_aicall_calls (id, org_id, call_uuid, lead_id, request, response, status, initiated_at, initiated_by, bot_config_id, bot_config_name)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (id) DO UPDATE SET
            call_uuid = EXCLUDED.call_uuid,
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
       vals.push(data.id);
       vals.push(orgId);
       await query(
-        `UPDATE ui_calls SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
+        `UPDATE fwai_aicall_calls SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
         vals
       );
       return NextResponse.json({ success: true });

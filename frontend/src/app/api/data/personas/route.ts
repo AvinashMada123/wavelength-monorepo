@@ -10,11 +10,11 @@ export async function GET(request: NextRequest) {
 
     const [personas, situations] = await Promise.all([
       botConfigId
-        ? query("SELECT * FROM personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
-        : query("SELECT * FROM personas WHERE org_id = $1", [orgId]),
+        ? query("SELECT * FROM fwai_aicall_personas WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+        : query("SELECT * FROM fwai_aicall_personas WHERE org_id = $1", [orgId]),
       botConfigId
-        ? query("SELECT * FROM situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
-        : query("SELECT * FROM situations WHERE org_id = $1", [orgId]),
+        ? query("SELECT * FROM fwai_aicall_situations WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+        : query("SELECT * FROM fwai_aicall_situations WHERE org_id = $1", [orgId]),
     ]);
 
     return NextResponse.json({
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       case "createPersona": {
         const { persona, botConfigId } = body;
         await query(
-          `INSERT INTO personas (id, org_id, bot_config_id, name, content, keywords, phrases, created_at, updated_at)
+          `INSERT INTO fwai_aicall_personas (id, org_id, bot_config_id, name, content, keywords, phrases, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
           [
             persona.id, orgId, botConfigId || null,
@@ -74,20 +74,20 @@ export async function POST(request: NextRequest) {
         vals.push(personaId);
         vals.push(orgId);
         await query(
-          `UPDATE personas SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
+          `UPDATE fwai_aicall_personas SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
           vals
         );
         return NextResponse.json({ success: true });
       }
       case "deletePersona": {
         const { personaId } = body;
-        await query("DELETE FROM personas WHERE id = $1 AND org_id = $2", [personaId, orgId]);
+        await query("DELETE FROM fwai_aicall_personas WHERE id = $1 AND org_id = $2", [personaId, orgId]);
         return NextResponse.json({ success: true });
       }
       case "createSituation": {
         const { situation, botConfigId } = body;
         await query(
-          `INSERT INTO situations (id, org_id, bot_config_id, name, content, keywords, hint, created_at, updated_at)
+          `INSERT INTO fwai_aicall_situations (id, org_id, bot_config_id, name, content, keywords, hint, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
           [
             situation.id, orgId, botConfigId || null,
@@ -120,14 +120,14 @@ export async function POST(request: NextRequest) {
         vals.push(situationId);
         vals.push(orgId);
         await query(
-          `UPDATE situations SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
+          `UPDATE fwai_aicall_situations SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
           vals
         );
         return NextResponse.json({ success: true });
       }
       case "deleteSituation": {
         const { situationId } = body;
-        await query("DELETE FROM situations WHERE id = $1 AND org_id = $2", [situationId, orgId]);
+        await query("DELETE FROM fwai_aicall_situations WHERE id = $1 AND org_id = $2", [situationId, orgId]);
         return NextResponse.json({ success: true });
       }
       default:

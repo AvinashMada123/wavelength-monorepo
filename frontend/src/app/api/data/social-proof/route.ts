@@ -17,9 +17,9 @@ export async function GET(request: NextRequest) {
       : { sql: "org_id = $1", params: [orgId] };
 
     const [companies, cities, roles] = await Promise.all([
-      query(`SELECT * FROM ui_social_proof_companies WHERE ${baseFilter.sql}`, baseFilter.params),
-      query(`SELECT * FROM ui_social_proof_cities WHERE ${baseFilter.sql}`, baseFilter.params),
-      query(`SELECT * FROM ui_social_proof_roles WHERE ${baseFilter.sql}`, baseFilter.params),
+      query(`SELECT * FROM fwai_aicall_social_proof_companies WHERE ${baseFilter.sql}`, baseFilter.params),
+      query(`SELECT * FROM fwai_aicall_social_proof_cities WHERE ${baseFilter.sql}`, baseFilter.params),
+      query(`SELECT * FROM fwai_aicall_social_proof_roles WHERE ${baseFilter.sql}`, baseFilter.params),
     ]);
 
     return NextResponse.json({
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
       case "upsertCompany": {
         const { company, botConfigId } = body;
         await query(
-          `INSERT INTO ui_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
+          `INSERT INTO fwai_aicall_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (id) DO UPDATE SET company_name = $4, enrollments_count = $5, notable_outcomes = $6, trending = $7, updated_at = $8`,
           [company.id, orgId, botConfigId || null, company.companyName, company.enrollmentsCount || 0, company.notableOutcomes || "", company.trending ?? false, now]
@@ -56,14 +56,14 @@ export async function POST(request: NextRequest) {
       }
       case "deleteCompany": {
         const { companyId } = body;
-        await query("DELETE FROM ui_social_proof_companies WHERE id = $1 AND org_id = $2", [companyId, orgId]);
+        await query("DELETE FROM fwai_aicall_social_proof_companies WHERE id = $1 AND org_id = $2", [companyId, orgId]);
         return NextResponse.json({ success: true });
       }
 
       case "upsertCity": {
         const { city, botConfigId } = body;
         await query(
-          `INSERT INTO ui_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count, trending, updated_at)
+          `INSERT INTO fwai_aicall_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count, trending, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (id) DO UPDATE SET city_name = $4, enrollments_count = $5, trending = $6, updated_at = $7`,
           [city.id, orgId, botConfigId || null, city.cityName, city.enrollmentsCount || 0, city.trending ?? false, now]
@@ -72,14 +72,14 @@ export async function POST(request: NextRequest) {
       }
       case "deleteCity": {
         const { cityId } = body;
-        await query("DELETE FROM ui_social_proof_cities WHERE id = $1 AND org_id = $2", [cityId, orgId]);
+        await query("DELETE FROM fwai_aicall_social_proof_cities WHERE id = $1 AND org_id = $2", [cityId, orgId]);
         return NextResponse.json({ success: true });
       }
 
       case "upsertRole": {
         const { role, botConfigId } = body;
         await query(
-          `INSERT INTO ui_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count, success_stories, updated_at)
+          `INSERT INTO fwai_aicall_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count, success_stories, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (id) DO UPDATE SET role_name = $4, enrollments_count = $5, success_stories = $6, updated_at = $7`,
           [role.id, orgId, botConfigId || null, role.roleName, role.enrollmentsCount || 0, role.successStories || "", now]
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
       }
       case "deleteRole": {
         const { roleId } = body;
-        await query("DELETE FROM ui_social_proof_roles WHERE id = $1 AND org_id = $2", [roleId, orgId]);
+        await query("DELETE FROM fwai_aicall_social_proof_roles WHERE id = $1 AND org_id = $2", [roleId, orgId]);
         return NextResponse.json({ success: true });
       }
 
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
         for (const c of data.companies || []) {
           const id = `comp_${crypto.randomUUID().slice(0, 8)}`;
           await query(
-            `INSERT INTO ui_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
+            `INSERT INTO fwai_aicall_social_proof_companies (id, org_id, bot_config_id, company_name, enrollments_count, notable_outcomes, trending, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, false, $7)
              ON CONFLICT (id) DO UPDATE SET company_name = $4, enrollments_count = $5, notable_outcomes = $6, updated_at = $7`,
             [id, orgId, botConfigId || null, c.company_name, c.enrollments_count || 0, c.notable_outcomes || "", now]
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
         for (const c of data.cities || []) {
           const id = `city_${crypto.randomUUID().slice(0, 8)}`;
           await query(
-            `INSERT INTO ui_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count, trending, updated_at)
+            `INSERT INTO fwai_aicall_social_proof_cities (id, org_id, bot_config_id, city_name, enrollments_count, trending, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (id) DO UPDATE SET city_name = $4, enrollments_count = $5, trending = $6, updated_at = $7`,
             [id, orgId, botConfigId || null, c.city_name, c.enrollments_count || 0, c.trending ? true : false, now]
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
         for (const r of data.roles || []) {
           const id = `role_${crypto.randomUUID().slice(0, 8)}`;
           await query(
-            `INSERT INTO ui_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count, success_stories, updated_at)
+            `INSERT INTO fwai_aicall_social_proof_roles (id, org_id, bot_config_id, role_name, enrollments_count, success_stories, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (id) DO UPDATE SET role_name = $4, enrollments_count = $5, success_stories = $6, updated_at = $7`,
             [id, orgId, botConfigId || null, r.role_name, r.enrollments_count || 0, r.success_stories || "", now]

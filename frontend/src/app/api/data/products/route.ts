@@ -13,8 +13,8 @@ export async function GET(request: NextRequest) {
     const botConfigId = request.nextUrl.searchParams.get("botConfigId");
 
     const rows = botConfigId
-      ? await query("SELECT * FROM product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
-      : await query("SELECT * FROM product_sections WHERE org_id = $1", [orgId]);
+      ? await query("SELECT * FROM fwai_aicall_product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+      : await query("SELECT * FROM fwai_aicall_product_sections WHERE org_id = $1", [orgId]);
     return NextResponse.json({ sections: toCamelRows(rows) });
   } catch (error) {
     console.error("[Products API] GET error:", error);
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
         for (const section of sections) {
           const id = section.id || `sec_${crypto.randomUUID().slice(0, 8)}`;
           await query(
-            `INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at)
+            `INSERT INTO fwai_aicall_product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
              ON CONFLICT (id) DO UPDATE SET name = $4, content = $5, keywords = $6, updated_at = $7`,
             [id, orgId, botConfigId || null, section.name || "", section.content || "", JSON.stringify(section.keywords || []), now]
@@ -64,15 +64,15 @@ export async function POST(request: NextRequest) {
         }
 
         const rows = botConfigId
-          ? await query("SELECT * FROM product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
-          : await query("SELECT * FROM product_sections WHERE org_id = $1", [orgId]);
+          ? await query("SELECT * FROM fwai_aicall_product_sections WHERE org_id = $1 AND bot_config_id = $2", [orgId, botConfigId])
+          : await query("SELECT * FROM fwai_aicall_product_sections WHERE org_id = $1", [orgId]);
         return NextResponse.json({ success: true, sections: toCamelRows(rows) });
       }
 
       case "createSection": {
         const { section, botConfigId } = body;
         await query(
-          `INSERT INTO product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at)
+          `INSERT INTO fwai_aicall_product_sections (id, org_id, bot_config_id, name, content, keywords, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
           [section.id, orgId, botConfigId || null, section.name || "", section.content || "", JSON.stringify(section.keywords || []), now]
         );
@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
         vals.push(sectionId);
         vals.push(orgId);
         await query(
-          `UPDATE product_sections SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
+          `UPDATE fwai_aicall_product_sections SET ${sets.join(", ")} WHERE id = $${idx} AND org_id = $${idx + 1}`,
           vals
         );
         return NextResponse.json({ success: true });
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
 
       case "deleteSection": {
         const { sectionId } = body;
-        await query("DELETE FROM product_sections WHERE id = $1 AND org_id = $2", [sectionId, orgId]);
+        await query("DELETE FROM fwai_aicall_product_sections WHERE id = $1 AND org_id = $2", [sectionId, orgId]);
         return NextResponse.json({ success: true });
       }
 

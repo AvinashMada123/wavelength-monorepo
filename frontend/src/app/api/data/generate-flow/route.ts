@@ -45,11 +45,12 @@ function sanitizeMermaid(raw: string): string {
       return `    subgraph ${id}[${label}]`;
     }
 
-    // Clean labels inside [...] and {...}
+    // Clean labels inside [...] — remove all special chars including curly braces
     line = line.replace(/\[([^\]]+)\]/g, (_match, label: string) => {
-      const clean = label.replace(/[()'"#&<>@$%]/g, "").replace(/\s+/g, " ").trim();
+      const clean = label.replace(/[()'"#&<>@$%{}]/g, "").replace(/\s+/g, " ").trim();
       return `[${clean}]`;
     });
+    // Clean labels inside {...} (decision nodes) — remove special chars but keep the content
     line = line.replace(/\{([^}]+)\}/g, (_match, label: string) => {
       const clean = label.replace(/[()'"#&<>@$%]/g, "").replace(/\s+/g, " ").trim();
       return `{${clean}}`;
@@ -84,7 +85,7 @@ Analyze the system prompt and generate a comprehensive Mermaid flowchart showing
 5. Arrows: S1 --> S2 or S1 -->|Yes| S2
 6. Subgraphs MUST use ID format: subgraph P1[Phase 1 - Greeting]
 7. Every subgraph must have matching: end
-8. FORBIDDEN in labels: parentheses () quotes "" '' hash # ampersand & angle brackets <> at @ dollar $ percent %
+8. FORBIDDEN in labels: parentheses () curly braces {} quotes "" '' hash # ampersand & angle brackets <> at @ dollar $ percent %. Use plain text only - write customer_name NOT {customer_name}
 9. ASCII only — no unicode, no emojis
 10. Every node ID in an edge must be defined somewhere with a label
 11. No duplicate node definitions — define each node ID only ONCE

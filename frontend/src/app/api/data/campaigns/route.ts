@@ -7,8 +7,8 @@ export async function GET(request: NextRequest) {
     const { orgId } = await requireUidAndOrg(request);
     const rows = await query(
       `SELECT c.*,
-         (SELECT COUNT(*) FROM campaign_leads cl WHERE cl.campaign_id = c.id AND cl.status = 'calling')::int as active_calls
-       FROM campaigns c
+         (SELECT COUNT(*) FROM fwai_aicall_campaign_leads cl WHERE cl.campaign_id = c.id AND cl.status = 'calling')::int as active_calls
+       FROM fwai_aicall_campaigns c
        WHERE c.org_id = $1
        ORDER BY c.created_at DESC`,
       [orgId]
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       const webhookBaseUrl = `${proto}://${host}`;
 
       await query(
-        `INSERT INTO campaigns (id, org_id, name, bot_config_id, bot_config_name, status, concurrency_limit, total_leads, webhook_base_url, created_by, created_at)
+        `INSERT INTO fwai_aicall_campaigns (id, org_id, name, bot_config_id, bot_config_name, status, concurrency_limit, total_leads, webhook_base_url, created_by, created_at)
          VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, $8, $9, NOW())`,
         [
           campaignId, orgId, name || `Campaign ${new Date().toLocaleDateString()}`,
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
       // Insert campaign_leads with position ordering
       for (let i = 0; i < leadIds.length; i++) {
         await query(
-          `INSERT INTO campaign_leads (id, campaign_id, lead_id, status, position, queued_at)
+          `INSERT INTO fwai_aicall_campaign_leads (id, campaign_id, lead_id, status, position, queued_at)
            VALUES ($1, $2, $3, 'queued', $4, NOW())`,
           [crypto.randomUUID(), campaignId, leadIds[i], i]
         );
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
     // --- Start campaign ---
     if (action === "start") {
       const campaign = await queryOne(
-        "SELECT id FROM campaigns WHERE id = $1 AND org_id = $2 AND status = 'queued'",
+        "SELECT id FROM fwai_aicall_campaigns WHERE id = $1 AND org_id = $2 AND status = 'queued'",
         [data.campaignId, orgId]
       );
       if (!campaign) {
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
       }
 
       await query(
-        "UPDATE campaigns SET status = 'running', started_at = NOW() WHERE id = $1",
+        "UPDATE fwai_aicall_campaigns SET status = 'running', started_at = NOW() WHERE id = $1",
         [data.campaignId]
       );
 
@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
     // --- Pause campaign ---
     if (action === "pause") {
       await query(
-        "UPDATE campaigns SET status = 'paused', paused_at = NOW() WHERE id = $1 AND org_id = $2 AND status = 'running'",
+        "UPDATE fwai_aicall_campaigns SET status = 'paused', paused_at = NOW() WHERE id = $1 AND org_id = $2 AND status = 'running'",
         [data.campaignId, orgId]
       );
       return NextResponse.json({ success: true });
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
     // --- Resume campaign ---
     if (action === "resume") {
       const updated = await query(
-        "UPDATE campaigns SET status = 'running', paused_at = NULL WHERE id = $1 AND org_id = $2 AND status = 'paused' RETURNING id",
+        "UPDATE fwai_aicall_campaigns SET status = 'running', paused_at = NULL WHERE id = $1 AND org_id = $2 AND status = 'paused' RETURNING id",
         [data.campaignId, orgId]
       );
       if (updated.length === 0) {
@@ -122,11 +122,11 @@ export async function POST(request: NextRequest) {
     // --- Cancel campaign ---
     if (action === "cancel") {
       await query(
-        "UPDATE campaigns SET status = 'cancelled', completed_at = NOW() WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running', 'paused')",
+        "UPDATE fwai_aicall_campaigns SET status = 'cancelled', completed_at = NOW() WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running', 'paused')",
         [data.campaignId, orgId]
       );
       await query(
-        "UPDATE campaign_leads SET status = 'skipped' WHERE campaign_id = $1 AND status = 'queued'",
+        "UPDATE fwai_aicall_campaign_leads SET status = 'skipped' WHERE campaign_id = $1 AND status = 'queued'",
         [data.campaignId]
       );
       return NextResponse.json({ success: true });
@@ -136,8 +136,8 @@ export async function POST(request: NextRequest) {
     if (action === "get") {
       const campaign = await queryOne(
         `SELECT c.*,
-           (SELECT COUNT(*) FROM campaign_leads cl WHERE cl.campaign_id = c.id AND cl.status = 'calling')::int as active_calls
-         FROM campaigns c
+           (SELECT COUNT(*) FROM fwai_aicall_campaign_leads cl WHERE cl.campaign_id = c.id AND cl.status = 'calling')::int as active_calls
+         FROM fwai_aicall_campaigns c
          WHERE c.id = $1 AND c.org_id = $2`,
         [data.campaignId, orgId]
       );
@@ -150,8 +150,8 @@ export async function POST(request: NextRequest) {
 
       const leads = await query(
         `SELECT cl.*, l.contact_name, l.phone_number, l.company, l.email
-         FROM campaign_leads cl
-         JOIN leads l ON l.id = cl.lead_id
+         FROM fwai_aicall_campaign_leads cl
+         JOIN fwai_aicall_leads l ON l.id = cl.lead_id
          WHERE cl.campaign_id = $1
          ORDER BY cl.position`,
         [data.campaignId]

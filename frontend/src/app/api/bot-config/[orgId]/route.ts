@@ -10,7 +10,7 @@ export async function GET(
 
     // Verify org exists
     const orgRow = await queryOne<{ settings: Record<string, unknown>; name: string }>(
-      "SELECT name, settings FROM organizations WHERE id = $1",
+      "SELECT name, settings FROM fwai_aicall_organizations WHERE id = $1",
       [orgId]
     );
     if (!orgRow) {
@@ -19,7 +19,7 @@ export async function GET(
 
     // Fetch active bot config
     const config = await queryOne(
-      "SELECT * FROM bot_configs WHERE org_id = $1 AND is_active = true LIMIT 1",
+      "SELECT * FROM fwai_aicall_bot_configs WHERE org_id = $1 AND is_active = true LIMIT 1",
       [orgId]
     );
 

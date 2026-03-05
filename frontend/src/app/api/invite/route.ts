@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     }
 
     const row = await queryOne(
-      "SELECT id, email, org_id, org_name, role, status, expires_at FROM invites WHERE id = $1",
+      "SELECT id, email, org_id, org_name, role, status, expires_at FROM fwai_aicall_invites WHERE id = $1",
       [token]
     );
 

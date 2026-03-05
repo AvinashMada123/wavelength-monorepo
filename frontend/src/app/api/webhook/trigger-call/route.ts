@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Look up org by API key stored in settings
     const orgRow = await queryOne<{ id: string; settings: Record<string, unknown> }>(
-      "SELECT id, settings FROM organizations WHERE settings->>'apiKey' = $1",
+      "SELECT id, settings FROM fwai_aicall_organizations WHERE settings->>'apiKey' = $1",
       [apiKey]
     );
 
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
     let botConfigName = "";
     if (botConfigId && orgId) {
       const cfg = await queryOne<{ name: string }>(
-        "SELECT name FROM bot_configs WHERE id = $1 AND org_id = $2",
+        "SELECT name FROM fwai_aicall_bot_configs WHERE id = $1 AND org_id = $2",
         [botConfigId, orgId]
       );
       if (cfg) botConfigName = cfg.name;
@@ -129,13 +129,13 @@ export async function POST(request: NextRequest) {
 
       if (ghlContactId) {
         existingLead = await queryOne<{ id: string; bot_notes: string | null }>(
-          "SELECT id, bot_notes FROM leads WHERE org_id = $1 AND ghl_contact_id = $2",
+          "SELECT id, bot_notes FROM fwai_aicall_leads WHERE org_id = $1 AND ghl_contact_id = $2",
           [orgId, ghlContactId]
         );
       }
       if (!existingLead && phoneNumber) {
         existingLead = await queryOne<{ id: string; bot_notes: string | null }>(
-          "SELECT id, bot_notes FROM leads WHERE org_id = $1 AND phone_number = $2",
+          "SELECT id, bot_notes FROM fwai_aicall_leads WHERE org_id = $1 AND phone_number = $2",
           [orgId, phoneNumber]
         );
       }
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
         const newLeadId = crypto.randomUUID();
         const leadSource = ghlContactId ? "ghl" : "api";
         await query(
-          `INSERT INTO leads (id, org_id, contact_name, phone_number, email, company, location, tags, status, call_count, source, ghl_contact_id, created_at, updated_at)
+          `INSERT INTO fwai_aicall_leads (id, org_id, contact_name, phone_number, email, company, location, tags, status, call_count, source, ghl_contact_id, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'new', 0, $9, $10, NOW(), NOW())`,
           [
             newLeadId, orgId, contactName || "Unknown", phoneNumber,
@@ -218,7 +218,7 @@ export async function POST(request: NextRequest) {
 
       // Update the reserved ui_calls row with call_uuid and status
       await query(
-        "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
+        "UPDATE fwai_aicall_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
         [result.callUuid, JSON.stringify(result.rawResponse), uiCallId]
       );
       console.log(`[Webhook trigger-call] Call triggered: ${result.callUuid} (ui_call: ${uiCallId})`);
@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
     } catch (callErr) {
       // Mark the reserved slot as failed
       await query(
-        "UPDATE ui_calls SET status = 'failed' WHERE id = $1",
+        "UPDATE fwai_aicall_calls SET status = 'failed' WHERE id = $1",
         [uiCallId]
       ).catch(() => {});
       throw callErr;
