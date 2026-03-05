@@ -28,6 +28,12 @@ const HEADERS = [
   "Interest Level",
   "Completion Rate (%)",
   "Call Summary",
+  "Approach",
+  "Voice",
+  "TTS Provider",
+  "Language",
+  "Prompt Length",
+  "Max Duration (s)",
   "Initiated At",
   "Completed At",
   "Call UUID",
@@ -39,6 +45,7 @@ const HEADERS = [
 
 function callToRow(call: CallRecord): string[] {
   const ed = call.endedData;
+  const tc = call.techConfig;
   return [
     call.request.contactName || "",
     call.request.phoneNumber || "",
@@ -48,6 +55,12 @@ function callToRow(call: CallRecord): string[] {
     call.interestLevel || "",
     call.completionRate != null ? call.completionRate.toString() : "",
     call.callSummary || "",
+    tc?.approach === "live_api" ? "Live API" : tc?.approach || "",
+    tc?.voice || "",
+    tc?.ttsProvider || "",
+    tc?.language || "",
+    tc?.promptLength?.toString() || "",
+    tc?.maxCallDuration?.toString() || "",
     formatDate(call.initiatedAt),
     ed?.timestamp ? formatDate(ed.timestamp) : "",
     call.callUuid || "",

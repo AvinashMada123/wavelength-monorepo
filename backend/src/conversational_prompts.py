@@ -16,6 +16,7 @@ DEFAULT_CONTEXT = {
     "course_name": "",
     "price": "",
     "intelligence_brief": "",
+    "super_coach_names": "",
 }
 
 

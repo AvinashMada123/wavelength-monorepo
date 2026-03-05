@@ -80,6 +80,15 @@ export interface CallMetrics {
   turn_count: number;
 }
 
+export interface TechConfig {
+  approach: string;        // "live_api" | "traditional"
+  voice: string;           // voice name used
+  ttsProvider: string;     // TTS provider
+  language: string;        // language code
+  promptLength: number;    // system prompt character count
+  maxCallDuration: number; // max call duration in seconds
+}
+
 export interface CallRecord {
   id: string;
   callUuid: string;
@@ -98,6 +107,7 @@ export interface CallRecord {
   botConfigName?: string;
   leadTags?: string[];
   leadCustomFields?: Record<string, unknown>;
+  techConfig?: TechConfig;
 }
 
 export type CallStatus =

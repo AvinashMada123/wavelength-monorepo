@@ -516,6 +516,7 @@ function ContextTab({
     { key: "eventName", label: "Event Name", placeholder: "e.g. AI Masterclass", variable: "{event_name}" },
     { key: "eventHost", label: "Event Host", placeholder: "e.g. Avinash", variable: "{event_host}" },
     { key: "location", label: "Location", placeholder: "e.g. Hyderabad", variable: "{location}" },
+    { key: "superCoachNames", label: "Super Coach Names", placeholder: "e.g. Anita, Meera", variable: "{super_coach_names}" },
   ];
 
   const customVars = contextVariables.customVariables || {};

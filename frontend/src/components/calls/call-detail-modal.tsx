@@ -21,6 +21,7 @@ import {
   CheckCircle,
   HelpCircle,
   Sparkles,
+  Settings2,
 } from "lucide-react";
 import type { CallRecord } from "@/types/call";
 import { MicroMomentTimeline } from "./micro-moment-timeline";
@@ -177,6 +178,48 @@ export function CallDetailModal({ call, open, onOpenChange }: CallDetailModalPro
                           {data.call_summary || "No summary available for this call."}
                         </p>
                       </div>
+
+                      {/* Tech Config */}
+                      {call.techConfig && (
+                        <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4 space-y-3">
+                          <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                            <Settings2 className="h-3.5 w-3.5 text-sky-400" />
+                            Tech Configuration
+                          </h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            <div className="rounded-md border bg-background/60 p-3 min-w-0">
+                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Approach</p>
+                              <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/20 text-xs">
+                                {call.techConfig.approach === "live_api" ? "Live API" : call.techConfig.approach || "—"}
+                              </Badge>
+                            </div>
+                            <div className="rounded-md border bg-background/60 p-3 min-w-0">
+                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Voice</p>
+                              <p className="text-xs font-medium">{call.techConfig.voice || "Default"}</p>
+                            </div>
+                            {call.techConfig.ttsProvider && (
+                              <div className="rounded-md border bg-background/60 p-3 min-w-0">
+                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">TTS Provider</p>
+                                <p className="text-xs font-medium capitalize">{call.techConfig.ttsProvider}</p>
+                              </div>
+                            )}
+                            {call.techConfig.language && (
+                              <div className="rounded-md border bg-background/60 p-3 min-w-0">
+                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Language</p>
+                                <p className="text-xs font-medium">{call.techConfig.language}</p>
+                              </div>
+                            )}
+                            <div className="rounded-md border bg-background/60 p-3 min-w-0">
+                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Prompt Length</p>
+                              <p className="text-xs font-medium">{call.techConfig.promptLength?.toLocaleString() || 0} <span className="text-muted-foreground">chars</span></p>
+                            </div>
+                            <div className="rounded-md border bg-background/60 p-3 min-w-0">
+                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Max Duration</p>
+                              <p className="text-xs font-medium">{Math.round((call.techConfig.maxCallDuration || 0) / 60)} <span className="text-muted-foreground">min</span></p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* AI Intelligence highlights */}
                       {(data.triggered_persona || (data.triggered_product_sections && data.triggered_product_sections.length > 0) || data.social_proof_used) && (

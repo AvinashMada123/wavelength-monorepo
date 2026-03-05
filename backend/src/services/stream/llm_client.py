@@ -68,8 +68,8 @@ class GeminiTextClient:
         self._model = "gemini-2.5-flash-lite"
 
         # Summarization state
-        self._summarize_after_turns = 6   # 12 messages before triggering summarization
-        self._keep_recent_messages = 12   # 6 recent turns verbatim (keeps context tight)
+        self._summarize_after_turns = 10  # 20 messages before triggering summarization
+        self._keep_recent_messages = 16   # 8 recent turns verbatim (keeps more context)
 
     def set_system_prompt(self, prompt: str):
         """Set system prompt (called once at start, updated on detection changes)."""
@@ -295,12 +295,12 @@ class GeminiTextClient:
 
         try:
             summary_prompt = (
-                "Summarize this conversation in 5 sentences. Focus on: "
-                "1) What the customer's situation/needs are, "
-                "2) Key objections or concerns they raised, "
-                "3) What was pitched/discussed, "
-                "4) Any agreements or commitments made, "
-                "5) The customer's current stance/sentiment.\n\n"
+                "Summarize this conversation concisely. You MUST include: "
+                "1) What step/phase the agent is currently on (e.g. 'Agent completed Step 12, about to start Step 13'). "
+                "2) Key information gathered (language choice, confirmations, names mentioned). "
+                "3) Any issues or objections raised. "
+                "4) The customer's current stance/sentiment. "
+                "CRITICAL: The step number is the most important detail — the agent must know exactly where to resume.\n\n"
                 + "\n".join(summary_input)
             )
 

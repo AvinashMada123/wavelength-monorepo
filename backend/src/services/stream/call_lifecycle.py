@@ -228,8 +228,11 @@ class CallLifecycle:
                     self.log.warn(f"{silence_duration:.1f}s silence - nudging AI")
                     if s._pipeline_mode == "traditional":
                         await s._ai_backend.inject_text(
-                            "[SYSTEM: The customer finished speaking but you haven't responded. "
-                            "Continue the conversation naturally.]"
+                            "[SYSTEM: There has been a pause in the conversation. "
+                            "If you asked a question and are waiting for the customer, "
+                            "gently check in with them (e.g. 'Are you still there?' or 'Take your time'). "
+                            "IMPORTANT: Do NOT answer your own question. Do NOT generate the customer's response. "
+                            "Only speak as yourself (the agent).]"
                         )
                     else:
                         await s._gemini._send_silence_nudge()

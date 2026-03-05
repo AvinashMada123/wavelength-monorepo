@@ -146,11 +146,11 @@ export async function POST(request: NextRequest) {
         jobTitle: payload.jobTitle,
       });
 
-      // Update the reserved ui_calls row with call_uuid
+      // Update the reserved ui_calls row with call_uuid and tech config
       if (uiCallId) {
         await query(
-          "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
-          [result.callUuid, JSON.stringify(result.rawResponse), uiCallId]
+          "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress', tech_config = $3 WHERE id = $4",
+          [result.callUuid, JSON.stringify(result.rawResponse), JSON.stringify(result.techConfig), uiCallId]
         ).catch(() => {});
       }
 

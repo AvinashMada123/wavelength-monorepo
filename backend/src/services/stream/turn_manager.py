@@ -12,6 +12,7 @@ import re
 import time
 from typing import Optional
 
+from google.genai import types
 from loguru import logger
 
 from .stt_client import DeepgramSTTClient
@@ -181,7 +182,39 @@ class TurnManager:
 
             elapsed = (time.time() - s._greeting_trigger_time) * 1000
             self.log.detail(f"Preloaded greeting played in {elapsed:.0f}ms: '{self._preloaded_greeting_text[:60]}'")
-            self._is_agent_speaking = False
+
+            # Keep _is_agent_speaking = True during greeting playback to block echo.
+            # Audio is queued instantly but plays over several seconds (16kHz, 16-bit PCM).
+            greeting_bytes = len(self._preloaded_greeting_audio) if self._preloaded_greeting_audio else 0
+            playback_seconds = greeting_bytes / 2 / 16000 if greeting_bytes > 0 else 0
+
+            async def _reset_speaking_after_greeting(delay: float):
+                await asyncio.sleep(delay + 0.5)  # +0.5s buffer for network lag
+                if self._is_agent_speaking:
+                    self._is_agent_speaking = False
+                    s._last_agent_turn_end_time = time.time()
+                    self.log.detail(f"Greeting playback complete ({delay:.1f}s), echo guard released")
+
+            asyncio.create_task(_reset_speaking_after_greeting(playback_seconds))
+
+            # Add user+model pair so LLM knows greeting was spoken — prevents re-greeting.
+            # MUST be a pair (user then model) to keep Gemini's alternating message format.
+            # A lone user message would create consecutive user msgs when the real user speaks.
+            self.llm._messages.append(types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=(
+                    "[SYSTEM: Your greeting above has been spoken and the customer heard it. "
+                    "Do NOT repeat or rephrase your greeting. When the customer responds, "
+                    "continue directly to the NEXT step of the conversation.]"
+                ))],
+            ))
+            self.llm._messages.append(types.Content(
+                role="model",
+                parts=[types.Part.from_text(text=(
+                    "[Understood. Greeting already delivered. Waiting for customer response "
+                    "to continue to the next step.]"
+                ))],
+            ))
 
             # Clean up
             self._preloaded_greeting_audio = None

@@ -95,8 +95,9 @@ export async function POST(request: NextRequest) {
               completion_rate = $5,
               call_summary = $6,
               qualification = $7,
+              tech_config = COALESCE($8, tech_config),
               completed_at = NOW()
-            WHERE id = $8`,
+            WHERE id = $9`,
             [
               callStatus,
               JSON.stringify(data),
@@ -105,6 +106,7 @@ export async function POST(request: NextRequest) {
               data.completion_rate || 0,
               data.call_summary || "",
               data.qualification ? JSON.stringify(data.qualification) : null,
+              data.tech_config ? JSON.stringify(data.tech_config) : null,
               callRow.id,
             ]
           );

@@ -173,6 +173,9 @@ export async function POST(request: NextRequest) {
     await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT ''`);
     await query(`ALTER TABLE bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT ''`);
 
+    // Migrations: tech_config on ui_calls (approach, voice, STT, TTS, LLM, prompt length)
+    await query(`ALTER TABLE ui_calls ADD COLUMN IF NOT EXISTS tech_config JSONB`);
+
     // 16. call_queue (webhook calls queued when at concurrency limit)
     await query(`CREATE TABLE IF NOT EXISTS call_queue (
       id TEXT PRIMARY KEY,

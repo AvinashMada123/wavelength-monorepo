@@ -196,6 +196,14 @@ export interface TriggerCallResult {
   callServerPayload: Record<string, any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   configDoc: Record<string, any> | null;
+  techConfig: {
+    approach: string;
+    voice: string;
+    ttsProvider: string;
+    language: string;
+    promptLength: number;
+    maxCallDuration: number;
+  };
 }
 
 /**
@@ -290,6 +298,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     event_name: eventName || ctx.eventName || "",
     event_host: eventHost || ctx.eventHost || "",
     location: location || ctx.location || "",
+    super_coach_names: ctx.superCoachNames || "",
     bot_config_id: botConfigId,
     ...(contactEmail ? { email: contactEmail } : {}),
   };
@@ -430,6 +439,14 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     rawResponse: data,
     callServerPayload,
     configDoc,
+    techConfig: {
+      approach: (configDoc.pipeline_mode as string) || "live_api",
+      voice: (configDoc.voice as string) || voice || "",
+      ttsProvider: (configDoc.tts_provider as string) || "",
+      language: (configDoc.language as string) || "",
+      promptLength: (configDoc.prompt as string)?.length || 0,
+      maxCallDuration: (configDoc.max_call_duration as number) ?? 300,
+    },
   };
 }
 
@@ -599,10 +616,10 @@ export async function triggerNextCampaignCalls(campaignId: string): Promise<numb
         contactEmail: (cl.email as string) || undefined,
       });
 
-      // Update the reserved ui_calls row with call_uuid
+      // Update the reserved ui_calls row with call_uuid and tech config
       await query(
-        "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress' WHERE id = $3",
-        [result.callUuid, JSON.stringify(result.rawResponse), slot.uiCallId]
+        "UPDATE ui_calls SET call_uuid = $1, response = $2, status = 'in-progress', tech_config = $3 WHERE id = $4",
+        [result.callUuid, JSON.stringify(result.rawResponse), JSON.stringify(result.techConfig), slot.uiCallId]
       );
 
       // Store call_uuid in campaign_lead

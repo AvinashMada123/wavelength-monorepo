@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Loader2, Upload, RefreshCw, FileText, ChevronDown, ChevronUp, Save, Check } from "lucide-react";
+import { Loader2, Upload, RefreshCw, FileText, ChevronDown, ChevronUp, Save, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { toast } from "sonner";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
@@ -29,18 +29,31 @@ export function ConversationFlowTab({
   const [fileContent, setFileContent] = useState("");
   const [fileName, setFileName] = useState("");
   const [showSource, setShowSource] = useState(false);
+  const [zoom, setZoom] = useState(100);
   const chartRef = useRef<HTMLDivElement>(null);
+  const chartInnerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const renderCountRef = useRef(0);
 
+  const handleZoomIn = () => setZoom((z) => Math.min(z + 25, 200));
+  const handleZoomOut = () => setZoom((z) => Math.max(z - 25, 25));
+  const handleZoomReset = () => setZoom(100);
+
   const renderMermaid = useCallback(async (code: string) => {
-    if (!chartRef.current || !code) return;
+    if (!chartInnerRef.current || !code) return;
     try {
       const mermaid = (await import("mermaid")).default;
       mermaid.initialize({
         startOnLoad: false,
         theme: "dark",
         securityLevel: "loose",
+        flowchart: {
+          useMaxWidth: false,
+          htmlLabels: true,
+          curve: "basis",
+          nodeSpacing: 30,
+          rankSpacing: 40,
+        },
         themeVariables: {
           primaryColor: "#6366f1",
           primaryTextColor: "#e2e8f0",
@@ -48,12 +61,19 @@ export function ConversationFlowTab({
           lineColor: "#94a3b8",
           secondaryColor: "#1e293b",
           tertiaryColor: "#0f172a",
+          background: "transparent",
+          mainBkg: "#1e293b",
+          nodeBorder: "#818cf8",
+          clusterBkg: "#0f172a",
+          clusterBorder: "#334155",
+          titleColor: "#e2e8f0",
+          fontSize: "14px",
         },
       });
 
-      chartRef.current.innerHTML = "";
+      chartInnerRef.current.innerHTML = "";
       const container = document.createElement("div");
-      chartRef.current.appendChild(container);
+      chartInnerRef.current.appendChild(container);
 
       renderCountRef.current += 1;
       const id = `flow-chart-${renderCountRef.current}-${Date.now()}`;
@@ -61,10 +81,11 @@ export function ConversationFlowTab({
       container.innerHTML = svg;
     } catch (err) {
       console.error("[mermaid] Render error:", err);
-      if (chartRef.current) {
-        chartRef.current.innerHTML = `<p class="text-sm text-destructive">Failed to render flowchart. The generated syntax may be invalid.</p>
-          <pre class="mt-2 text-xs text-muted-foreground bg-muted/50 p-2 rounded overflow-x-auto">${String(err)}</pre>`;
+      if (chartInnerRef.current) {
+        chartInnerRef.current.innerHTML = `<p class="text-sm text-destructive">Failed to render flowchart. Click "Show Mermaid Source" below to inspect the generated code.</p>
+          <pre class="mt-2 text-xs text-muted-foreground bg-muted/50 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">${String(err).slice(0, 500)}</pre>`;
       }
+      setShowSource(true);
     }
   }, []);
 
@@ -105,6 +126,7 @@ export function ConversationFlowTab({
       if (!res.ok) throw new Error(data.error || "Failed to generate");
       setMermaidCode(data.mermaidCode);
       onMermaidCodeChange(data.mermaidCode);
+      setZoom(100);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate flow");
     } finally {
@@ -116,7 +138,6 @@ export function ConversationFlowTab({
     setSaving(true);
     try {
       onMermaidCodeChange(mermaidCode);
-      // Small delay so parent state updates before save
       await new Promise((r) => setTimeout(r, 50));
       await onSave();
       toast.success("Conversation flow saved");
@@ -238,10 +259,36 @@ export function ConversationFlowTab({
       {mermaidCode && (
         <Card>
           <CardContent className="pt-6">
+            {/* Zoom controls */}
+            <div className="flex items-center gap-2 mb-3">
+              <Button variant="outline" size="sm" onClick={handleZoomOut} disabled={zoom <= 25}>
+                <ZoomOut className="size-4" />
+              </Button>
+              <span className="text-xs text-muted-foreground w-12 text-center font-mono">{zoom}%</span>
+              <Button variant="outline" size="sm" onClick={handleZoomIn} disabled={zoom >= 200}>
+                <ZoomIn className="size-4" />
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleZoomReset}>
+                <Maximize2 className="size-4 mr-1" />
+                <span className="text-xs">Fit</span>
+              </Button>
+            </div>
+
+            {/* Chart container with scroll and zoom */}
             <div
               ref={chartRef}
-              className="overflow-x-auto [&_svg]:mx-auto [&_svg]:max-w-full"
-            />
+              className="overflow-auto max-h-[75vh] border border-border/50 rounded-lg bg-background/50"
+            >
+              <div
+                ref={chartInnerRef}
+                className="p-4 origin-top-left transition-transform duration-200"
+                style={{
+                  transform: `scale(${zoom / 100})`,
+                  transformOrigin: "top center",
+                  minWidth: zoom > 100 ? `${zoom}%` : undefined,
+                }}
+              />
+            </div>
 
             <div className="mt-4 border-t pt-3">
               <button

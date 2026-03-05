@@ -27,6 +27,7 @@ export interface BotContextVariables {
   eventName?: string;
   eventHost?: string;
   location?: string;
+  superCoachNames?: string;
   customVariables?: Record<string, string>;
   customVariableMappings?: Record<string, string>;
 }
