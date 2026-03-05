@@ -744,10 +744,14 @@ class GeminiConnection:
                         # full prompt and follows its natural flow. Injection only happens on reconnect
                         # (via build_reconnect_prompt in prompt_builder).
                         if s._step_manager and s._step_manager.enabled and full_user:
-                            prev_step = s._step_manager.current_step
-                            next_step = s._step_manager.advance_step()
-                            if next_step:
-                                self.log.detail(f"Step {prev_step.id} → {next_step.id}: {next_step.goal}")
+                            # Only advance on meaningful responses (not garbled STT noise)
+                            user_alpha = sum(1 for c in full_user if c.isalpha())
+                            is_meaningful = user_alpha >= 5 and not self._is_garbled(full_user)
+                            if is_meaningful:
+                                prev_step = s._step_manager.current_step
+                                next_step = s._step_manager.advance_step()
+                                if next_step:
+                                    self.log.detail(f"Step {prev_step.id} → {next_step.id}: {next_step.goal}")
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
