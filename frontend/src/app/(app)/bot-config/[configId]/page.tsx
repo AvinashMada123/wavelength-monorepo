@@ -453,7 +453,7 @@ function PromptTab({
       if (data.convertedPrompt) {
         setPreviewPrompt(data.convertedPrompt);
         setShowPreview(true);
-        toast.success("Prompt converted! Review and apply below.");
+        toast.success("Prompt optimized! Review and apply below.");
       } else {
         toast.error(data.error || "Conversion failed");
       }
@@ -498,7 +498,7 @@ function PromptTab({
             ) : (
               <>
                 <Workflow className="size-4 mr-2" />
-                Convert to NEPQ
+                Optimize Prompt
               </>
             )}
           </Button>
