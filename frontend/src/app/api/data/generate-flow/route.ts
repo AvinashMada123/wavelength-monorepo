@@ -23,6 +23,9 @@ function sanitizeMermaid(raw: string): string {
   code = code.replace(/[\u2013\u2014]/g, "-");
   code = code.replace(/\u2026/g, "...");
 
+  // Fix edges pointing to subgraph: "S6 --> subgraph P3[...]" → split into separate lines
+  code = code.replace(/^(\s*\S+\s+-->[^\n]*?)\s+subgraph\s+/gm, "$1\n    subgraph ");
+
   code = code.split("\n").map((line) => {
     const trimmed = line.trim();
 
@@ -130,9 +133,10 @@ ${fileContent ? `\n## Supplementary File Content:\n${fileContent.slice(0, 8000)}
     // Try Claude first (better at structured output), fall back to Gemini
     let mermaidCode = "";
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY || "AIzaSyAT_jWNpBGVdd029_Wa2jPHX3iInqNey7w";
 
     if (anthropicKey) {
+      console.log("[generate-flow] Using Anthropic Claude Haiku");
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -150,13 +154,20 @@ ${fileContent ? `\n## Supplementary File Content:\n${fileContent.slice(0, 8000)}
         const data = await res.json();
         const text = data.content?.[0]?.text || "";
         mermaidCode = sanitizeMermaid(text);
+        console.log("[generate-flow] Anthropic succeeded");
+      } else {
+        const errText = await res.text();
+        console.error("[generate-flow] Anthropic failed:", res.status, errText);
       }
+    } else {
+      console.log("[generate-flow] No ANTHROPIC_API_KEY, skipping Claude");
     }
 
     // Fallback to Gemini
     if (!mermaidCode && geminiKey) {
+      console.log("[generate-flow] Falling back to Gemini 2.0 Flash");
       const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
       const genResult = await model.generateContent(content);
       mermaidCode = sanitizeMermaid(genResult.response.text());
     }
