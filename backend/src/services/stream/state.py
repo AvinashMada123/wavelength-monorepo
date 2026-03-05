@@ -292,6 +292,9 @@ class SessionState:
         # AI backend reference (set by session.py after construction)
         self._ai_backend = None
 
+        # Step-based flow manager (set by prompt_builder if prompt has NEPQ flow)
+        self._step_manager = None
+
         # ---- Component references (set by session.py after construction) ----
         self._audio = None
         self._gemini = None

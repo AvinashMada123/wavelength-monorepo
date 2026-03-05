@@ -145,6 +145,17 @@ class ToolHandler:
                     )
                     self.log.detail(f"User info saved: company={t_company}, role={t_role}, name={t_name}")
 
+                    # Feed into step manager for compact reconnect prompts
+                    if s._step_manager and s._step_manager.enabled:
+                        if t_role:
+                            s._step_manager.add_info("role", t_role)
+                        if t_company:
+                            s._step_manager.add_info("company", t_company)
+                        if t_name:
+                            s._step_manager.add_info("name", t_name)
+                        if t_key_detail:
+                            s._step_manager.add_info("key_detail", t_key_detail)
+
                     # Track key facts for session split context (survives all splits)
                     if t_role:
                         fact = f"Customer role: {t_role}"

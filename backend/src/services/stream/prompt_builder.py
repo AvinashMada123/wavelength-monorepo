@@ -393,9 +393,21 @@ class PromptBuilder:
             "7) If asked for info you have, share it directly. Never get stuck repeating yourself."
         )
 
-        # On reconnect or hot-swap, append conversation context + anti-repetition
-        # to system_instruction so AI knows where the conversation is.
-        if not s._is_first_connection:
+        # Step manager: parse steps from prompt on first build (for reconnect use)
+        if s._step_manager is None and s._is_first_connection:
+            from .step_manager import StepManager
+            sm = StepManager(s)
+            if sm.parse_from_prompt(full_prompt, s.context):
+                s._step_manager = sm
+
+        # On reconnect, use step-based compact prompt if available
+        if not s._is_first_connection and s._step_manager and s._step_manager.enabled:
+            compact = s._step_manager.build_reconnect_prompt()
+            compact = render_prompt(compact, s.context)
+            self.log.detail(f"Step-based reconnect prompt: {len(compact)} chars (step {s._step_manager.current_step.id}/{s._step_manager.total_steps})")
+            full_prompt = compact
+            # Skip the normal reconnect logic below — step prompt handles everything
+        elif not s._is_first_connection:
             summary = s._prompt_builder._build_compact_summary()
             if summary:
                 full_prompt += f"\n\n[CONVERSATION SO FAR — you are mid-call, do NOT greet again:]\n{summary}"

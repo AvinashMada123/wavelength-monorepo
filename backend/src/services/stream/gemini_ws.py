@@ -67,16 +67,17 @@ class GeminiConnection:
         return (blocked_count / total) > 0.3  # >30% blocked chars
 
     def _is_non_english(self, text):
-        """Check if text is predominantly non-English (>30% non-Latin chars).
+        """Check if text is predominantly non-English (>50% non-Latin chars).
         Detects Hindi, Telugu, Tamil, Kannada, Malayalam, Bengali, Gujarati, Gurmukhi
-        and other regional Indic scripts that indicate a language barrier."""
+        and other regional Indic scripts that indicate a language barrier.
+        Requires at least 4 alpha chars to avoid false positives from short STT noise."""
         if not text:
             return False
         alpha_chars = [c for c in text if c.isalpha()]
-        if not alpha_chars:
+        if len(alpha_chars) < 4:
             return False
         non_latin = sum(1 for c in alpha_chars if ord(c) > 0x024F)  # Beyond Extended Latin
-        return (non_latin / len(alpha_chars)) > 0.3
+        return (non_latin / len(alpha_chars)) > 0.5
 
     async def _connect_and_setup_ws(self, is_standby=False):
         """Create a new Gemini WS connection and send setup message.
@@ -738,6 +739,25 @@ class GeminiConnection:
                                 if m not in s._conversation_milestones:
                                     s._conversation_milestones.append(m)
 
+                        # Step manager: advance step after each completed turn
+                        if s._step_manager and s._step_manager.enabled and full_user:
+                            prev_step = s._step_manager.current_step
+                            next_step = s._step_manager.advance_step()
+                            if next_step:
+                                self.log.detail(f"Step {prev_step.id} → {next_step.id}: {next_step.goal}")
+                                # Inject next step guidance via client_content
+                                advance_msg = s._step_manager.build_step_advance_message()
+                                if advance_msg and s.goog_live_ws:
+                                    try:
+                                        await s.goog_live_ws.send(json.dumps({
+                                            "client_content": {
+                                                "turns": [{"role": "user", "parts": [{"text": advance_msg}]}],
+                                                "turn_complete": False
+                                            }
+                                        }))
+                                    except Exception:
+                                        pass
+
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
                             s._accumulated_user_text += " " + full_user
@@ -928,7 +948,7 @@ class GeminiConnection:
                                     if self._is_non_english(user_text):
                                         s._consecutive_non_english += 1
                                         lang_cooldown = getattr(s, '_lang_barrier_last_fired', 0)
-                                        if s._consecutive_non_english >= 2 and (time.time() - lang_cooldown) > 60:
+                                        if s._consecutive_non_english >= 3 and (time.time() - lang_cooldown) > 60:
                                             s._lang_barrier_last_fired = time.time()
                                             self.log.warn(f"Language barrier detected — {s._consecutive_non_english} non-English messages")
                                             s._transcript._save_transcript("SYSTEM", f"Language barrier: {s._consecutive_non_english} consecutive non-English messages")
