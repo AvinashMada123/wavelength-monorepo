@@ -34,6 +34,20 @@ class ToolHandler:
             self.log.detail(f"Tool: {tool_name}")
             s._transcript._save_transcript("TOOL", f"{tool_name}: {tool_args}")
 
+            # Handle switch_language tool (Live API path)
+            if tool_name == "switch_language":
+                lang_code = tool_args.get("language_code", "")
+                self.log.detail(f"Language switch requested: {lang_code}")
+                resp = {"success": True, "language": lang_code, "message": f"Switched to {lang_code}. Continue in the new language."}
+                if send_response:
+                    try:
+                        await s._ai_backend.send_tool_response(call_id, tool_name, resp)
+                    except Exception:
+                        pass
+                else:
+                    results.append({"id": call_id, "name": tool_name, "response": resp})
+                return results if not send_response else None
+
             # Handle end_call tool
             if tool_name == "end_call":
                 s._closing_call = True  # Immediately prevent further agent speech

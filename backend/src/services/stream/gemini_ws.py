@@ -574,6 +574,9 @@ class GeminiConnection:
                     s._is_first_connection = False
                     s._greeting_trigger_time = time.time()
                     await s._prompt_builder._send_initial_greeting()
+                    # Pre-warm standby immediately so it's ready before any GoAway
+                    if not s._standby_ws and not s._prewarm_task:
+                        s._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
                 elif s._is_reconnecting:
                     s._is_reconnecting = False
                     await s._prompt_builder._send_reconnection_trigger()
@@ -837,6 +840,21 @@ class GeminiConnection:
                                 break
                         if s.plivo_ws:
                             await s.plivo_ws.send_text(json.dumps({"event": "clearAudio", "stream_id": s.stream_id}))
+                        # Anti-repetition: tell AI what it already said so it doesn't repeat
+                        interrupted_text = " ".join(s._current_turn_agent_text) if s._current_turn_agent_text else ""
+                        if interrupted_text and s.goog_live_ws:
+                            try:
+                                await s.goog_live_ws.send(json.dumps({
+                                    "client_content": {
+                                        "turns": [{"role": "user", "parts": [{"text":
+                                            f"[You were interrupted after saying: \"{interrupted_text[:200]}\". "
+                                            f"Do NOT repeat this. Respond to what the customer says next.]"
+                                        }]}],
+                                        "turn_complete": False
+                                    }
+                                }))
+                            except Exception:
+                                pass
                     else:
                         # Likely residual noise — don't clear, let the audio play
                         self.log.warn(f"AI interrupt IGNORED (only {chunks_sent} chunks sent — likely noise)")

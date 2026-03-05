@@ -381,45 +381,16 @@ class PromptBuilder:
         _now = _dt.now()
         full_prompt += f"\n\n[CURRENT DATE/TIME: {_now.strftime('%A, %B %d, %Y at %I:%M %p')}]"
 
-        # Minimal universal rules — safety net for prompts that lack their own.
+        # Minimal universal rules — compact for lower latency
         full_prompt += (
             "\n\n[CORE RULES] "
-            "1) Max 1-2 sentences, then STOP and WAIT for the customer to respond. "
-            "NEVER answer your own questions. NEVER generate the customer's response. "
-            "NEVER put words in the customer's mouth or complete their sentences. "
-            "You are ONLY the agent — never role-play both sides of the conversation. "
-            "NEVER continue talking after asking a question. "
-            "Always end your response with a question. Never end on a statement and wait silently. "
-            "2) If you receive context about a previous conversation, do NOT acknowledge it. "
-            "Just wait for the customer to speak, then respond naturally. "
-            "3) You have a maximum of 2 attempts to present any single offer. After 2 attempts "
-            "without a clear yes or no, you MUST move to one of: (a) ask what is holding them back, "
-            "(b) offer an alternative date/time, (c) acknowledge their hesitation and give them space. "
-            "If you have mentioned the same session, event, or offer in two separate turns, your attempts "
-            "are used up. Do NOT rephrase and repeat the same offer a third time. "
-            "4) When the customer gives a short response (1-3 words) that determines a yes/no decision, "
-            "confirm their intent before acting on it. Say 'Just to confirm, you would like to join?' "
-            "before triggering any workflow or pivoting to a rejection fallback. "
-            "5) When ending a call, say your closing phrase exactly once. Do not say goodbye or "
-            "'see you tonight' or 'looking forward' more than once. "
-            "If you already said 'bye'/'take care' and the customer responds, "
-            "call end_call IMMEDIATELY with zero text — do NOT say another goodbye. "
-            "6) IMPORTANT: The customer's speech is transcribed by speech-to-text which can be INACCURATE. "
-            "If the customer's response seems garbled, nonsensical, or doesn't match the context, "
-            "assume POSITIVE intent (e.g. they probably said 'yes'/'sure'/'okay') and continue the conversation. "
-            "NEVER treat a garbled/unclear response as a rejection or 'not interested'. "
-            "If truly ambiguous, ask a simple clarifying question like 'Sorry, could you say that again?' "
-            "7) INFORMATIONAL STEPS: When a step is purely informational (no question asked), "
-            "deliver the information and IMMEDIATELY continue to the next step in the same turn. "
-            "Do NOT wait for 'okay' or acknowledgment on purely informational statements. "
-            "Only wait when you explicitly ask a question or need the customer to do something. "
-            "8) NEVER GET STUCK: If the customer asks you for information you have (names, details, etc.), "
-            "TELL THEM directly. Do NOT repeatedly say 'check WhatsApp' if they are asking YOU. "
-            "If you have context variables with the answer, share it. "
-            "If you've asked the same thing twice and the customer can't answer, help them or move on. "
-            "9) STEP TRACKING: Always remember which step you are on. After a conversation summary, "
-            "check the summary for the last completed step and continue from the NEXT step. "
-            "NEVER restart from Step 1 or repeat earlier steps that were already completed."
+            "1) 1-2 sentences max, then STOP and WAIT. Never answer your own questions or role-play the customer. "
+            "2) Max 2 attempts per offer. After 2, move on — ask what's holding them back or offer alternatives. "
+            "3) Say goodbye ONCE. If customer says bye after you, call end_call immediately with no text. "
+            "4) Garbled/unclear speech = assume positive intent. Never treat noise as rejection. "
+            "5) Info-only steps: deliver and continue immediately. Only wait after questions. "
+            "6) Never restart from Step 1. Track your progress and continue forward. "
+            "7) If asked for info you have, share it directly. Never get stuck repeating yourself."
         )
 
         # On reconnect or hot-swap, append conversation context + anti-repetition
@@ -439,36 +410,18 @@ class PromptBuilder:
                             'These topics are DONE — never revisit them.'
                         )
                     full_prompt += (
-                        f'\n\n[ANTI-REPETITION — Last exchange: You said: "{agent_ref[:400]}" '
-                        f'Customer replied: "{last_user[:400]}".{milestone_hint} '
-                        'Pick up EXACTLY from here. Respond directly to what the customer '
-                        'just said and move the conversation FORWARD to a NEW topic. '
-                        'Do NOT rephrase, re-pitch, or revisit anything from the conversation above. '
-                        'Do NOT ask a question similar to anything already asked above.]'
+                        f'\n\n[LAST EXCHANGE — You: "{agent_ref[:300]}" '
+                        f'Customer: "{last_user[:300]}".{milestone_hint} '
+                        'Continue FORWARD from here. Do NOT repeat anything above.]'
                     )
                 # Explicit questions blacklist for the new session
                 if s._questions_asked:
-                    questions_list = "; ".join(f'"{q[:80]}"' for q in s._questions_asked[-6:])
-                    full_prompt += (
-                        f'\n\n[QUESTIONS ALREADY ASKED — DO NOT ask these or anything similar: {questions_list}. '
-                        'Ask something COMPLETELY NEW.]'
-                    )
-                # Explicit techniques blacklist for the new session
+                    questions_list = "; ".join(f'"{q[:60]}"' for q in s._questions_asked[-4:])
+                    full_prompt += f'\n\n[ASKED ALREADY — skip these: {questions_list}]'
                 if s._objection_techniques_used:
-                    techniques_list = "; ".join(s._objection_techniques_used)
-                    full_prompt += (
-                        f'\n\n[OBJECTION TECHNIQUES ALREADY TRIED: {techniques_list}. '
-                        'You MUST use a DIFFERENT technique next time.]'
-                    )
-                # Extra guard for post-greeting reconnects: the AI already greeted,
-                # so NEVER repeat the greeting even if the summary includes it
+                    full_prompt += f'\n\n[TECHNIQUES TRIED: {"; ".join(s._objection_techniques_used)}. Use different ones.]'
                 if s.greeting_sent and s._turn_count <= 1:
-                    full_prompt += (
-                        "\n\n[CRITICAL: You already greeted the customer with your opening line. "
-                        "Do NOT say your greeting again. Do NOT introduce yourself again. "
-                        "Do NOT say your name or company name again. "
-                        "Simply respond to whatever the customer says next — like 'Hello' or 'Hi'.]"
-                    )
+                    full_prompt += "\n\n[You already greeted. Do NOT greet or introduce yourself again.]"
                 self.log.detail(f"Setup with summary ({len(summary)} chars)")
             else:
                 file_history = s._transcript._load_conversation_from_file()
@@ -586,10 +539,10 @@ class PromptBuilder:
                 lines.append(f"  - {fact}")
             lines.append("")
 
-        # Recent conversation — last 10 turns for context
+        # Recent conversation — last 4 turns for context (keeps prompt compact)
         if s._turn_exchanges:
             lines.append("RECENT CONVERSATION:")
-            exchanges = s._turn_exchanges[-10:]
+            exchanges = s._turn_exchanges[-4:]
             for i, ex in enumerate(exchanges):
                 turn_num = s._turn_count - len(exchanges) + i + 1
                 agent = ex.get("agent", "")[:200]
