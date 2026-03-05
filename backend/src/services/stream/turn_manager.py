@@ -706,10 +706,22 @@ class TurnManager:
                     async for event in self.llm.generate(user_text, tool_result):
                         self.log.detail(f"LLM event: {type(event).__name__}")
                         if isinstance(event, TextChunk):
-                            accumulated_text += event.text
+                            # Filter out hallucinated tool calls that LLM emits as text
+                            chunk_text = event.text
+                            if re.search(r'<ctrl\d+>|print\(default_api\.|```python|```tool', chunk_text):
+                                self.log.detail(f"Filtered hallucinated tool call from TTS: '{chunk_text[:80]}'")
+                                # Try to extract actual end_call intent
+                                if 'end_call' in chunk_text:
+                                    self.log.detail("Detected end_call intent in hallucinated text — triggering hangup")
+                                    await self._tts_queue.put(None)
+                                    s._closing_call = True
+                                    asyncio.create_task(s._lifecycle._hangup_call_delayed(1.0))
+                                    return
+                                continue
+                            accumulated_text += chunk_text
                             # LLM sends large chunks — scan for flush points
                             # within the chunk to enable aggressive sub-sentence splitting
-                            for char in event.text:
+                            for char in chunk_text:
                                 tts_buffer += char
                                 if self._should_flush_tts(tts_buffer, is_first_sentence):
                                     self.log.detail(f"TTS flush: '{tts_buffer[:60]}...'")
@@ -843,6 +855,21 @@ class TurnManager:
     async def _execute_tool(self, tool_call_event: ToolCall) -> dict:
         """Execute a tool call and return the result dict."""
         s = self.state
+
+        # Handle switch_language locally (no need for ToolHandler)
+        if tool_call_event.name == "switch_language":
+            lang_code = tool_call_event.args.get("language_code", "")
+            if lang_code and hasattr(self.tts, 'set_language'):
+                self.tts.set_language(lang_code)
+                self.log.detail(f"Language switched to {lang_code} via tool call")
+                return {
+                    "name": "switch_language",
+                    "response": {"success": True, "language": lang_code},
+                }
+            return {
+                "name": "switch_language",
+                "response": {"success": False, "message": "Language switch not supported"},
+            }
 
         # Build tool_call dict matching the format ToolHandler expects
         tool_call_dict = {

@@ -262,6 +262,34 @@ class GoogleCloudTTSClient:
         """Reset cancellation flag for next turn."""
         self._cancelled = False
 
+    def set_language(self, language_code: str):
+        """Switch TTS language mid-call. Rebuilds voice name for new language.
+
+        E.g. switching from en-IN to hi-IN: en-IN-Chirp3-HD-Kore → hi-IN-Chirp3-HD-Kore
+        """
+        old_lang = self._language
+        self._language = language_code
+
+        # Extract the base voice name (e.g. "Kore" from "en-IN-Chirp3-HD-Kore")
+        base_voice = None
+        if self._voice:
+            for name in self._GEMINI_VOICE_NAMES:
+                if name in self._voice:
+                    base_voice = name
+                    break
+
+        if base_voice:
+            self._voice = f"{language_code}-Chirp3-HD-{base_voice}"
+        elif self._voice and "-" in self._voice:
+            # Full voice name — replace language prefix
+            parts = self._voice.split("-")
+            if len(parts) >= 4:
+                parts[0] = language_code.split("-")[0]
+                parts[1] = language_code.split("-")[1] if "-" in language_code else parts[1]
+                self._voice = "-".join(parts)
+
+        self.log.detail(f"Cloud TTS language switched: {old_lang} → {language_code}, voice={self._voice}")
+
     async def close(self):
         """Close HTTP client (call on session teardown)."""
         await self._http.aclose()

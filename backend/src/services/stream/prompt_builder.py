@@ -131,6 +131,20 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "switch_language",
+        "description": "Switch the voice language for this call. Call this IMMEDIATELY when the customer chooses a language (e.g. 'Hindi please', 'Tamil', 'English'). Supported languages: en-IN (English India), hi-IN (Hindi), ta-IN (Tamil), te-IN (Telugu), bn-IN (Bengali), kn-IN (Kannada), ml-IN (Malayalam), gu-IN (Gujarati). After calling this, continue speaking in the chosen language.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "language_code": {
+                    "type": "string",
+                    "description": "The language code to switch to, e.g. 'hi-IN' for Hindi, 'ta-IN' for Tamil, 'en-IN' for English"
+                }
+            },
+            "required": ["language_code"]
+        }
+    },
+    {
         "name": "get_social_proof",
         "description": "Get social proof statistics to reference in conversation. Call this when you learn the prospect's company, city, or job role, to get real numbers you can mention naturally.",
         "parameters": {
