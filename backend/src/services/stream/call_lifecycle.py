@@ -346,8 +346,9 @@ class CallLifecycle:
             await asyncio.sleep(5.0)
 
             while s.is_active and not s._closing_call:
-                # Guard: never fire if AI is currently generating audio or swap is in progress
-                if s._current_turn_audio_chunks > 0 or s._swap_in_progress or s._agent_speaking:
+                # Guard: never fire if AI is generating audio, swap in progress, or user is speaking
+                # When user is speaking the AI is EXPECTED to be silent (listening).
+                if s._current_turn_audio_chunks > 0 or s._swap_in_progress or s._agent_speaking or s._user_speaking:
                     await asyncio.sleep(2.0)
                     continue
 
@@ -477,7 +478,13 @@ class CallLifecycle:
                             continue
 
                         # General unresponsive check for mid-call (turn > 1)
-                        if time_since_agent > 10.0 and s._turn_count > 1:
+                        # IMPORTANT: Don't fire if user spoke recently — AI needs time to
+                        # process what the user said before generating a response.
+                        user_spoke_recently = (
+                            s._last_user_speech_time
+                            and (time.time() - s._last_user_speech_time) < 6.0
+                        )
+                        if time_since_agent > 10.0 and s._turn_count > 1 and not user_spoke_recently:
                             self.log.warn(f"Session watchdog: AI unresponsive for {time_since_agent:.0f}s "
                                           f"— forcing reconnect")
                             s._transcript._save_transcript("SYSTEM", "Watchdog: AI unresponsive, forcing reconnect")
@@ -724,3 +731,6 @@ class CallLifecycle:
             s._conversation_thread.join(timeout=2.0)
 
         s._post_call._start_post_call_processing(duration)
+
+        # Clean up per-call log sink
+        self.log.remove_sink()

@@ -313,5 +313,10 @@ ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT D
 
 ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT '';
 
+-- Migration: response guidelines, TTS formatting rules, inactivity timeout
+ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS response_guidelines TEXT DEFAULT '';
+ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS tts_formatting_rules TEXT DEFAULT '';
+ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS inactivity_timeout_seconds REAL DEFAULT NULL;
+
 -- Fast counting of active calls for concurrency gate
 CREATE INDEX IF NOT EXISTS idx_fwai_aicall_calls_org_active ON fwai_aicall_calls(org_id) WHERE status IN ('in-progress', 'initiating');

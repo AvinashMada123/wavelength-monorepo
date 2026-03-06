@@ -227,6 +227,27 @@ class ToolHandler:
                     results.append({"id": call_id, "name": tool_name, "response": resp})
                 return results if not send_response else None
 
+            # Handle tag_lead tool — AI-driven lead qualification
+            if tool_name == "tag_lead":
+                temperature = tool_args.get("temperature", "").lower()
+                reason = tool_args.get("reason", "")
+                if temperature in ("hot", "warm", "cold"):
+                    s._lead_temperature = temperature
+                    s._lead_tag_reason = reason
+                    self.log.detail(f"Lead tagged: {temperature} — {reason}")
+                    s._transcript._save_transcript("SYSTEM", f"Lead tagged: {temperature} ({reason})")
+                    resp = {"success": True, "message": f"Lead tagged as {temperature}"}
+                else:
+                    resp = {"success": False, "message": "Invalid temperature. Use 'hot', 'warm', or 'cold'."}
+                if send_response:
+                    try:
+                        await s._ai_backend.send_tool_response(call_id, tool_name, resp)
+                    except Exception:
+                        pass
+                else:
+                    results.append({"id": call_id, "name": tool_name, "response": resp})
+                return results if not send_response else None
+
             # Handle get_social_proof tool — returns enrollment stats for conversation
             if tool_name == "get_social_proof":
                 # Gate: if min turn threshold not reached, tell AI to continue discovery instead

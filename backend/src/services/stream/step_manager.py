@@ -9,12 +9,12 @@ The FIRST connection uses the full prompt (for maximum AI flexibility).
 Session splits use compact step-based prompts (for speed + precision).
 """
 
+import math
 import re
-import logging
 from datetime import datetime
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class Step:
@@ -41,6 +41,8 @@ class StepManager:
         self.persona_block: str = ""
         self.objection_block: str = ""
         self.rules_block: str = ""
+        self.faq_block: str = ""
+        self.subroutine_block: str = ""
         self.current_step_index: int = 0
         self.collected_info: dict = {}
         self._enabled = False
@@ -90,6 +92,22 @@ class StepManager:
         )
         if rules_match:
             self.rules_block = rules_match.group(1).strip()
+
+        # Extract FAQ block (cap at 500 chars for reconnect prompt size)
+        faq_match = re.search(
+            r'(?:##?\s*FAQ|(?:\*\*)?FAQ(?:\*\*)?|Frequently\s+Asked)\s*[:\n](.*?)(?=\n(?:##?\s|(?:\*\*)?[A-Z])|\Z)',
+            prompt, re.DOTALL | re.IGNORECASE
+        )
+        if faq_match:
+            self.faq_block = faq_match.group(1).strip()[:500]
+
+        # Extract subroutine block (cap at 500 chars)
+        sub_match = re.search(
+            r'(?:##?\s*Subroutines?|(?:\*\*)?Subroutines?(?:\*\*)?)\s*[:\n](.*?)(?=\n(?:##?\s|(?:\*\*)?[A-Z])|\Z)',
+            prompt, re.DOTALL | re.IGNORECASE
+        )
+        if sub_match:
+            self.subroutine_block = sub_match.group(1).strip()[:500]
 
         # Extract NEPQ section content — stop at Objections, Qualify, Rules, END CALL, etc.
         nepq_section = re.search(
@@ -228,6 +246,74 @@ class StepManager:
             return self.current_step
         return None
 
+    # ---- Step-based session split scheduling ----
+
+    def compute_split_groups(self, max_call_duration: int):
+        """Divide steps into session groups based on call duration.
+
+        Groups steps so each session handles a chunk of the script.
+        Formula: steps_per_session = max(3, total_steps / expected_sessions)
+        where expected_sessions = ceil(max_call_duration / MAX_SESSION_SECONDS).
+        """
+        s = self.state
+        total = len(self.steps)
+        if total == 0:
+            return
+
+        max_session_s = s._max_session_seconds  # 480s default
+        expected_sessions = max(1, math.ceil(max_call_duration / max_session_s))
+        steps_per_session = max(3, math.ceil(total / expected_sessions))
+
+        groups = []
+        start = 0
+        while start < total:
+            end = min(start + steps_per_session, total)
+            groups.append((start, end))  # end is exclusive
+            start = end
+
+        s._step_split_groups = groups
+        s._current_split_group = 0
+        logger.info(
+            f"[{s.call_uuid[:8]}] Split plan: {len(groups)} session(s), "
+            f"~{steps_per_session} steps/session "
+            f"(total={total}, max_call={max_call_duration}s, max_session={max_session_s}s)"
+        )
+        for i, (gs, ge) in enumerate(groups):
+            step_ids = [self.steps[j].id for j in range(gs, ge)]
+            logger.info(f"[{s.call_uuid[:8]}]   Group {i}: steps {step_ids}")
+
+    def should_split_at_step(self, step_index: int) -> bool:
+        """Return True if the completed step is the last in the current group.
+        Never triggers on the last group (no next session to split into)."""
+        s = self.state
+        if not s._step_split_groups:
+            return False
+        group_idx = s._current_split_group
+        if group_idx >= len(s._step_split_groups):
+            return False
+        # Don't split at the last group — there's no next session
+        if group_idx >= len(s._step_split_groups) - 1:
+            return False
+        _, group_end = s._step_split_groups[group_idx]
+        # step_index is 0-based; group_end is exclusive
+        # Split when we've reached or passed the last step in this group
+        return step_index >= group_end - 1
+
+    def should_prewarm_at_step(self, step_index: int) -> bool:
+        """Return True if we're within _prewarm_lead_steps of the group boundary."""
+        s = self.state
+        if not s._step_split_groups:
+            return False
+        group_idx = s._current_split_group
+        if group_idx >= len(s._step_split_groups):
+            return False
+        _, group_end = s._step_split_groups[group_idx]
+        # Also don't prewarm if this is the last group (no next session needed)
+        if group_idx >= len(s._step_split_groups) - 1:
+            return False
+        steps_remaining = group_end - 1 - step_index
+        return steps_remaining <= s._prewarm_lead_steps
+
     def add_info(self, key: str, value: str):
         """Store a fact collected during conversation."""
         if key and value:
@@ -283,6 +369,22 @@ class StepManager:
         if self.objection_block:
             parts.append(f"\n[OBJECTIONS — acknowledge, never argue, 1-2 sentences]\n{self.objection_block}")
 
+        # 7a. FAQ block (preserved across session splits)
+        if self.faq_block:
+            parts.append(f"\n[FAQ]\n{self.faq_block}")
+
+        # 7b. Subroutine block (preserved across session splits)
+        if self.subroutine_block:
+            parts.append(f"\n[SUBROUTINES]\n{self.subroutine_block}")
+
+        # 7c. Qualification criteria (compact 1-liner for reconnect)
+        if s._qualification_criteria:
+            qc = s._qualification_criteria
+            parts.append(
+                f"\n[LEAD QUALIFICATION] HOT: {qc.get('hot', '')} | "
+                f"WARM: {qc.get('warm', '')} | COLD: {qc.get('cold', '')}"
+            )
+
         # 8. Collected info
         if self.collected_info:
             info_lines = "\n".join(f"- {k}: {v}" for k, v in self.collected_info.items())
@@ -303,11 +405,11 @@ class StepManager:
         # 11. Date/time
         parts.append(f"\n[DATE: {datetime.now().strftime('%A, %B %d, %Y %I:%M %p')}]")
 
-        # 12. Session resume guard
+        # 12. Session split guard
         parts.append(
-            "\n\n[SESSION RESUMED — you already greeted the customer. "
-            "Do NOT greet again. Do NOT introduce yourself again. "
-            "Continue from current step.]"
+            "\n\n[SESSION SPLIT — You are continuing the same phone call. "
+            "Customer is unaware of any gap. Do NOT greet again. "
+            "Do NOT introduce yourself again. Continue from current step.]"
         )
 
         # 13. Last exchange for continuity

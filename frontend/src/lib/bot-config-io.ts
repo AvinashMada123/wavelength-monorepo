@@ -25,6 +25,9 @@ export function exportBotConfig(config: BotConfig): Record<string, unknown> {
     maxCallDuration: config.maxCallDuration ?? 480,
     ghlWorkflows: config.ghlWorkflows ?? [],
     voice: config.voice ?? "",
+    responseGuidelines: config.responseGuidelines ?? "",
+    ttsFormattingRules: config.ttsFormattingRules ?? "",
+    inactivityTimeoutSeconds: config.inactivityTimeoutSeconds,
   };
 }
 
@@ -114,6 +117,9 @@ export function validateImportedConfig(
     ...(typeof o.maxCallDuration === "number" ? { maxCallDuration: o.maxCallDuration } : {}),
     ...(Array.isArray(o.ghlWorkflows) ? { ghlWorkflows: o.ghlWorkflows } : {}),
     ...(typeof o.voice === "string" ? { voice: o.voice } : {}),
+    ...(typeof o.responseGuidelines === "string" ? { responseGuidelines: o.responseGuidelines } : {}),
+    ...(typeof o.ttsFormattingRules === "string" ? { ttsFormattingRules: o.ttsFormattingRules } : {}),
+    ...(typeof o.inactivityTimeoutSeconds === "number" ? { inactivityTimeoutSeconds: o.inactivityTimeoutSeconds } : {}),
   };
 
   return { valid: !hasBlockingErrors, errors, config };

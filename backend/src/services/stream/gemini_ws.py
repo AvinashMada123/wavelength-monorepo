@@ -283,6 +283,11 @@ class GeminiConnection:
             s._split_pending = False
             s._split_pending_since = None
 
+            # Advance step-based split group counter
+            if s._step_split_groups and s._current_split_group < len(s._step_split_groups) - 1:
+                s._current_split_group += 1
+                self.log.detail(f"Advanced to split group {s._current_split_group}/{len(s._step_split_groups)-1}")
+
             session_age = (time.time() - swap_start)
             swap_ms = session_age * 1000
             self.log.phase(f"SESSION SPLIT (hot-swap at turn #{s._turn_count}) ✓")
@@ -301,19 +306,14 @@ class GeminiConnection:
             s._last_split_time = time.time()
 
     async def _send_context_to_ws(self, ws):
-        """Send minimal anti-repetition nudge via client_content.
+        """Send minimal session-split context via client_content.
         Full conversation context is already in the system_instruction — this just
-        reinforces 'don't repeat' and 'wait for customer'.
+        provides the last exchange and reinforces 'don't repeat' and 'wait for customer'.
         CRITICAL: turn_complete=False so Gemini does NOT treat this as a completed user
         turn and does NOT generate an immediate response (no more 'Understood...' pattern)."""
         s = self.state
         last_user = s._last_user_text[:150] if s._last_user_text else ""
         agent_ref = (s._last_agent_text or s._last_agent_question or "")[:150]
-
-        # Build progress hint for the nudge
-        progress_hint = ""
-        if s._conversation_milestones:
-            progress_hint = f' Already done: {"; ".join(s._conversation_milestones[-3:])}.'
 
         # Detect if agent's last message was an unanswered question
         agent_ended_with_question = agent_ref and agent_ref.rstrip().endswith("?")
@@ -321,30 +321,26 @@ class GeminiConnection:
         if agent_ref and last_user:
             # Normal case: turn completed, user already responded
             trigger = (
-                f'[Session resumed — there may have been a brief audio gap.{progress_hint} '
-                f'Last customer said: "{last_user}". '
-                f'Do NOT respond to this context message. Do NOT re-pitch or repeat anything already covered. '
-                f'Wait for customer to speak next. If they say "hello" or "are you there", '
-                f'briefly confirm "Yes, I am here" then continue the conversation FORWARD.]'
+                f'[SESSION SPLIT — brief technical refresh, customer is unaware.] '
+                f'Last you said: "{agent_ref}" Customer replied: "{last_user}". '
+                f'Wait for customer to speak next. Do NOT re-introduce or repeat covered topics.'
             )
         elif agent_ref and agent_ended_with_question:
-            # Agent asked a question but user hasn't responded yet — don't wait silently
+            # Agent asked a question but user hasn't responded yet
             trigger = (
-                f'[Session resumed — there may have been a brief audio gap.{progress_hint} '
-                f'You just asked a question but the customer may not have heard it due to the audio gap. '
-                f'Wait a moment, then if the customer hasn\'t spoken, briefly say '
-                f'"Are you still there?" or "Hello?" Do NOT repeat the original question verbatim. '
-                f'Do NOT re-pitch or repeat anything already covered.]'
+                f'[SESSION SPLIT — brief technical refresh, customer is unaware.] '
+                f'Last you said: "{agent_ref}" Customer has not replied yet. '
+                f'Wait a moment, then if customer hasn\'t spoken, briefly say '
+                f'"Are you still there?" Do NOT repeat the original question verbatim.'
             )
         elif agent_ref:
             trigger = (
-                f'[Session resumed — there may have been a brief audio gap.{progress_hint} '
-                f'Wait for customer to speak. If they say "hello" or "are you there", '
-                f'briefly confirm "Yes, I am here" then continue FORWARD. '
-                f'Do NOT re-pitch or repeat anything already covered.]'
+                f'[SESSION SPLIT — brief technical refresh, customer is unaware.] '
+                f'Last you said: "{agent_ref}" '
+                f'Wait for customer to speak. Do NOT re-introduce or repeat covered topics.'
             )
         else:
-            trigger = "[Session resumed. Wait silently for customer to speak. If they say hello, confirm you are here.]"
+            trigger = "[SESSION SPLIT — brief technical refresh, customer is unaware. Wait for customer to speak.]"
 
         # turn_complete: False — Gemini will NOT generate a response to this.
         # It will only respond when actual user audio triggers speech detection.
@@ -752,6 +748,35 @@ class GeminiConnection:
                                 next_step = s._step_manager.advance_step()
                                 if next_step:
                                     self.log.detail(f"Step {prev_step.id} → {next_step.id}: {next_step.goal}")
+                                    # Check if previous step completed the current group → split
+                                    prev_index = s._step_manager.current_step_index - 1
+                                    if (s._step_split_groups
+                                            and s._step_manager.should_split_at_step(prev_index)
+                                            and not s._split_pending
+                                            and not s._closing_call
+                                            and not s.agent_said_goodbye):
+                                        s._split_pending = True
+                                        s._split_pending_since = time.time()
+                                        self.log.detail(f"Step group {s._current_split_group} complete → split pending")
+                                    # Step-based prewarm: entering last N steps of current group
+                                    elif (s._step_split_groups
+                                            and s._step_manager.should_prewarm_at_step(s._step_manager.current_step_index)
+                                            and not s._standby_ws
+                                            and not s._prewarm_task
+                                            and not s._closing_call
+                                            and not s.agent_said_goodbye):
+                                        s._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
+                                        self.log.detail(f"Step-based prewarm triggered (step {next_step.id}, group {s._current_split_group})")
+                                elif prev_step:
+                                    # No next step = last step overall; check if group boundary
+                                    if (s._step_split_groups
+                                            and s._step_manager.should_split_at_step(s._step_manager.current_step_index)
+                                            and not s._split_pending
+                                            and not s._closing_call
+                                            and not s.agent_said_goodbye):
+                                        s._split_pending = True
+                                        s._split_pending_since = time.time()
+                                        self.log.detail(f"Step group {s._current_split_group} complete → split pending")
 
                         # Accumulate user text for detection engines (product, linguistic mirror, persona)
                         if full_user:
@@ -799,20 +824,30 @@ class GeminiConnection:
                     else:
                         s._empty_turn_nudge_count = 0
 
-                    # Time-based session split — check session age
+                    # Session split — time-based safety net + fallback for non-NEPQ
                     session_age = (time.time() - s._google_session_start) if s._google_session_start else 0
+                    has_step_splits = bool(s._step_split_groups)
 
-                    # Pre-warm standby 1 minute before split threshold
-                    if (session_age >= (s._session_split_after_seconds - 60)
+                    # Determine split threshold:
+                    # - NEPQ with step groups: _max_session_seconds (480s hard ceiling)
+                    # - Non-NEPQ: _session_split_after_seconds (dynamic, prompt-size based)
+                    split_threshold = s._max_session_seconds if has_step_splits else s._session_split_after_seconds
+
+                    # Pre-warm standby before split threshold (time-based path)
+                    # For NEPQ: step-based prewarm (above) is primary; this is safety net
+                    prewarm_at = split_threshold - 60
+                    if (session_age >= prewarm_at
                             and not s._standby_ws
                             and not s._prewarm_task
                             and not s._closing_call
                             and not s.agent_said_goodbye
                             and s._turn_count >= 1):
                         s._prewarm_task = asyncio.create_task(self._prewarm_standby_connection())
+                        label = "safety-net" if has_step_splits else "time-based"
+                        self.log.detail(f"Prewarm triggered ({label}, session age: {session_age:.0f}s)")
 
                     # Set split pending at threshold (defer to silence gap)
-                    if (session_age >= s._session_split_after_seconds
+                    if (session_age >= split_threshold
                             and not is_empty_turn
                             and not s._closing_call
                             and not s._goodbye_pending
@@ -821,7 +856,8 @@ class GeminiConnection:
                             and not s._split_pending):
                         s._split_pending = True
                         s._split_pending_since = time.time()
-                        self.log.detail(f"Split pending (session age: {session_age:.0f}s)")
+                        label = "safety-net ceiling" if has_step_splits else "time-based"
+                        self.log.detail(f"Split pending ({label}, session age: {session_age:.0f}s)")
 
                     # Reset turn audio counter
                     s._current_turn_audio_chunks = 0
@@ -916,7 +952,7 @@ class GeminiConnection:
                                 # Micro-moment: capture when user FIRST speaks this turn
                                 if s._user_response_start_time is None:
                                     s._user_response_start_time = time.time()
-                                logger.debug(f"[{s.call_uuid[:8]}] USER fragment: {user_text}")
+                                logger.trace(f"[{s.call_uuid[:8]}] USER fragment: {user_text}")
                                 s._current_turn_user_text.append(user_text)
                                 s._transcript._save_transcript("USER", user_text)
                                 s._transcript._log_conversation("user", user_text)
@@ -973,7 +1009,7 @@ class GeminiConnection:
                         ai_text = str(output_transcription)
                     if ai_text and ai_text.strip():
                         ai_text = ai_text.strip()
-                        logger.debug(f"[{s.call_uuid[:8]}] AGENT fragment: {ai_text}")
+                        logger.trace(f"[{s.call_uuid[:8]}] AGENT fragment: {ai_text}")
                         s._has_output_transcription = True
                         s._current_turn_agent_text.append(ai_text)
                         s._transcript._save_transcript("AGENT", ai_text)

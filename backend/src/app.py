@@ -1006,6 +1006,10 @@ class PlivoMakeCallRequest(BaseModel):
     microMomentsConfig: Optional[dict] = None  # Per-bot micro-moments config override
     ttsProvider: Optional[str] = None  # "gemini" or "google_cloud" (default from env TTS_PROVIDER)
     pipelineMode: Optional[str] = None  # "live_api" or "traditional" (default from env VOICE_PIPELINE_MODE)
+    responseGuidelines: Optional[str] = None  # Custom NEVER-say / tone rules for this bot
+    ttsFormattingRules: Optional[str] = None  # TTS formatting rules (e.g. ₹5000 → "five thousand rupees")
+    inactivityTimeoutSeconds: Optional[float] = None  # Silence SLA per bot (default 10s)
+    qualificationCriteria: Optional[dict] = None  # {hot, warm, cold} lead qualification criteria
 
 
 @app.post("/plivo/make-call")
@@ -1038,8 +1042,9 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             default_prompt_file = PROMPTS_DIR / "fwai_prompt.txt"
             if default_prompt_file.exists():
                 request.prompt = default_prompt_file.read_text(encoding="utf-8")
-                context["_persona_engine"] = True
-                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars) + persona engine ON")
+                # Persona engine disabled for now
+                # context["_persona_engine"] = True
+                logger.info(f"Loaded default prompt from fwai_prompt.txt ({len(request.prompt)} chars)")
 
         # Cache the incoming prompt (deduplicates identical prompts across calls)
         if request.prompt:
@@ -1071,8 +1076,9 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Pass feature flags through context so session can use them
         context["_social_proof_enabled"] = bool(request.socialProofEnabled)
         context["_social_proof_min_turn"] = int(request.socialProofMinTurn or 0)
-        if request.personaEngineEnabled:
-            context["_persona_engine"] = True
+        # Persona engine disabled for now
+        # if request.personaEngineEnabled:
+        #     context["_persona_engine"] = True
         if request.productIntelligenceEnabled:
             context["_product_intelligence_enabled"] = True
             # Pass DB product sections (overrides file-based global sections)
@@ -1096,6 +1102,16 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             context["_custom_situation_keywords"] = request.situationKeywords
         if request.microMomentsConfig:
             context["_micro_moments_config"] = request.microMomentsConfig
+
+        # Response guidelines, TTS formatting, inactivity timeout, qualification criteria
+        if request.responseGuidelines:
+            context["_response_guidelines"] = request.responseGuidelines
+        if request.ttsFormattingRules:
+            context["_tts_formatting_rules"] = request.ttsFormattingRules
+        if request.inactivityTimeoutSeconds is not None:
+            context["_inactivity_timeout_seconds"] = request.inactivityTimeoutSeconds
+        if request.qualificationCriteria:
+            context["_qualification_criteria"] = request.qualificationCriteria
 
         # Pass GHL webhook URL and API credentials in context so AI can trigger it mid-call
         if request.ghlWhatsappWebhookUrl:
@@ -1152,33 +1168,8 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         # Pass org_id through context so the stream session can use it for memory
         context["_org_id"] = request.orgId or ""
 
-        # Step 1: Load cross-call memory (only if enabled)
-        if request.memoryRecallEnabled:
-            memory_data = load_memory_context(request.phoneNumber, org_id=request.orgId or "", context=context)
-            if memory_data:
-                context["_memory_context"] = memory_data.get("prompt", "")
-                # If memory has a persona, pre-set it so AI skips discovery
-                if memory_data.get("persona"):
-                    context["_memory_persona"] = memory_data["persona"]
-                # Pre-load linguistic style for Linguistic Mirror
-                if memory_data.get("linguistic_style"):
-                    context["_memory_linguistic_style"] = memory_data["linguistic_style"]
-                # Feed memory company/role into context for pre-research (use same normalized phone + org_id)
-                from src.cross_call_memory import _normalize_phone
-                normalized_phone = _normalize_phone(request.phoneNumber)
-                memory_raw = session_db.get_contact_memory(normalized_phone, request.orgId or "")
-                if memory_raw:
-                    if memory_raw.get("company") and not context.get("company_name"):
-                        context["company_name"] = memory_raw["company"]
-                    if memory_raw.get("role") and not context.get("role"):
-                        context["role"] = memory_raw["role"]
-                logger.info(f"Cross-call memory loaded for {request.phoneNumber} org={request.orgId} ({len(context.get('_memory_context', ''))} chars, persona={memory_data.get('persona')})")
-            # Also inject bot notes from UI if available
-            if request.botNotes:
-                context["_bot_notes"] = request.botNotes
-                logger.info(f"Bot notes injected ({len(request.botNotes)} chars)")
-        else:
-            logger.info("Memory recall DISABLED — skipping cross-call memory")
+        # Cross-call memory disabled for now
+        logger.info("Memory recall DISABLED (hardcoded off)")
 
         # Step 2: Gather intelligence (only if enabled)
         intelligence_brief = ""

@@ -80,13 +80,22 @@ function sanitizeMermaid(raw: string): string {
     }
 
     // Clean labels inside [...] - remove all special chars including curly braces
+    // Also escape the reserved word "end" inside labels so Mermaid doesn't treat it as a keyword
     line = line.replace(/\[([^\]]+)\]/g, (_match, label: string) => {
-      const clean = label.replace(/[()'"#&<>@$%{}]/g, "").replace(/\s+/g, " ").trim();
+      const clean = label
+        .replace(/[()'"#&<>@$%{}]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\bend\b/gi, "End");
       return `[${clean}]`;
     });
     // Clean labels inside {...} (decision nodes)
     line = line.replace(/\{([^}]+)\}/g, (_match, label: string) => {
-      const clean = label.replace(/[()'"#&<>@$%]/g, "").replace(/\s+/g, " ").trim();
+      const clean = label
+        .replace(/[()'"#&<>@$%]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\bend\b/gi, "End");
       return `{${clean}}`;
     });
 
@@ -145,6 +154,7 @@ Analyze the system prompt and generate a comprehensive Mermaid flowchart showing
 11. Every node ID in an edge must be defined somewhere with a label
 12. No duplicate node definitions - define each node ID only ONCE
 13. Each line should contain ONLY ONE statement - never combine edges with subgraph or end
+14. NEVER use the word "end" inside node labels - it is a reserved Mermaid keyword. Write "End" with capital E, or rephrase: e.g. S1[Call End] not S1[Call end], S1[Finish call] not S1[end the call]
 
 ## VALID example:
 graph TD

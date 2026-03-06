@@ -75,6 +75,9 @@ export interface BotConfig {
   conversationFlowMermaid?: string;
   microMomentsConfig?: MicroMomentsConfig | null;
   retryConfig?: RetryConfig | null;
+  responseGuidelines?: string;
+  ttsFormattingRules?: string;
+  inactivityTimeoutSeconds?: number;
   createdAt: string;
   updatedAt: string;
   createdBy: string;

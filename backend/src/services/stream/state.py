@@ -96,9 +96,9 @@ class SessionState:
         # Latency tracking - only logs if > threshold
         self._last_user_speech_time = None
 
-        # Silence monitoring - 5 second SLA (gives customer time to think after AI asks a question)
+        # Silence monitoring - configurable SLA (gives customer time to think after AI asks a question)
         self._silence_monitor_task = None
-        self._silence_sla_seconds = 5.0  # Safety net: nudge AI if no response 5s after user speaks
+        self._silence_sla_seconds = float(self.context.pop("_inactivity_timeout_seconds", 10.0))
         self._last_split_time = 0  # Track when last session split completed (for nudge cooldown)
         self._last_ai_audio_time = None  # Track when AI last sent audio
         self._last_agent_turn_end_time = None  # Track when AI finished speaking (for nudge guard)
@@ -160,10 +160,16 @@ class SessionState:
         # Full transcript collection (in-memory backup for webhook)
         self._full_transcript = []  # List of {"role": "USER/AGENT", "text": "...", "timestamp": "..."}
 
-        # Session split - time-based (flush KV cache regularly + stay under Gemini's 10-min limit)
-        self._session_split_after_seconds = 4 * 60  # Split at 4 minutes
+        # Session split - step-based (NEPQ) or time-based fallback
+        self._session_split_after_seconds = 4 * 60  # Time-based fallback (non-NEPQ prompts)
         self._split_pending = False      # Defer swap to next user silence gap
         self._split_pending_since = None # When split was first requested (safety timeout)
+
+        # Step-based session split schedule (populated by StepManager.compute_split_groups)
+        self._step_split_groups = []          # List of (start_idx, end_idx) per session
+        self._current_split_group = 0         # Which group we're in
+        self._prewarm_lead_steps = 2          # Pre-warm when this many steps remain in group
+        self._max_session_seconds = 480       # Hard ceiling per session (safety net under Gemini 10-min limit)
         self._last_agent_text = ""  # Last thing AI said (for split context)
         self._last_user_text = ""   # Last thing user said (for split context)
         self._last_agent_question = ""  # Last question AI asked (for anti-repetition)
@@ -237,6 +243,15 @@ class SessionState:
         self._previous_product_sections = []
         # Non-English language detection (graceful exit after consecutive non-English messages)
         self._consecutive_non_english = 0
+
+        # Lead qualification (AI-driven tagging via tag_lead tool)
+        self._qualification_criteria = self.context.pop("_qualification_criteria", None)  # {hot, warm, cold}
+        self._lead_temperature = None   # Set by AI via tag_lead tool
+        self._lead_tag_reason = None    # Reason from AI
+
+        # Response guidelines & TTS formatting (optional, from bot config)
+        self._response_guidelines = self.context.pop("_response_guidelines", "")
+        self._tts_formatting_rules = self.context.pop("_tts_formatting_rules", "")
 
         # Linguistic Mirror state
         self._linguistic_style = {}

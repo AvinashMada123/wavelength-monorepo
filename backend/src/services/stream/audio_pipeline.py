@@ -365,7 +365,7 @@ class AudioPipeline:
                     chunks_sent += 1
                     # Log first chunk sent to Gemini for this user speech
                     if chunks_sent == 1 and s._user_speaking:
-                        logger.debug(f"[{s.call_uuid[:8]}] Sending user audio to Gemini")
+                        logger.trace(f"[{s.call_uuid[:8]}] Sending user audio to Gemini")
                 except Exception as send_err:
                     logger.error(f"Error sending audio to Google: {send_err} - triggering reconnect")
                     # Null out dead WS so subsequent audio gets buffered (line 1659)

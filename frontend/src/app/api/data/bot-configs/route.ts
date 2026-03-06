@@ -89,6 +89,9 @@ export async function POST(request: NextRequest) {
           conversationFlowMermaid: "conversation_flow_mermaid",
           microMomentsConfig: "micro_moments_config",
           retryConfig: "retry_config",
+          responseGuidelines: "response_guidelines",
+          ttsFormattingRules: "tts_formatting_rules",
+          inactivityTimeoutSeconds: "inactivity_timeout_seconds",
         };
 
         const jsonCols = new Set([
@@ -181,6 +184,9 @@ export async function POST(request: NextRequest) {
           pipelineMode: cfg.pipeline_mode,
           language: cfg.language,
           ttsProvider: cfg.tts_provider,
+          responseGuidelines: cfg.response_guidelines,
+          ttsFormattingRules: cfg.tts_formatting_rules,
+          inactivityTimeoutSeconds: cfg.inactivity_timeout_seconds,
           personas: personas.map((p: Record<string, unknown>) => ({ name: p.name, content: p.content, keywords: p.keywords })),
           situations: situations.map((s: Record<string, unknown>) => ({ name: s.name, content: s.content, keywords: s.keywords })),
           productSections: productSections.map((s: Record<string, unknown>) => ({ name: s.name, content: s.content, keywords: s.keywords })),
@@ -299,8 +305,8 @@ export async function POST(request: NextRequest) {
 
         // Create duplicate config (inactive, with "(Copy)" suffix)
         await query(
-          `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, call_provider, pipeline_mode, language, tts_provider, micro_moments_config, retry_config, created_by, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $27)`,
+          `INSERT INTO fwai_aicall_bot_configs (id, org_id, name, is_active, prompt, questions, objections, objection_keywords, context_variables, qualification_criteria, persona_engine_enabled, product_intelligence_enabled, social_proof_enabled, social_proof_min_turn, pre_research_enabled, memory_recall_enabled, max_call_duration, ghl_workflows, voice, call_provider, pipeline_mode, language, tts_provider, micro_moments_config, retry_config, response_guidelines, tts_formatting_rules, inactivity_timeout_seconds, created_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $30)`,
           [
             newId, orgId, (src.name || "") + " (Copy)", false,
             src.prompt || "", JSON.stringify(src.questions || []),
@@ -314,6 +320,8 @@ export async function POST(request: NextRequest) {
             src.pipeline_mode || "live_api", src.language || "", src.tts_provider || "",
             JSON.stringify(src.micro_moments_config || null),
             JSON.stringify(src.retry_config || null),
+            src.response_guidelines || "", src.tts_formatting_rules || "",
+            src.inactivity_timeout_seconds ?? null,
             src.created_by || null, now,
           ]
         );

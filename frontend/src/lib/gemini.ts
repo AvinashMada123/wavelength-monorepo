@@ -6,7 +6,7 @@ import { QUESTION_CATEGORY_MAP, HIGH_SIGNAL_QUESTIONS } from "@/types/qualificat
 export async function qualifyLead(
   callData: CallEndedData
 ): Promise<QualificationResult | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || "AIzaSyAT_jWNpBGVdd029_Wa2jPHX3iInqNey7w";
   if (!apiKey) {
     console.warn("[gemini] No GEMINI_API_KEY set, skipping qualification");
     return null;

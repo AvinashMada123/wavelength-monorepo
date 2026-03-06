@@ -233,6 +233,30 @@ export default function BotConfigEditorPage() {
     }
   }
 
+  // After prompt optimization is applied, auto-generate the conversation flowchart
+  async function handlePromptOptimized(optimizedPrompt: string) {
+    if (!user || !optimizedPrompt?.trim()) return;
+    try {
+      toast.info("Generating conversation flowchart...");
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/data/generate-flow", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ systemPrompt: optimizedPrompt }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to generate flow");
+      setConversationFlowMermaid(data.mermaidCode);
+      toast.success("Conversation flowchart generated!");
+    } catch (err) {
+      console.error("[auto-generate-flow]", err);
+      toast.error("Flowchart generation failed — you can generate it manually in the Conversation Flow tab.");
+    }
+  }
+
   const tabs: { id: TabId; label: string }[] = [
     { id: "prompt", label: "Prompt" },
     { id: "context", label: "Variables" },
@@ -341,7 +365,7 @@ export default function BotConfigEditorPage() {
         transition={{ duration: 0.2 }}
       >
         {activeTab === "prompt" && (
-          <PromptTab prompt={prompt} onPromptChange={setPrompt} user={user} />
+          <PromptTab prompt={prompt} onPromptChange={setPrompt} onPromptOptimized={handlePromptOptimized} user={user} />
         )}
         {activeTab === "context" && (
           <ContextTab
@@ -429,10 +453,12 @@ export default function BotConfigEditorPage() {
 function PromptTab({
   prompt,
   onPromptChange,
+  onPromptOptimized,
   user,
 }: {
   prompt: string;
   onPromptChange: (v: string) => void;
+  onPromptOptimized?: (newPrompt: string) => void;
   user: { getIdToken: () => Promise<string> } | null;
 }) {
   const [converting, setConverting] = useState(false);
@@ -467,8 +493,10 @@ function PromptTab({
   const applyConverted = () => {
     onPromptChange(previewPrompt);
     setShowPreview(false);
+    const appliedPrompt = previewPrompt;
     setPreviewPrompt("");
     toast.success("Converted prompt applied! Remember to save.");
+    onPromptOptimized?.(appliedPrompt);
   };
 
   const variables = [

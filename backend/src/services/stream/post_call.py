@@ -70,37 +70,8 @@ class PostCallProcessor:
                     except Exception as e:
                         logger.warning(f"Summary generation error: {e}")
 
-                # Step 5: Save cross-call memory (per phone number)
-                try:
-                    from src.cross_call_memory import extract_and_save_memory
-                    # Derive interest level
-                    completion_rate = s._turn_count / max(s._turn_count, 1)
-                    if completion_rate > 0.7:
-                        interest_level = "High"
-                    elif completion_rate > 0.4:
-                        interest_level = "Medium"
-                    else:
-                        interest_level = "Low"
-                    # Gather all situations that were active during the call
-                    all_situations = list(set(
-                        s._previous_situations + s._active_situations
-                    ))
-                    extract_and_save_memory(
-                        phone=s.caller_phone,
-                        contact_name=s.context.get("customer_name", ""),
-                        call_uuid=s.call_uuid,
-                        detected_persona=s._detected_persona,
-                        active_situations=all_situations,
-                        turn_exchanges=list(s._turn_exchanges),
-                        accumulated_user_text=s._accumulated_user_text,
-                        duration=duration,
-                        interest_level=interest_level,
-                        linguistic_style=s._linguistic_style,
-                        org_id=s.context.get("_org_id", ""),
-                        bot_config_id=s.context.get("bot_config_id", "") or s.context.get("_bot_id", ""),
-                    )
-                except Exception as e:
-                    logger.error(f"Cross-call memory save error: {e}")
+                # Step 5: Cross-call memory disabled for now
+                # (persona engine + memory recall are off)
 
                 # Step 5.5: Update DB with transcript, summary, and detected data
                 try:
@@ -169,9 +140,13 @@ class PostCallProcessor:
         try:
             import httpx
 
-            # Derive interest level from conversation engagement (duration + turns)
+            # Prefer AI-tagged lead temperature over heuristic fallback
             turn_count = s._turn_count
-            if duration >= 240 or turn_count >= 6:
+            if s._lead_temperature:
+                interest_level = {"hot": "High", "warm": "Medium", "cold": "Low"}.get(
+                    s._lead_temperature, "Medium"
+                )
+            elif duration >= 240 or turn_count >= 6:
                 interest_level = "High"
             elif duration >= 120 or turn_count >= 3:
                 interest_level = "Medium"
@@ -295,6 +270,8 @@ class PostCallProcessor:
                 "completion_rate": completion_rate,
                 "furthest_phase_reached": furthest_phase_reached,
                 "interest_level": interest_level,
+                "lead_temperature": s._lead_temperature,
+                "lead_tag_reason": s._lead_tag_reason,
                 "call_summary": call_summary,
                 "objections_raised": objections,
                 "collected_responses": collected_responses,

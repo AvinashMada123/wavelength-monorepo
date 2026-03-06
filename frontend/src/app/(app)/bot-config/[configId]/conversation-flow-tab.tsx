@@ -75,10 +75,21 @@ export function ConversationFlowTab({
       const container = document.createElement("div");
       chartInnerRef.current.appendChild(container);
 
-      // Client-side sanitize: fix "end" on same line as edges (common LLM mistake)
+      // Client-side sanitize: fix Mermaid reserved word "end" issues
+      // 1. Escape "end" inside bracket labels [...] and decision labels {...}
+      // 2. Split trailing "end" on same line as content onto its own line
       const sanitized = code
         .split("\n")
         .flatMap((line) => {
+          // Escape "end" inside node labels [...] so Mermaid doesn't treat it as a keyword
+          line = line.replace(/\[([^\]]+)\]/g, (_match, label: string) => {
+            return `[${label.replace(/\bend\b/gi, "End")}]`;
+          });
+          // Escape "end" inside decision node labels {...}
+          line = line.replace(/\{([^}]+)\}/g, (_match, label: string) => {
+            return `{${label.replace(/\bend\b/gi, "End")}}`;
+          });
+          // Split trailing "end" keyword onto its own line
           const m = line.match(/^(.+\S)\s+end\s*$/);
           if (m && !line.trim().startsWith("subgraph") && !line.trim().startsWith("%%")) {
             return [m[1], "    end"];

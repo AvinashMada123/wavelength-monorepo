@@ -352,6 +352,10 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     ...(configDoc.pipeline_mode ? { pipelineMode: configDoc.pipeline_mode } : {}),
     ...(configDoc.language ? { language: configDoc.language } : {}),
     ...(configDoc.tts_provider ? { ttsProvider: configDoc.tts_provider } : {}),
+    ...(configDoc.response_guidelines ? { responseGuidelines: configDoc.response_guidelines } : {}),
+    ...(configDoc.tts_formatting_rules ? { ttsFormattingRules: configDoc.tts_formatting_rules } : {}),
+    ...(configDoc.inactivity_timeout_seconds != null ? { inactivityTimeoutSeconds: configDoc.inactivity_timeout_seconds } : {}),
+    ...(configDoc.qualification_criteria ? { qualificationCriteria: configDoc.qualification_criteria } : {}),
   };
 
   if (configDoc.micro_moments_config) {

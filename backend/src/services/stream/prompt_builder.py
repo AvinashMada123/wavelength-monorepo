@@ -8,7 +8,7 @@ from src.conversational_prompts import render_prompt
 
 
 # Latency threshold - only log if slower than this (ms)
-# 250ms silence_duration_ms + ~200ms Gemini inference = ~450ms baseline; warn above 1000ms
+# 500ms silence_duration_ms + ~200ms Gemini inference = ~700ms baseline; warn above 1000ms
 LATENCY_THRESHOLD_MS = 1000
 
 
@@ -216,6 +216,31 @@ class PromptBuilder:
                     }
                 })
 
+        # Add tag_lead tool when qualification criteria are configured
+        if s._qualification_criteria:
+            tools.append({
+                "name": "tag_lead",
+                "description": (
+                    "Tag this lead as hot, warm, or cold based on the qualification criteria in your prompt. "
+                    "Call this once you have enough signal from the conversation to determine the lead's temperature. "
+                    "Only call once per call."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "temperature": {
+                            "type": "string",
+                            "description": "Lead temperature: 'hot', 'warm', or 'cold'"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief reason for this classification (1 sentence)"
+                        }
+                    },
+                    "required": ["temperature", "reason"]
+                }
+            })
+
         # Legacy: keep send_whatsapp if GHL creds are set but no workflows configured
         if s.ghl_api_key and s.ghl_location_id and not s._ghl_workflows:
             tools.append({
@@ -381,17 +406,33 @@ class PromptBuilder:
         _now = _dt.now()
         full_prompt += f"\n\n[CURRENT DATE/TIME: {_now.strftime('%A, %B %d, %Y at %I:%M %p')}]"
 
+        # Response guidelines (custom NEVER-say / tone rules from bot config)
+        if s._response_guidelines:
+            full_prompt += f"\n\n[RESPONSE GUIDELINES]\n{s._response_guidelines}"
+
         # Minimal universal rules — compact for lower latency
         full_prompt += (
             "\n\n[CORE RULES] "
-            "1) 1-2 sentences max, then STOP and WAIT. Never answer your own questions or role-play the customer. "
-            "2) Max 2 attempts per offer. After 2, move on — ask what's holding them back or offer alternatives. "
-            "3) Say goodbye ONCE. If customer says bye after you, call end_call immediately with no text. "
-            "4) Garbled/unclear speech = assume positive intent. Never treat noise as rejection. "
-            "5) Info-only steps: deliver and continue immediately. Only wait after questions. "
-            "6) Never restart from Step 1. Track your progress and continue forward. "
-            "7) If asked for info you have, share it directly. Never get stuck repeating yourself."
+            "1) KEEP IT SHORT: 1-2 sentences max per turn, then STOP and WAIT. Never monologue. "
+            "2) Never answer your own questions or role-play the customer. "
+            "3) Max 2 attempts per offer. After 2, move on — ask what's holding them back or offer alternatives. "
+            "4) Say goodbye ONCE. If customer says bye after you, call end_call immediately with no text. "
+            "5) Garbled/unclear speech = assume positive intent. Never treat noise as rejection. "
+            "6) Info-only steps: deliver and continue immediately. Only wait after questions. "
+            "7) Never restart from Step 1. Track your progress and continue forward. "
+            "8) If asked for info you have, share it directly. Never get stuck repeating yourself."
         )
+
+        # Lead qualification criteria (injected only when configured)
+        if s._qualification_criteria:
+            qc = s._qualification_criteria
+            full_prompt += (
+                "\n\n[LEAD QUALIFICATION]\n"
+                f"HOT: {qc.get('hot', '')}\n"
+                f"WARM: {qc.get('warm', '')}\n"
+                f"COLD: {qc.get('cold', '')}\n"
+                "When you have enough signal, call the tag_lead tool with the appropriate temperature and reason."
+            )
 
         # Step manager: parse steps from prompt on first build (for reconnect use)
         if s._step_manager is None and s._is_first_connection:
@@ -399,6 +440,22 @@ class PromptBuilder:
             sm = StepManager(s)
             if sm.parse_from_prompt(full_prompt, s.context):
                 s._step_manager = sm
+                # Compute step-based split groups for session scheduling
+                sm.compute_split_groups(s.max_call_duration)
+
+        # Dynamic time-based fallback for non-NEPQ prompts (no step manager)
+        # Compute split interval from prompt size: small prompt → longer sessions, large prompt → shorter
+        if s._is_first_connection and not (s._step_manager and s._step_manager.enabled):
+            prompt_len = len(full_prompt)
+            if prompt_len <= 3000:
+                s._session_split_after_seconds = 480  # 8 min for small prompts
+            elif prompt_len >= 15000:
+                s._session_split_after_seconds = 150  # 2.5 min for large prompts
+            else:
+                # Linear interpolation: 3K→480s, 15K→150s
+                ratio = (prompt_len - 3000) / (15000 - 3000)
+                s._session_split_after_seconds = int(480 - ratio * (480 - 150))
+            self.log.detail(f"Non-NEPQ split interval: {s._session_split_after_seconds}s (prompt {prompt_len} chars)")
 
         # On reconnect, use step-based compact prompt if available
         if not s._is_first_connection and s._step_manager and s._step_manager.enabled:
@@ -410,7 +467,7 @@ class PromptBuilder:
         elif not s._is_first_connection:
             summary = s._prompt_builder._build_compact_summary()
             if summary:
-                full_prompt += f"\n\n[CONVERSATION SO FAR — you are mid-call, do NOT greet again:]\n{summary}"
+                full_prompt += f"\n\n[SESSION SPLIT — continuing active call. Customer is unaware of any gap:]\n{summary}"
                 # Anti-repetition — compact, includes both sides + milestones
                 agent_ref = s._last_agent_text or s._last_agent_question
                 if agent_ref:
@@ -478,6 +535,10 @@ class PromptBuilder:
         if language_code:
             full_prompt += f"\n\n[VOICE LANGUAGE: Speak in {language_code} accent/language throughout the call.]"
 
+        # TTS formatting rules (e.g. ₹5000 → "five thousand rupees")
+        if s._tts_formatting_rules:
+            full_prompt += f"\n\n[TTS FORMATTING]\n{s._tts_formatting_rules}"
+
         # Build speech_config — voice only (no language_code for native audio)
         speech_config = {}
         if voice_name:
@@ -501,7 +562,7 @@ class PromptBuilder:
                         "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
                         "end_of_speech_sensitivity": "END_SENSITIVITY_HIGH",
                         "prefix_padding_ms": 100,
-                        "silence_duration_ms": 800,
+                        "silence_duration_ms": 500,
                     }
                 },
                 "input_audio_transcription": {},
