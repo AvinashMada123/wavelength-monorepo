@@ -8,8 +8,8 @@ from src.conversational_prompts import render_prompt
 
 
 # Latency threshold - only log if slower than this (ms)
-# 500ms silence_duration_ms + ~200ms Gemini inference = ~700ms baseline; warn above 1000ms
-LATENCY_THRESHOLD_MS = 1000
+# Gemini Live API baseline is ~1s; only warn above 2s to reduce noise
+LATENCY_THRESHOLD_MS = 2000
 
 
 def get_vertex_ai_token():
