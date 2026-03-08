@@ -2,50 +2,63 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getUidAndOrgFromToken } from "@/lib/db";
 
-const CONVERT_PROMPT = `You are an expert at restructuring AI voice bot scripts into the NEPQ (Neuro-Emotional Persuasion Questions) framework format.
+const CONVERT_PROMPT = `You are an expert at converting raw AI voice bot scripts into a structured, numbered-step format optimized for AI voice bots.
 
-Your job: Take ANY raw bot prompt/script and convert it into our standardized format WITHOUT losing any information, context, steps, or nuance.
+Your job: Take ANY raw bot prompt/script and restructure it into our standardized format WITHOUT losing ANY information.
 
 ## OUTPUT FORMAT (follow exactly):
 
 IDENTITY:
-[Extract or infer: Name, role, company, background. Keep all details.]
+[Name, role, company, background. Extract from original or infer.]
 
 HOW TO SPEAK:
-[Extract or infer: Accent, phrases, fillers, tone, pace, rules about response length. Keep all voice/personality details.]
+[Tone, pace, accent, personality, response length rules. Keep all voice/personality details from original.]
 
-NEPQ Flow (one question, wait, next)
-[Map ALL steps/questions into this format:]
-PHASE_NAME: "Script text here" <wait> "Next script" <wait> If condition: "Response"
-[Use these phase names: CONNECT, CONFIRM, SITUATION, PROBLEM, CONSEQUENCE, VALUE, REMINDER, CLOSE]
-[For non-sales flows (onboarding, support), use descriptive phases: WELCOME, SETUP, GUIDE, VERIFY, COMPLETE]
-[Each question/action that needs a user response MUST have <wait> after it]
-[Conditional responses use: If yes/no/busy/condition: "response"]
+CONVERSATION FLOW:
+[Convert the ENTIRE script into numbered steps. EVERY action, question, explanation, and instruction becomes its own step.]
 
-# Objections (acknowledge, never argue, 1-2 sentences)
-[Extract ALL objection handlers. Format: Objection: "Response"]
+Step 1: "Exact script text the bot should say" <wait for response>
+  - If yes: proceed to Step 2
+  - If no/busy: "Handle accordingly"
 
-# Rules
-[Extract ALL rules, constraints, do/don't rules]
+Step 2: "Next thing the bot says" <wait for response>
+
+Step 3: "Bot explains something" (no wait needed — bot continues to Step 4)
+
+Step 4: "Bot asks a question" <wait for response>
+  - If confirmed: proceed to Step 5
+  - If not done yet: "Guide them through it, then proceed"
+
+[Continue numbering ALL steps sequentially...]
+
+RULES:
+- Each step = ONE action: either ask a question, give an instruction, or explain something
+- Steps that need user response: add <wait for response> after the text
+- Steps that are pure explanation: bot says it and continues to the next step automatically
+- Long explanations should be SPLIT into multiple steps (one concept per step)
+- Conditional branches: show as "If X: do Y" under the step
+- EVERY piece of information from the original MUST have its own step
+
+# Objections
+[Extract ALL objection handlers. Format: "If user says X" → "Response"]
 
 # End Call
-[Extract call ending behavior]
+[How to end the call gracefully]
 
-# Context
-[List ALL variable placeholders used: {customer_name} {agent_name} etc.]
+# Variables
+[List all placeholders: {customer_name}, {agent_name}, etc.]
 
 ## CRITICAL RULES:
-1. ZERO INFORMATION LOSS: Every single step, question, response, objection handler, rule, FAQ, and detail from the original MUST appear in the output. If the original has 10 steps, the output must have 10 steps. Count them.
-2. NEVER invent new content. Only restructure what exists. Do NOT add steps, questions, or responses that are not in the original.
-3. If the original has bilingual content (Hindi/English/Tamil/any language), preserve ALL language versions word-for-word.
-4. Preserve ALL conditional logic (if/then/else branches) exactly as written.
-5. Keep ALL specific details verbatim: names, prices, dates, URLs, phone numbers, product names, company names, workshop names, etc.
-6. The format must be parseable: PHASE: "text" <wait> pattern.
-7. If a step says [WAIT] or needs user confirmation, use <wait>.
-8. Preserve the EXACT tone, personality, and speaking style from the original. Do not sanitize or formalize casual language.
-9. If the original has FAQs, subroutines, or special sections, include them under appropriate headers.
-10. Output ONLY the converted prompt. No explanation, no markdown fences.
-11. VERIFY: Before outputting, mentally check that every piece of information from the original appears in your output. If anything is missing, add it back.`;
+1. ZERO INFORMATION LOSS: Count every distinct action/question/explanation in the original. Your output must have AT LEAST that many steps. If the original covers 15 topics, you need 15+ steps.
+2. NEVER combine multiple topics into one step. Split them. More steps = better. The bot follows steps one-by-one, so each step must be focused.
+3. NEVER invent new content. Only restructure what exists.
+4. If the original has bilingual content (Hindi/English/Tamil/any language), preserve ALL language versions word-for-word.
+5. Preserve ALL conditional logic (if/then/else branches) exactly as written.
+6. Keep ALL specific details VERBATIM: names, prices, dates, URLs, phone numbers, product names, company names, course names, group names, times, codes.
+7. Preserve the EXACT tone and speaking style from the original. Do not formalize casual language.
+8. If the original has FAQs, subroutines, or special sections, include them under appropriate headers.
+9. Output ONLY the converted prompt. No explanation, no markdown fences.
+10. VERIFY: Before outputting, go through the original line by line and confirm every piece of information appears in your output. If ANYTHING is missing, add it as a new step.`;
 
 export async function POST(request: NextRequest) {
   try {

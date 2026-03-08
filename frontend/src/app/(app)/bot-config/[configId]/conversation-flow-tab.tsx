@@ -75,9 +75,23 @@ export function ConversationFlowTab({
       const container = document.createElement("div");
       chartInnerRef.current.appendChild(container);
 
+      // Pre-process: join multi-line labels (unclosed brackets)
+      const rawLines = code.split("\n");
+      const joinedLines: string[] = [];
+      let labelBuf = "";
+      for (const ln of rawLines) {
+        labelBuf += (labelBuf ? " " : "") + ln;
+        const oSq = (labelBuf.match(/\[/g) || []).length;
+        const cSq = (labelBuf.match(/\]/g) || []).length;
+        if (oSq <= cSq) {
+          joinedLines.push(labelBuf);
+          labelBuf = "";
+        }
+      }
+      if (labelBuf) joinedLines.push(labelBuf);
+
       // Client-side sanitize: fix Mermaid syntax issues
-      const sanitized = code
-        .split("\n")
+      const sanitized = joinedLines
         .flatMap((line) => {
           // Escape special characters inside node labels [...] that break Mermaid
           line = line.replace(/\[([^\]]+)\]/g, (_match, label: string) => {
@@ -105,10 +119,17 @@ export function ConversationFlowTab({
           line = line.replace(/\|([^|]+)\|/g, (_match, label: string) => {
             return `|${label.replace(/[()#&;"]/g, " ").trim()}|`;
           });
-          // Split trailing "end" keyword onto its own line
+          // Split trailing "end" keyword onto its own line (only if brackets are balanced)
           const m = line.match(/^(.+\S)\s+end\s*$/);
           if (m && !line.trim().startsWith("subgraph") && !line.trim().startsWith("%%")) {
-            return [m[1], "    end"];
+            const pre = m[1];
+            const oSq = (pre.match(/\[/g) || []).length;
+            const cSq = (pre.match(/\]/g) || []).length;
+            const oCu = (pre.match(/\{/g) || []).length;
+            const cCu = (pre.match(/\}/g) || []).length;
+            if (oSq <= cSq && oCu <= cCu) {
+              return [pre, "    end"];
+            }
           }
           return [line];
         })

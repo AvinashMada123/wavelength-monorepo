@@ -420,11 +420,30 @@ class StepManager:
         # 1. Persona (identity + voice)
         parts.append(self.persona_block)
 
-        # 2. Voice language
-        if s._tts_language:
-            parts.append(f"\n[VOICE LANGUAGE: Speak in {s._tts_language} accent/language.]")
+        # 2. Customer name — must persist across splits
+        customer_name = s.context.get("customer_name", "")
+        if customer_name:
+            parts.append(f"\n[CUSTOMER NAME: {customer_name} — Always address them by name. NEVER use sir/madam.]")
 
-        # 3. Core rules (compact)
+        # 3. Voice and language — must stay identical after split
+        voice_name = s._resolved_voice or s._tts_voice or ""
+        lang = s._tts_language or ""
+        if lang or voice_name:
+            lang_instruction = f"Speak in {lang} language." if lang else "Speak in Indian English."
+            parts.append(
+                f"\n[VOICE & LANGUAGE — STRICT] {lang_instruction} "
+                f"{'Voice: ' + voice_name + '. ' if voice_name else ''}"
+                "Your accent, tone, pace, and language MUST be EXACTLY the same as before this session split. "
+                "Do NOT switch language. Do NOT change voice style. "
+                "If English, use Indian English ONLY (not American/British)."
+            )
+        else:
+            parts.append(
+                "\n[VOICE & LANGUAGE — STRICT] Use Indian English accent. "
+                "Your accent, tone, pace, and language MUST be EXACTLY the same as before this session split."
+            )
+
+        # 4. Core rules (compact)
         parts.append(
             "\n\n[CORE RULES] "
             "1) 1-2 sentences max, then STOP and WAIT. Never answer your own questions. "
@@ -433,7 +452,8 @@ class StepManager:
             "4) Garbled speech = assume positive intent. "
             "5) Always move forward, never restart. ZERO repetition. "
             "6) NEVER use 'sir'/'madam'. Use customer's name. "
-            "7) Understand ALL languages. Acknowledge customer's answer before asking next question."
+            "7) Understand ALL languages (Hindi, Tamil, Telugu, etc). Acknowledge customer's answer before asking next question. "
+            "8) SAME VOICE throughout. Do NOT change accent, language, or tone after session split."
         )
 
         # 4. Current step (the key part)

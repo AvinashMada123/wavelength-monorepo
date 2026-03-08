@@ -29,6 +29,14 @@ function sanitizeMermaid(raw: string): string {
   // Fix "end" on same line as anything: "S1 --> S2 end", "D7 -->|No| S31 end"
   code = code.replace(/^(.+?)\s+end\s*$/gm, (_, before) => {
     const b = before.trim();
+    // Don't split if "end" is inside an unclosed bracket (part of a label)
+    const openSq = (b.match(/\[/g) || []).length;
+    const closeSq = (b.match(/\]/g) || []).length;
+    const openCu = (b.match(/\{/g) || []).length;
+    const closeCu = (b.match(/\}/g) || []).length;
+    if (openSq > closeSq || openCu > closeCu) {
+      return `${before} end`;
+    }
     // Only split if "before" looks like a real statement (has node IDs or arrows)
     if (b && !b.match(/^subgraph\b/) && !b.match(/^%%/)) {
       return `${before}\n    end`;
@@ -36,7 +44,22 @@ function sanitizeMermaid(raw: string): string {
     return `${before} end`;
   });
 
-  const lines = code.split("\n");
+  // Join multi-line labels: if a line has unclosed [ or {, join next line(s) onto it
+  const rawLines = code.split("\n");
+  const joined: string[] = [];
+  let buf = "";
+  for (const ln of rawLines) {
+    buf += (buf ? " " : "") + ln;
+    const oSq = (buf.match(/\[/g) || []).length;
+    const cSq = (buf.match(/\]/g) || []).length;
+    if (oSq <= cSq) {
+      joined.push(buf);
+      buf = "";
+    }
+  }
+  if (buf) joined.push(buf);
+
+  const lines = joined;
   const cleanedLines: string[] = [];
   let subgraphDepth = 0;
 
@@ -108,12 +131,20 @@ function sanitizeMermaid(raw: string): string {
     line = line.replace(/--\s*([^>|][^-]*?)\s*-->/g, "-->|$1|");
 
     // Final safety: if line ends with standalone "end" after content, split it
+    // But only if brackets are balanced (don't split inside labels)
     const endSuffix = line.match(/^(.+\S)\s+end\s*$/);
     if (endSuffix) {
-      cleanedLines.push(endSuffix[1]);
-      cleanedLines.push("    end");
-      subgraphDepth = Math.max(0, subgraphDepth - 1);
-      continue;
+      const pre = endSuffix[1];
+      const oSq = (pre.match(/\[/g) || []).length;
+      const cSq = (pre.match(/\]/g) || []).length;
+      const oCu = (pre.match(/\{/g) || []).length;
+      const cCu = (pre.match(/\}/g) || []).length;
+      if (oSq <= cSq && oCu <= cCu) {
+        cleanedLines.push(pre);
+        cleanedLines.push("    end");
+        subgraphDepth = Math.max(0, subgraphDepth - 1);
+        continue;
+      }
     }
 
     cleanedLines.push(line);

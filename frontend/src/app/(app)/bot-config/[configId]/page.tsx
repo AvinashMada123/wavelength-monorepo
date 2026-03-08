@@ -479,7 +479,7 @@ function PromptTab({
       if (data.convertedPrompt) {
         setPreviewPrompt(data.convertedPrompt);
         setShowPreview(true);
-        toast.success("Prompt optimized! Review and apply below.");
+        toast.success("Prompt optimized! Review and apply above.");
       } else {
         toast.error(data.error || "Conversion failed");
       }
@@ -533,14 +533,6 @@ function PromptTab({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Textarea
-          value={prompt}
-          onChange={(e) => onPromptChange(e.target.value)}
-          rows={14}
-          className="font-mono text-sm"
-          placeholder="Enter the bot system prompt..."
-        />
-
         {showPreview && (
           <div className="rounded-lg border-2 border-primary/50 bg-primary/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -576,6 +568,14 @@ function PromptTab({
             </div>
           </div>
         )}
+
+        <Textarea
+          value={prompt}
+          onChange={(e) => onPromptChange(e.target.value)}
+          rows={14}
+          className="font-mono text-sm"
+          placeholder="Enter the bot system prompt..."
+        />
 
         <div className="rounded-lg border bg-muted/50 p-4">
           <div className="flex items-center gap-2 mb-3">
