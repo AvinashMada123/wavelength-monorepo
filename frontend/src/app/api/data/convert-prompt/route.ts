@@ -35,14 +35,17 @@ PHASE_NAME: "Script text here" <wait> "Next script" <wait> If condition: "Respon
 [List ALL variable placeholders used: {customer_name} {agent_name} etc.]
 
 ## CRITICAL RULES:
-1. NEVER lose any information. Every step, question, response, rule from the original MUST appear in the output.
-2. NEVER invent new content. Only restructure what exists.
-3. If the original has bilingual content (Hindi/English), preserve BOTH versions.
-4. Preserve ALL conditional logic (if/then branches).
-5. Keep ALL specific details: names, prices, dates, URLs, phone numbers.
+1. ZERO INFORMATION LOSS: Every single step, question, response, objection handler, rule, FAQ, and detail from the original MUST appear in the output. If the original has 10 steps, the output must have 10 steps. Count them.
+2. NEVER invent new content. Only restructure what exists. Do NOT add steps, questions, or responses that are not in the original.
+3. If the original has bilingual content (Hindi/English/Tamil/any language), preserve ALL language versions word-for-word.
+4. Preserve ALL conditional logic (if/then/else branches) exactly as written.
+5. Keep ALL specific details verbatim: names, prices, dates, URLs, phone numbers, product names, company names, workshop names, etc.
 6. The format must be parseable: PHASE: "text" <wait> pattern.
 7. If a step says [WAIT] or needs user confirmation, use <wait>.
-8. Output ONLY the converted prompt. No explanation, no markdown fences.`;
+8. Preserve the EXACT tone, personality, and speaking style from the original. Do not sanitize or formalize casual language.
+9. If the original has FAQs, subroutines, or special sections, include them under appropriate headers.
+10. Output ONLY the converted prompt. No explanation, no markdown fences.
+11. VERIFY: Before outputting, mentally check that every piece of information from the original appears in your output. If anything is missing, add it back.`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,7 +67,7 @@ ${systemPrompt.slice(0, 15000)}`;
 
     let convertedPrompt = "";
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY || "AIzaSyAT_jWNpBGVdd029_Wa2jPHX3iInqNey7w";
+    const geminiKey = process.env.GEMINI_API_KEY || "";
 
     if (anthropicKey) {
       console.log("[convert-prompt] Using Anthropic Claude Haiku");

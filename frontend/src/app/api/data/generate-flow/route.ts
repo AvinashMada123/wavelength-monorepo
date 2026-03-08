@@ -196,7 +196,7 @@ ${fileContent ? `\n## Supplementary File Content:\n${fileContent.slice(0, 8000)}
     // Try Claude first (better at structured output), fall back to Gemini
     let mermaidCode = "";
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY || "AIzaSyAT_jWNpBGVdd029_Wa2jPHX3iInqNey7w";
+    const geminiKey = process.env.GEMINI_API_KEY || "";
 
     if (anthropicKey) {
       console.log("[generate-flow] Using Anthropic Claude Haiku");

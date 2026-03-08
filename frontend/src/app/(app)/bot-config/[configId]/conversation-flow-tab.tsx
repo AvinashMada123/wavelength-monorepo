@@ -75,19 +75,35 @@ export function ConversationFlowTab({
       const container = document.createElement("div");
       chartInnerRef.current.appendChild(container);
 
-      // Client-side sanitize: fix Mermaid reserved word "end" issues
-      // 1. Escape "end" inside bracket labels [...] and decision labels {...}
-      // 2. Split trailing "end" on same line as content onto its own line
+      // Client-side sanitize: fix Mermaid syntax issues
       const sanitized = code
         .split("\n")
         .flatMap((line) => {
-          // Escape "end" inside node labels [...] so Mermaid doesn't treat it as a keyword
+          // Escape special characters inside node labels [...] that break Mermaid
           line = line.replace(/\[([^\]]+)\]/g, (_match, label: string) => {
-            return `[${label.replace(/\bend\b/gi, "End")}]`;
+            let clean = label
+              .replace(/\bend\b/gi, "End")  // Reserved word
+              .replace(/[()]/g, " ")         // Parentheses break syntax
+              .replace(/[#&;]/g, " ")        // Special chars
+              .replace(/"/g, "'")            // Double quotes
+              .replace(/\s{2,}/g, " ")       // Collapse whitespace
+              .trim();
+            return `[${clean}]`;
           });
-          // Escape "end" inside decision node labels {...}
+          // Escape inside decision node labels {...}
           line = line.replace(/\{([^}]+)\}/g, (_match, label: string) => {
-            return `{${label.replace(/\bend\b/gi, "End")}}`;
+            let clean = label
+              .replace(/\bend\b/gi, "End")
+              .replace(/[()]/g, " ")
+              .replace(/[#&;]/g, " ")
+              .replace(/"/g, "'")
+              .replace(/\s{2,}/g, " ")
+              .trim();
+            return `{${clean}}`;
+          });
+          // Escape inside edge labels |...|
+          line = line.replace(/\|([^|]+)\|/g, (_match, label: string) => {
+            return `|${label.replace(/[()#&;"]/g, " ").trim()}|`;
           });
           // Split trailing "end" keyword onto its own line
           const m = line.match(/^(.+\S)\s+end\s*$/);

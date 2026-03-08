@@ -38,6 +38,11 @@ class ToolHandler:
             if tool_name == "switch_language":
                 lang_code = tool_args.get("language_code", "")
                 self.log.detail(f"Language switch requested: {lang_code}")
+                # Persist language so it survives session splits
+                s._tts_language = lang_code
+                # Invalidate prebuilt setup so next session split uses new language
+                s._prebuilt_setup_msg = None
+                self.log.detail(f"Language persisted: {lang_code} (survives session splits)")
                 resp = {"success": True, "language": lang_code, "message": f"Switched to {lang_code}. Continue in the new language."}
                 if send_response:
                     try:
@@ -122,8 +127,8 @@ class ToolHandler:
                         except Exception as e:
                             self.log.error(f"Failed to set DND: {e}")
 
-                # Hang up after 5 seconds (allow TTS to finish goodbye audio)
-                asyncio.create_task(s._lifecycle._hangup_call_delayed(5.0))
+                # Hang up after 8 seconds (allow TTS to finish goodbye + user's final response)
+                asyncio.create_task(s._lifecycle._hangup_call_delayed(8.0))
                 return results if not send_response else None
 
             # Handle save_user_info tool — saves user details via Gemini's audio understanding

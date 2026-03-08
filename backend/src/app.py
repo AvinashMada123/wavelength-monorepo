@@ -1283,6 +1283,53 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/test/simulate-call")
+async def test_simulate_call(request: PlivoMakeCallRequest):
+    """Preload a session WITHOUT calling any phone provider.
+    Used by the automated test script to simulate a call over WebSocket."""
+    import uuid as _uuid
+    call_uuid = str(_uuid.uuid4())
+    context = request.context or {}
+    context.setdefault("customer_name", request.contactName)
+    if request.voice:
+        context["_voice"] = request.voice
+        context["_tts_voice"] = request.voice
+    if request.language:
+        context["_tts_language"] = request.language
+    if request.pipelineMode:
+        context["_pipeline_mode"] = request.pipelineMode
+    context["_call_provider"] = "test"
+
+    if request.prompt:
+        request.prompt = get_or_cache_prompt(request.prompt)
+
+    from src.services.plivo_gemini_stream import preload_session
+    async with _call_data_lock:
+        _pending_call_data[call_uuid] = {
+            "phone": request.phoneNumber,
+            "prompt": request.prompt,
+            "context": context,
+            "webhookUrl": request.webhookUrl,
+            "provider": "test",
+        }
+    session_db.create_call(
+        call_uuid=call_uuid, phone=request.phoneNumber,
+        contact_name=request.contactName, webhook_url=request.webhookUrl,
+    )
+    await preload_session(
+        call_uuid, request.phoneNumber,
+        prompt=request.prompt, context=context,
+        webhook_url=request.webhookUrl,
+        max_call_duration=request.maxCallDuration or 480,
+    )
+    logger.info(f"[TEST] Session preloaded for {call_uuid} — connect WS to /plivo/stream/{call_uuid}")
+    return JSONResponse(content={
+        "success": True,
+        "call_uuid": call_uuid,
+        "ws_url": f"/plivo/stream/{call_uuid}",
+    })
+
+
 @app.post("/plivo/answer")
 async def plivo_answer(request: Request):
     """Handle Plivo call answer - uses Stream with Gemini Live"""

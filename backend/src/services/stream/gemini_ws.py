@@ -318,12 +318,20 @@ class GeminiConnection:
         # Detect if agent's last message was an unanswered question
         agent_ended_with_question = agent_ref and agent_ref.rstrip().endswith("?")
 
+        # Build questions blacklist for context message
+        questions_blacklist = ""
+        if s._questions_asked:
+            q_list = "; ".join(f'"{q[:80]}"' for q in s._questions_asked[-6:])
+            questions_blacklist = f" QUESTIONS ALREADY ASKED (NEVER repeat these): {q_list}."
+
         if agent_ref and last_user:
             # Normal case: turn completed, user already responded
             trigger = (
                 f'[SESSION SPLIT — brief technical refresh, customer is unaware.] '
                 f'Last you said: "{agent_ref}" Customer replied: "{last_user}". '
-                f'Wait for customer to speak next. Do NOT re-introduce or repeat covered topics.'
+                f'CRITICAL: Do NOT repeat ANY question or topic from before this split. '
+                f'Continue FORWARD only.{questions_blacklist} '
+                f'Wait for customer to speak next.'
             )
         elif agent_ref and agent_ended_with_question:
             # Agent asked a question but user hasn't responded yet
@@ -332,15 +340,21 @@ class GeminiConnection:
                 f'Last you said: "{agent_ref}" Customer has not replied yet. '
                 f'Wait a moment, then if customer hasn\'t spoken, briefly say '
                 f'"Are you still there?" Do NOT repeat the original question verbatim.'
+                f'{questions_blacklist}'
             )
         elif agent_ref:
             trigger = (
                 f'[SESSION SPLIT — brief technical refresh, customer is unaware.] '
                 f'Last you said: "{agent_ref}" '
-                f'Wait for customer to speak. Do NOT re-introduce or repeat covered topics.'
+                f'CRITICAL: Do NOT repeat ANY question or topic from before.{questions_blacklist} '
+                f'Wait for customer to speak.'
             )
         else:
-            trigger = "[SESSION SPLIT — brief technical refresh, customer is unaware. Wait for customer to speak.]"
+            trigger = f"[SESSION SPLIT — brief technical refresh, customer is unaware.{questions_blacklist} Wait for customer to speak.]"
+
+        # Reinforce language continuity after session split
+        if s._tts_language:
+            trigger += f' IMPORTANT: Continue speaking in {s._tts_language} language. Do NOT switch language or voice.'
 
         # turn_complete: False — Gemini will NOT generate a response to this.
         # It will only respond when actual user audio triggers speech detection.
@@ -538,9 +552,12 @@ class GeminiConnection:
             if s._last_user_speech_time and s._last_user_speech_time > swap_time:
                 return
             self.log.warn("Post-swap dead air (5s) — nudging AI to re-engage")
+            nudge_text = "[The customer is waiting. Say something brief to check if they are still there.]"
+            if s._tts_language:
+                nudge_text += f" Speak in {s._tts_language} language."
             msg = {
                 "client_content": {
-                    "turns": [{"role": "user", "parts": [{"text": "[The customer is waiting. Say something brief to check if they are still there.]"}]}],
+                    "turns": [{"role": "user", "parts": [{"text": nudge_text}]}],
                     "turn_complete": True
                 }
             }

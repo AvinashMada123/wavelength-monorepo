@@ -62,6 +62,94 @@ class StepManager:
         return len(self.steps)
 
     def parse_from_prompt(self, prompt: str, context: dict) -> bool:
+        """Extract steps from a prompt. Tries NEPQ first, then generic numbered steps.
+        Returns True if steps were successfully extracted (>= 3 steps)."""
+
+        # Try NEPQ parsing first
+        if self._parse_nepq(prompt, context):
+            return True
+
+        # Fallback: try generic numbered step parsing
+        return self._parse_generic_steps(prompt, context)
+
+    def _parse_generic_steps(self, prompt: str, context: dict) -> bool:
+        """Parse generic numbered steps from any prompt format.
+        Supports: 'Step 1:', 'STEP 1:', '1.', '1)', and similar patterns."""
+
+        # Extract persona block (everything before first step)
+        # Try multiple step patterns
+        patterns = [
+            # "Step 1:", "STEP 1:", "Step 1 -", "Step 1 ("
+            (r'(?:step|STEP)\s+(\d+)\s*[:\-\(]', r'(?:step|STEP)\s+\d+\s*[:\-\(]'),
+            # "1. ", "1) " at start of line (must have text after)
+            (r'^(\d+)\s*[.)]\s+\S', r'^\d+\s*[.)]\s+\S'),
+        ]
+
+        for step_pattern, split_pattern in patterns:
+            matches = list(re.finditer(step_pattern, prompt, re.IGNORECASE | re.MULTILINE))
+            if len(matches) >= 3:
+                # Found steps — extract persona block (everything before first step)
+                self.persona_block = prompt[:matches[0].start()].strip()
+
+                # Extract each step's content
+                self.steps = []
+                for i, match in enumerate(matches):
+                    start = match.start()
+                    end = matches[i + 1].start() if i + 1 < len(matches) else len(prompt)
+                    step_text = prompt[start:end].strip()
+
+                    # Clean up the step text — remove the step number prefix
+                    step_text = re.sub(r'^(?:step|STEP)\s+\d+\s*[:\-\(]\s*\)?\s*', '', step_text, flags=re.IGNORECASE)
+                    step_text = re.sub(r'^\d+\s*[.)]\s+', '', step_text)
+                    step_text = step_text.strip()
+
+                    if not step_text:
+                        continue
+
+                    # Extract goal from first sentence
+                    first_sentence = re.split(r'[.!?\n]', step_text)[0].strip()
+                    goal = first_sentence[:80] if first_sentence else f"Step {i + 1}"
+
+                    step = Step(
+                        id=len(self.steps) + 1,
+                        phase=f"Step {len(self.steps) + 1}",
+                        goal=goal,
+                        script=step_text[:500],  # Cap to keep reconnect prompt small
+                        wait=True,
+                        next_step=len(self.steps) + 2,
+                    )
+                    self.steps.append(step)
+
+                if self.steps:
+                    self.steps[-1].next_step = None
+
+                # Extract objection block if present
+                obj_match = re.search(
+                    r'(?:#\s*)?OBJECTIONS?\s*[^\n]*[:\n](.*?)(?=\n(?:#|[A-Z]{3,}\s+CALL|END\s+CALL)|\Z)',
+                    prompt, re.DOTALL | re.IGNORECASE
+                )
+                if obj_match:
+                    self.objection_block = obj_match.group(1).strip()
+
+                # Extract FAQ block
+                faq_match = re.search(
+                    r'(?:##?\s*FAQ|(?:\*\*)?FAQ(?:\*\*)?)\s*[:\n](.*?)(?=\n(?:##?\s|(?:\*\*)?[A-Z])|\Z)',
+                    prompt, re.DOTALL | re.IGNORECASE
+                )
+                if faq_match:
+                    self.faq_block = faq_match.group(1).strip()[:500]
+
+                self._enabled = len(self.steps) >= 3
+                if self._enabled:
+                    s = self.state
+                    logger.info(f"[{s.call_uuid[:8]}] Step manager (generic): {len(self.steps)} steps parsed")
+                    for step in self.steps:
+                        logger.info(f"[{s.call_uuid[:8]}]   Step {step.id}: {step.goal}")
+                return self._enabled
+
+        return False
+
+    def _parse_nepq(self, prompt: str, context: dict) -> bool:
         """Extract steps from a prompt with NEPQ-style flow sections.
         Returns True if steps were successfully extracted (>= 3 steps)."""
 
@@ -343,7 +431,9 @@ class StepManager:
             "2) Max 2 attempts per offer. After 2, move on. "
             "3) Say goodbye ONCE. If customer says bye, call end_call immediately. "
             "4) Garbled speech = assume positive intent. "
-            "5) Always move forward, never restart."
+            "5) Always move forward, never restart. ZERO repetition. "
+            "6) NEVER use 'sir'/'madam'. Use customer's name. "
+            "7) Understand ALL languages. Acknowledge customer's answer before asking next question."
         )
 
         # 4. Current step (the key part)

@@ -544,22 +544,36 @@ function PromptTab({
         {showPreview && (
           <div className="rounded-lg border-2 border-primary/50 bg-primary/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Converted Prompt Preview</span>
+              <span className="text-sm font-medium">Compare: Original vs Optimized</span>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => setShowPreview(false)}>
                   <X className="size-4 mr-1" /> Dismiss
                 </Button>
                 <Button size="sm" onClick={applyConverted}>
-                  <Check className="size-4 mr-1" /> Apply
+                  <Check className="size-4 mr-1" /> Apply Optimized
                 </Button>
               </div>
             </div>
-            <Textarea
-              value={previewPrompt}
-              onChange={(e) => setPreviewPrompt(e.target.value)}
-              rows={14}
-              className="font-mono text-sm"
-            />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <span className="text-xs font-medium text-muted-foreground mb-1 block">Original Prompt</span>
+                <Textarea
+                  value={prompt}
+                  readOnly
+                  rows={18}
+                  className="font-mono text-sm bg-muted/30 opacity-80"
+                />
+              </div>
+              <div>
+                <span className="text-xs font-medium text-primary mb-1 block">Optimized Prompt</span>
+                <Textarea
+                  value={previewPrompt}
+                  onChange={(e) => setPreviewPrompt(e.target.value)}
+                  rows={18}
+                  className="font-mono text-sm"
+                />
+              </div>
+            </div>
           </div>
         )}
 

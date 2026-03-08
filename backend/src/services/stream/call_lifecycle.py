@@ -57,27 +57,34 @@ class CallLifecycle:
         return False
 
     def _check_mutual_goodbye(self):
-        """End call when agent says goodbye (don't wait too long for user)"""
+        """End call ONLY when BOTH agent AND user have said goodbye.
+        Never end the call if only the agent said goodbye — the user may still be speaking."""
         s = self.state
         if s.agent_said_goodbye and not s._closing_call:
             if s.user_said_goodbye:
                 logger.info(f"[{s.call_uuid[:8]}] Mutual goodbye - ending call")
                 s._closing_call = True
-                asyncio.create_task(self._hangup_call_delayed(0.5))  # Quick end
+                asyncio.create_task(self._hangup_call_delayed(2.0))  # Give 2s for final audio
             else:
-                # Agent said goodbye but user hasn't - start short timeout
-                logger.debug(f"[{s.call_uuid[:8]}] Agent goodbye, waiting 3s for user")
-                asyncio.create_task(self._quick_goodbye_timeout(3.0))
+                # Agent said goodbye but user hasn't — wait longer, user may still be talking
+                logger.debug(f"[{s.call_uuid[:8]}] Agent goodbye, waiting 8s for user response")
+                asyncio.create_task(self._quick_goodbye_timeout(8.0))
 
     async def _quick_goodbye_timeout(self, timeout: float):
-        """Quick timeout after agent says goodbye - don't wait too long"""
+        """Wait for user to respond after agent says goodbye.
+        Only end if user stays completely silent — if they speak at all, cancel the timeout."""
         s = self.state
         try:
             await asyncio.sleep(timeout)
             if not s._closing_call and s.agent_said_goodbye:
-                logger.debug(f"[{s.call_uuid[:8]}] Goodbye timeout - ending call")
+                # Check if user spoke during the wait — if so, don't end
+                if s._last_user_speech_time and (time.time() - s._last_user_speech_time) < timeout:
+                    logger.debug(f"[{s.call_uuid[:8]}] User spoke during goodbye wait — NOT ending call")
+                    s.agent_said_goodbye = False  # Reset — conversation is continuing
+                    return
+                logger.debug(f"[{s.call_uuid[:8]}] Goodbye timeout (no user speech) - ending call")
                 s._closing_call = True
-                await self._hangup_call_delayed(0.5)
+                await self._hangup_call_delayed(1.0)
         except asyncio.CancelledError:
             pass
 

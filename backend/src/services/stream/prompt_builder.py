@@ -96,7 +96,7 @@ def detect_voice_from_prompt(prompt: str) -> str:
 TOOL_DECLARATIONS = [
     {
         "name": "end_call",
-        "description": "End the phone call. Call this IMMEDIATELY when: 1) The customer says 'not interested', 'don't call me', 'wrong number', or any rejection. 2) Both you AND the customer have said goodbye/bye/take care — call end_call with NO additional text. 3) The customer explicitly asks to hang up. CRITICAL: If you already said 'bye'/'take care'/'goodbye' and the customer responds with 'bye'/'okay bye'/'thanks bye', call end_call IMMEDIATELY without generating ANY text. Do NOT say goodbye twice.",
+        "description": "End the phone call. Call this IMMEDIATELY when: 1) The customer says 'not interested', 'don't call me', 'wrong number', or any rejection IN ANY LANGUAGE (e.g. 'venda', 'nahi chahiye', 'thevai illai', 'interest illa'). 2) Both you AND the customer have said goodbye/bye/take care in ANY language — call end_call with NO additional text. 3) The customer explicitly asks to hang up. CRITICAL: If you already said goodbye and the customer responds with goodbye in ANY language, call end_call IMMEDIATELY without generating ANY text. Do NOT say goodbye twice. IMPORTANT: NEVER end the call while the customer is still asking questions, providing information, or actively engaged in conversation.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -420,7 +420,15 @@ class PromptBuilder:
             "5) Garbled/unclear speech = assume positive intent. Never treat noise as rejection. "
             "6) Info-only steps: deliver and continue immediately. Only wait after questions. "
             "7) Never restart from Step 1. Track your progress and continue forward. "
-            "8) If asked for info you have, share it directly. Never get stuck repeating yourself."
+            "8) If asked for info you have, share it directly. Never get stuck repeating yourself. "
+            "9) NEVER use 'sir', 'madam', 'ma'am', or 'ji'. Always use the customer's name instead. "
+            "10) ZERO REPETITION: NEVER ask a question you already asked. NEVER re-explain something you already covered. "
+            "If you asked it before, skip it completely and move to the NEXT topic. "
+            "11) MULTILINGUAL: The customer may speak in ANY language (Tamil, Hindi, Telugu, Malayalam, Kannada, English, etc). "
+            "ALWAYS understand what they say regardless of language. If you cannot understand, politely ask them to repeat — "
+            "NEVER ignore their response or ask an unrelated question. Acknowledge what they said before moving on. "
+            "12) LISTEN FIRST: Before asking your next question, acknowledge the customer's answer. "
+            "If they answered a previous question, confirm you heard it (e.g. '4 years, got it') then move to the NEXT topic."
         )
 
         # Lead qualification criteria (injected only when configured)
@@ -562,7 +570,7 @@ class PromptBuilder:
                         "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
                         "end_of_speech_sensitivity": "END_SENSITIVITY_HIGH",
                         "prefix_padding_ms": 100,
-                        "silence_duration_ms": 500,
+                        "silence_duration_ms": 350,
                     }
                 },
                 "input_audio_transcription": {},
@@ -631,7 +639,8 @@ class PromptBuilder:
         lines.append("")
         lines.append(
             "ALL ABOVE IS DONE. Continue FORWARD from where you left off. "
-            "Do NOT re-pitch, re-explain, or revisit ANY topic from the progress list above. "
+            "ABSOLUTE RULE: Do NOT re-ask ANY question listed above. Do NOT re-pitch or re-explain ANY topic. "
+            "If you catch yourself about to repeat something — STOP and skip to the NEXT new topic instead. "
             "Do NOT acknowledge this context. Respond naturally to what the customer says next."
         )
         return "\n".join(lines)
