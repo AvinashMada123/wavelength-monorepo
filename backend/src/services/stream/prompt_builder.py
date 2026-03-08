@@ -530,7 +530,10 @@ class PromptBuilder:
             s._resolved_voice = s.context.get("_voice") or s._tts_voice
         voice_name = s._resolved_voice
         if not voice_name:
-            logger.warning(f"[{s.call_uuid[:8]}] Live API: No voice specified — pass 'voice' in API request")
+            # Auto-detect from prompt or default to Kore (Indian English female)
+            voice_name = detect_voice_from_prompt(full_prompt)
+            s._resolved_voice = voice_name
+            logger.info(f"[{s.call_uuid[:8]}] Live API: Auto-detected voice → {voice_name}")
 
         if config.use_vertex_ai:
             model_name = f"projects/{config.vertex_project_id}/locations/{config.vertex_location}/publishers/google/models/gemini-live-2.5-flash-native-audio"
@@ -541,7 +544,10 @@ class PromptBuilder:
         # is NOT supported and causes 1007 errors. Control accent via system instruction.
         language_code = s._tts_language
         if language_code:
-            full_prompt += f"\n\n[VOICE LANGUAGE: Speak in {language_code} accent/language throughout the call.]"
+            full_prompt += f"\n\n[VOICE LANGUAGE: Speak in {language_code} accent/language throughout the call. Do NOT use American or British English.]"
+        else:
+            # Default to Indian English for Indian callers
+            full_prompt += "\n\n[VOICE LANGUAGE: Speak in Indian English accent. Do NOT use American or British English. Use natural Indian pronunciation and phrasing.]"
 
         # TTS formatting rules (e.g. ₹5000 → "five thousand rupees")
         if s._tts_formatting_rules:
