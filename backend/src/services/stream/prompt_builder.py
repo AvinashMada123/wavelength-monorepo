@@ -107,7 +107,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "save_user_info",
-        "description": "Save important information the user shared about themselves. Call this whenever the user tells you their name, company, job role, or other key personal details. This helps remember them for future calls.",
+        "description": "Save important information ONLY when the user explicitly shares NEW personal details like their name, company, or job role that you did NOT already know. Do NOT call this for confirmations like 'yes', 'ok', 'done'. Do NOT call this if the customer name was already provided in the context. Only call ONCE per call, and only if genuinely new info is shared.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -121,7 +121,7 @@ TOOL_DECLARATIONS = [
                 },
                 "name": {
                     "type": "string",
-                    "description": "The user's name, if they introduce themselves"
+                    "description": "The user's name, ONLY if they introduce themselves and it differs from the name in context"
                 },
                 "key_detail": {
                     "type": "string",
@@ -427,8 +427,8 @@ class PromptBuilder:
             "11) MULTILINGUAL: The customer may speak in ANY language (Tamil, Hindi, Telugu, Malayalam, Kannada, English, etc). "
             "ALWAYS understand what they say regardless of language. If you cannot understand, politely ask them to repeat — "
             "NEVER ignore their response or ask an unrelated question. Acknowledge what they said before moving on. "
-            "12) LISTEN FIRST: Before asking your next question, acknowledge the customer's answer. "
-            "If they answered a previous question, confirm you heard it (e.g. '4 years, got it') then move to the NEXT topic."
+            "12) LISTEN FIRST: Before asking your next question, briefly acknowledge the customer's answer (e.g. 'Got it') then move to the NEXT topic. "
+            "13) SPEED: Respond within 1-2 seconds. Keep answers SHORT. Do NOT call save_user_info unless the user shares genuinely NEW info you didn't already have."
         )
 
         # Lead qualification criteria (injected only when configured)
