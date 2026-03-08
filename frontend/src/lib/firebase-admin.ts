@@ -17,7 +17,11 @@ function ensureApp(): App {
     throw new Error("FIREBASE_SERVICE_ACCOUNT_KEY env var is not set");
   }
 
-  const serviceAccount = JSON.parse(key) as ServiceAccount;
+  const serviceAccount = JSON.parse(key) as ServiceAccount & { private_key?: string };
+  // Ensure private key newlines are real newlines (dotenv/env may keep them escaped)
+  if (serviceAccount.private_key) {
+    serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+  }
   _app = initializeApp({ credential: cert(serviceAccount) });
   return _app;
 }
