@@ -542,9 +542,20 @@ class PromptBuilder:
 
         # Native audio models auto-detect language — language_code in speech_config
         # is NOT supported and causes 1007 errors. Control accent via system instruction.
-        language_code = s._tts_language
-        if language_code:
-            full_prompt += f"\n\n[VOICE LANGUAGE: Speak in {language_code} accent/language throughout the call. Do NOT use American or British English.]"
+        LANG_NAMES = {
+            "en-IN": "Indian English", "en-US": "American English", "en-GB": "British English",
+            "hi-IN": "Hindi", "ta-IN": "Tamil", "te-IN": "Telugu", "bn-IN": "Bengali",
+            "kn-IN": "Kannada", "ml-IN": "Malayalam", "gu-IN": "Gujarati",
+        }
+        supported_langs = s._supported_languages or ([s._tts_language] if s._tts_language else None)
+        if supported_langs and len(supported_langs) > 1:
+            # Multi-language bot: list all supported languages, start with primary
+            primary = LANG_NAMES.get(supported_langs[0], supported_langs[0])
+            all_names = ", ".join(LANG_NAMES.get(l, l) for l in supported_langs)
+            full_prompt += f"\n\n[VOICE LANGUAGE: You support these languages: {all_names}. Start the conversation in {primary}. If the user switches to another supported language, seamlessly switch to that language. Match the user's language naturally.]"
+        elif supported_langs:
+            lang_name = LANG_NAMES.get(supported_langs[0], supported_langs[0])
+            full_prompt += f"\n\n[VOICE LANGUAGE: Speak in {lang_name} accent/language throughout the call. Do NOT use American or British English.]"
         else:
             # Default to Indian English for Indian callers
             full_prompt += "\n\n[VOICE LANGUAGE: Speak in Indian English accent. Do NOT use American or British English. Use natural Indian pronunciation and phrasing.]"

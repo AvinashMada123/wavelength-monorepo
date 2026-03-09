@@ -979,7 +979,8 @@ class PlivoMakeCallRequest(BaseModel):
     webhookUrl: Optional[str] = None  # URL to call when call ends (webhook back to frontend)
     n8nWebhookUrl: Optional[str] = None  # URL for n8n transcript processing
     voice: Optional[str] = None  # Voice name from UI (e.g. "Puck", "Kore") — overrides auto-detection
-    language: Optional[str] = None  # TTS language/accent code (e.g. "en-IN", "en-US", "hi-IN")
+    language: Optional[str] = None  # Primary TTS language/accent code (e.g. "en-IN", "en-US", "hi-IN")
+    languages: Optional[list] = None  # All supported languages for this bot (e.g. ["en-IN", "hi-IN", "ta-IN"])
     preResearchEnabled: Optional[bool] = False  # Gather intelligence about contact before call
     memoryRecallEnabled: Optional[bool] = False  # Load cross-call memory for returning callers
     socialProofEnabled: Optional[bool] = False  # Include social proof stats in conversation
@@ -1057,8 +1058,13 @@ async def plivo_make_call(request: PlivoMakeCallRequest):
             logger.info(f"Voice set: {request.voice}")
         else:
             logger.warning("No 'voice' in request — TTS will use Gemini default")
-        if request.language:
+        if request.languages:
+            context["_tts_language"] = request.languages[0]  # Primary language
+            context["_supported_languages"] = request.languages
+            logger.info(f"Languages set: {request.languages} (primary: {request.languages[0]})")
+        elif request.language:
             context["_tts_language"] = request.language
+            context["_supported_languages"] = [request.language]
             logger.info(f"Language set: {request.language}")
         else:
             logger.warning("No 'language' in request — TTS will use Gemini default")

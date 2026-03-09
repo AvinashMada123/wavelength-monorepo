@@ -309,6 +309,7 @@ ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS voice TEXT DEFAULT 
 -- Migration: add pipeline mode, language, TTS provider to bot configs
 ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'live_api';
 ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '';
+ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS languages JSONB DEFAULT '[]';
 ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT '';
 
 ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT '';

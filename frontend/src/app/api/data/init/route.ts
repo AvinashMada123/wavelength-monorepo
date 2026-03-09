@@ -170,6 +170,7 @@ export async function POST(request: NextRequest) {
     await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS call_provider TEXT DEFAULT 'plivo'`);
     await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS pipeline_mode TEXT DEFAULT 'live_api'`);
     await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS language TEXT DEFAULT ''`);
+    await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS languages JSONB DEFAULT '[]'`);
     await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS tts_provider TEXT DEFAULT ''`);
     await query(`ALTER TABLE fwai_aicall_bot_configs ADD COLUMN IF NOT EXISTS conversation_flow_mermaid TEXT DEFAULT ''`);
 

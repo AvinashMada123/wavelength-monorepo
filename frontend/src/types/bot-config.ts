@@ -70,7 +70,8 @@ export interface BotConfig {
   voice?: string;
   callProvider?: string;
   pipelineMode?: string;
-  language?: string;
+  language?: string;    // deprecated — kept for backward compat
+  languages?: string[]; // multi-language support (e.g. ["en-IN", "hi-IN"])
   ttsProvider?: string;
   conversationFlowMermaid?: string;
   microMomentsConfig?: MicroMomentsConfig | null;

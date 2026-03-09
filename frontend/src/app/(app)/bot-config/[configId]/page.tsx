@@ -85,7 +85,7 @@ export default function BotConfigEditorPage() {
   const [voice, setVoice] = useState("");
   const [callProvider, setCallProvider] = useState("plivo");
   const [pipelineMode, setPipelineMode] = useState("live_api");
-  const [language, setLanguage] = useState("");
+  const [languages, setLanguages] = useState<string[]>(["en-IN"]);
   const [ttsProvider, setTtsProvider] = useState("");
   const [conversationFlowMermaid, setConversationFlowMermaid] = useState("");
   const [microMomentsConfig, setMicroMomentsConfig] = useState<MicroMomentsConfig | null>(null);
@@ -108,7 +108,7 @@ export default function BotConfigEditorPage() {
     setVoice(found.voice || "");
     setCallProvider(found.callProvider || "plivo");
     setPipelineMode(found.pipelineMode || "live_api");
-    setLanguage(found.language || "");
+    setLanguages(found.languages?.length ? found.languages : (found.language ? [found.language] : ["en-IN"]));
     setTtsProvider(found.ttsProvider || "");
     setConversationFlowMermaid(found.conversationFlowMermaid || "");
     setMicroMomentsConfig(found.microMomentsConfig || null);
@@ -198,7 +198,8 @@ export default function BotConfigEditorPage() {
         voice,
         callProvider,
         pipelineMode,
-        language,
+        language: languages[0] || "en-IN",
+        languages,
         ttsProvider,
         conversationFlowMermaid,
         microMomentsConfig,
@@ -377,8 +378,8 @@ export default function BotConfigEditorPage() {
             onCallProviderChange={setCallProvider}
             pipelineMode={pipelineMode}
             onPipelineModeChange={setPipelineMode}
-            language={language}
-            onLanguageChange={setLanguage}
+            languages={languages}
+            onLanguagesChange={setLanguages}
             ttsProvider={ttsProvider}
             onTtsProviderChange={setTtsProvider}
           />
@@ -615,8 +616,8 @@ function ContextTab({
   onCallProviderChange,
   pipelineMode,
   onPipelineModeChange,
-  language,
-  onLanguageChange,
+  languages,
+  onLanguagesChange,
   ttsProvider,
   onTtsProviderChange,
 }: {
@@ -628,8 +629,8 @@ function ContextTab({
   onCallProviderChange: (v: string) => void;
   pipelineMode: string;
   onPipelineModeChange: (v: string) => void;
-  language: string;
-  onLanguageChange: (v: string) => void;
+  languages: string[];
+  onLanguagesChange: (v: string[]) => void;
   ttsProvider: string;
   onTtsProviderChange: (v: string) => void;
 }) {
@@ -835,7 +836,33 @@ function ContextTab({
             </p>
           </div>
 
-          {/* TTS Provider + Language (Traditional only) */}
+          {/* Languages (all pipeline modes) */}
+          <div className="space-y-1.5">
+            <Label className="text-sm">Languages</Label>
+            <p className="text-xs text-muted-foreground">Select all languages the bot should support. The first selected language is the primary/default.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 rounded-md border border-input p-3">
+              {LANGUAGE_OPTIONS.map((opt) => (
+                <label key={opt.value} className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={languages.includes(opt.value)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        onLanguagesChange([...languages, opt.value]);
+                      } else {
+                        const updated = languages.filter((l) => l !== opt.value);
+                        onLanguagesChange(updated.length ? updated : ["en-IN"]);
+                      }
+                    }}
+                    className="rounded border-input"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* TTS Provider (Traditional only) */}
           {pipelineMode === "traditional" && (
             <div className="grid gap-6 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -847,19 +874,6 @@ function ContextTab({
                 >
                   <option value="">Default (from server config)</option>
                   {TTS_PROVIDER_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm">Language</Label>
-                <select
-                  value={language}
-                  onChange={(e) => onLanguageChange(e.target.value)}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                >
-                  <option value="">Default (en-IN)</option>
-                  {LANGUAGE_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>

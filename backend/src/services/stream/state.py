@@ -300,7 +300,8 @@ class SessionState:
 
         # TTS configuration (for traditional pipeline)
         self._tts_voice = self.context.pop("_tts_voice", None)  # Override voice name
-        self._tts_language = self.context.pop("_tts_language", None)  # Must be passed via API — no hardcoded default
+        self._tts_language = self.context.pop("_tts_language", None)  # Primary language (must be passed via API)
+        self._supported_languages = self.context.pop("_supported_languages", None)  # All supported languages for this bot
         self._tts_provider = self.context.pop("_tts_provider", None) \
             or config.tts_provider  # "gemini" | "google_cloud"
 

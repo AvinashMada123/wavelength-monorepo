@@ -350,7 +350,7 @@ export async function triggerCall(params: TriggerCallParams): Promise<TriggerCal
     ghlWorkflows: configDoc.ghl_workflows ?? [],
     ...(configDoc.voice || voice ? { voice: configDoc.voice || voice } : {}),
     ...(configDoc.pipeline_mode ? { pipelineMode: configDoc.pipeline_mode } : {}),
-    ...(configDoc.language ? { language: configDoc.language } : {}),
+    ...(configDoc.languages?.length ? { language: configDoc.languages[0], languages: configDoc.languages } : configDoc.language ? { language: configDoc.language } : {}),
     ...(configDoc.tts_provider ? { ttsProvider: configDoc.tts_provider } : {}),
     ...(configDoc.response_guidelines ? { responseGuidelines: configDoc.response_guidelines } : {}),
     ...(configDoc.tts_formatting_rules ? { ttsFormattingRules: configDoc.tts_formatting_rules } : {}),
