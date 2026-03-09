@@ -839,27 +839,42 @@ function ContextTab({
           {/* Languages (all pipeline modes) */}
           <div className="space-y-1.5">
             <Label className="text-sm">Languages</Label>
-            <p className="text-xs text-muted-foreground">Select all languages the bot should support. The first selected language is the primary/default.</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 rounded-md border border-input p-3">
-              {LANGUAGE_OPTIONS.map((opt) => (
-                <label key={opt.value} className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    checked={languages.includes(opt.value)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        onLanguagesChange([...languages, opt.value]);
-                      } else {
-                        const updated = languages.filter((l) => l !== opt.value);
+            <p className="text-xs text-muted-foreground">Select languages the bot should support. First selected is the primary/default.</p>
+            <div className="flex flex-wrap gap-1.5 min-h-[2.5rem] rounded-md border border-input bg-background px-3 py-2">
+              {languages.map((code) => {
+                const label = LANGUAGE_OPTIONS.find((o) => o.value === code)?.label || code;
+                return (
+                  <span key={code} className="inline-flex items-center gap-1 rounded-md bg-primary/10 text-primary px-2 py-0.5 text-sm">
+                    {label}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = languages.filter((l) => l !== code);
                         onLanguagesChange(updated.length ? updated : ["en-IN"]);
-                      }
-                    }}
-                    className="rounded border-input"
-                  />
-                  {opt.label}
-                </label>
-              ))}
+                      }}
+                      className="hover:text-destructive ml-0.5"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                );
+              })}
             </div>
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value && !languages.includes(e.target.value)) {
+                  onLanguagesChange([...languages, e.target.value]);
+                }
+                e.target.value = "";
+              }}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <option value="">Add a language...</option>
+              {LANGUAGE_OPTIONS.filter((opt) => !languages.includes(opt.value)).map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </div>
 
           {/* TTS Provider (Traditional only) */}
